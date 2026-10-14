@@ -1,19 +1,207 @@
 //! Rule-based / utility-scored AI for companions and enemies.
 //!
-//! Every decision is a pure function of the current `Sim` state, so AI behaviour
-//! is deterministic and testable. See RULES.md for the role behaviours in prose.
+//! Every tick the sim computes a shared [`Blackboard`] (party-level tactical
+//! information: kill target, interrupt assignments, crowd-control assignment,
+//! danger zones, healer mana, pull readiness). Each companion then makes its own
+//! decision from the blackboard plus its role and [`AiProfile`]. Everything is a
+//! pure function of sim state, so AI behaviour is deterministic and testable.
+//! See RULES.md for the behaviours in prose.
 
-use crate::class::{AbilityId, Role};
-use crate::content::EnemyRank;
+use crate::class::{AbilityId, Effect, Role};
+use crate::content::{AbilityKind, EnemyRank};
 use crate::math::V2;
-use crate::sim::{ActorId, EnemyMode, Sim};
+use crate::sim::{ActorId, AuraKind, CastKind, EnemyMode, Sim};
+use serde::{Deserialize, Serialize};
 
-/// Seconds an AI needs to notice a new ground telegraph before reacting.
-pub const REACTION_TIME: f32 = 0.5;
-/// How far behind the leader followers stand.
-const FORMATION: [(f32, f32); 4] = [(-2.5, -3.0), (2.5, -3.0), (-2.5, -6.0), (2.5, -6.0)];
+/// How far behind the leader followers stand (local x = right, z = forward).
+const FORMATION: [(f32, f32); 8] = [
+    (-2.5, -3.0),
+    (2.5, -3.0),
+    (-2.5, -6.0),
+    (2.5, -6.0),
+    (0.0, -4.5),
+    (-5.0, -4.5),
+    (5.0, -4.5),
+    (0.0, -8.0),
+];
 /// Ranged members stand roughly this far from their enemy.
 const RANGED_DISTANCE: f32 = 18.0;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AiProfile {
+    /// Waits longer before attacking, keeps big threat margins, heals early.
+    Conservative,
+    #[default]
+    Balanced,
+    /// Attacks immediately, ignores threat margins, skips crowd control.
+    Aggressive,
+    /// Prioritises dispels, shields and early interrupts over damage.
+    SupportFocused,
+    /// Fast reactions and wide safety margins around mechanics; interrupts early.
+    MechanicFocused,
+}
+
+/// Tunable numbers behind a profile. All behaviour differences come from here.
+#[derive(Debug, Clone, Copy)]
+pub struct ProfileParams {
+    /// Seconds before a new telegraph is noticed.
+    pub reaction_time: f32,
+    /// DPS hold fire when their threat exceeds this fraction of the tank's.
+    pub threat_cap: f32,
+    /// DPS wait until the tank has at least this much threat on the target.
+    pub min_tank_threat: f32,
+    /// Tank pops Bulwark below this HP fraction.
+    pub defensive_hp: f32,
+    /// Healer casts Mend on allies below this HP fraction.
+    pub mend_threshold: f32,
+    /// Healer applies Renew below this HP fraction.
+    pub hot_threshold: f32,
+    /// Healer only Smites above this mana fraction.
+    pub smite_mana: f32,
+    /// Leader pulls only when everyone is above this HP / mana fraction.
+    pub ready_hp: f32,
+    pub ready_mana: f32,
+    /// Interrupt once the enemy cast has this many seconds left (bigger = earlier).
+    pub interrupt_window: f32,
+    /// Extra metres kept from danger zones.
+    pub danger_margin: f32,
+    pub use_cc: bool,
+    /// Healer dispels before non-emergency healing.
+    pub dispel_first: bool,
+}
+
+impl AiProfile {
+    pub const ALL: [AiProfile; 5] = [
+        AiProfile::Conservative,
+        AiProfile::Balanced,
+        AiProfile::Aggressive,
+        AiProfile::SupportFocused,
+        AiProfile::MechanicFocused,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            AiProfile::Conservative => "Conservative",
+            AiProfile::Balanced => "Balanced",
+            AiProfile::Aggressive => "Aggressive",
+            AiProfile::SupportFocused => "Support",
+            AiProfile::MechanicFocused => "Mechanics",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<AiProfile> {
+        match s.to_ascii_lowercase().as_str() {
+            "conservative" => Some(AiProfile::Conservative),
+            "balanced" => Some(AiProfile::Balanced),
+            "aggressive" => Some(AiProfile::Aggressive),
+            "support" | "support_focused" => Some(AiProfile::SupportFocused),
+            "mechanic" | "mechanics" | "mechanic_focused" => Some(AiProfile::MechanicFocused),
+            _ => None,
+        }
+    }
+
+    pub fn next(self) -> AiProfile {
+        let i = AiProfile::ALL.iter().position(|p| *p == self).unwrap_or(0);
+        AiProfile::ALL[(i + 1) % AiProfile::ALL.len()]
+    }
+
+    pub fn params(self) -> ProfileParams {
+        let balanced = ProfileParams {
+            reaction_time: 0.45,
+            threat_cap: 0.9,
+            min_tank_threat: 40.0,
+            defensive_hp: 0.5,
+            mend_threshold: 0.6,
+            hot_threshold: 0.85,
+            smite_mana: 0.75,
+            ready_hp: 0.9,
+            ready_mana: 0.8,
+            interrupt_window: 1.0,
+            danger_margin: 0.6,
+            use_cc: true,
+            dispel_first: false,
+        };
+        match self {
+            AiProfile::Balanced => balanced,
+            AiProfile::Conservative => ProfileParams {
+                reaction_time: 0.5,
+                threat_cap: 0.7,
+                min_tank_threat: 200.0,
+                defensive_hp: 0.65,
+                mend_threshold: 0.7,
+                hot_threshold: 0.92,
+                smite_mana: 0.95,
+                ready_hp: 0.97,
+                ready_mana: 0.95,
+                danger_margin: 1.2,
+                ..balanced
+            },
+            AiProfile::Aggressive => ProfileParams {
+                reaction_time: 0.75,
+                threat_cap: 1.05,
+                min_tank_threat: 0.0,
+                defensive_hp: 0.3,
+                mend_threshold: 0.5,
+                hot_threshold: 0.75,
+                smite_mana: 0.45,
+                ready_hp: 0.7,
+                ready_mana: 0.5,
+                interrupt_window: 0.5,
+                danger_margin: 0.2,
+                use_cc: false,
+                ..balanced
+            },
+            AiProfile::SupportFocused => ProfileParams {
+                threat_cap: 0.85,
+                mend_threshold: 0.7,
+                hot_threshold: 0.92,
+                smite_mana: 0.95,
+                interrupt_window: 1.6,
+                dispel_first: true,
+                ..balanced
+            },
+            AiProfile::MechanicFocused => ProfileParams {
+                reaction_time: 0.2,
+                interrupt_window: 1.8,
+                danger_margin: 1.8,
+                ..balanced
+            },
+        }
+    }
+}
+
+/// A circle to stay out of: a telegraph or an (about to be) active hazard.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Danger {
+    pub center: V2,
+    pub radius: f32,
+    /// Seconds since it appeared (telegraph) or 99 for hazards.
+    pub age: f32,
+}
+
+/// Shared party tactical state, recomputed every tick from sim state.
+#[derive(Debug, Clone, Default)]
+pub struct Blackboard {
+    pub engaged: Vec<ActorId>,
+    pub tanks: Vec<ActorId>,
+    pub healers: Vec<ActorId>,
+    /// Focus target for damage dealers.
+    pub kill_target: Option<ActorId>,
+    /// Enemy that should be incapacitated, and who should do it.
+    pub cc_target: Option<ActorId>,
+    pub cc_owner: Option<ActorId>,
+    /// (enemy casting something interruptible, assigned interrupter).
+    pub interrupts: Vec<(ActorId, ActorId)>,
+    /// Non-tank party members currently being attacked.
+    pub threatened: Vec<ActorId>,
+    pub healer_needs_mana: bool,
+    /// An enemy is casting a party-wide pulse.
+    pub pulse_incoming: bool,
+    pub dangers: Vec<Danger>,
+    /// Engaged enemies with a frontal cleave.
+    pub frontal: Vec<ActorId>,
+}
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Decision {
@@ -24,6 +212,203 @@ pub struct Decision {
     pub cast: Option<(usize, ActorId)>,
     pub stop_cast: bool,
     pub auto_attack: bool,
+}
+
+fn has_ability_kind(sim: &Sim, e: ActorId, kind: AbilityKind, interruptible: bool) -> bool {
+    sim.actor(e).enemy.as_ref().is_some_and(|es| {
+        es.abilities
+            .iter()
+            .any(|a| a.cfg.kind == kind && (!interruptible || a.cfg.interruptible))
+    })
+}
+
+fn interrupt_ability(sim: &Sim, id: ActorId) -> Option<AbilityId> {
+    [
+        AbilityId::ShieldBash,
+        AbilityId::Kick,
+        AbilityId::SilencePulse,
+    ]
+    .into_iter()
+    .find(|a| sim.actor(id).ability_slot(*a).is_some())
+}
+
+pub fn compute_blackboard(sim: &Sim) -> Blackboard {
+    let mut b = Blackboard {
+        engaged: sim.engaged_enemies(),
+        ..Default::default()
+    };
+    for p in sim.alive_party() {
+        match sim.actor(p).role() {
+            Some(Role::Tank) => b.tanks.push(p),
+            Some(Role::Healer) => b.healers.push(p),
+            _ => {}
+        }
+    }
+    b.healer_needs_mana = b.healers.iter().any(|&h| sim.actor(h).mana_frac() < 0.5);
+    let tank = b.tanks.first().copied();
+    let tank_target = tank.and_then(|t| sim.actor(t).target);
+
+    for &e in &b.engaged {
+        let a = sim.actor(e);
+        if let Some(t) = a.target
+            && !sim.is_tank(t)
+            && !b.threatened.contains(&t)
+        {
+            b.threatened.push(t);
+        }
+        if has_ability_kind(sim, e, AbilityKind::Cleave, false)
+            && a.enemy.as_ref().is_some_and(|es| {
+                es.abilities
+                    .iter()
+                    .any(|x| x.cfg.kind == AbilityKind::Cleave && x.cfg.frontal)
+            })
+        {
+            b.frontal.push(e);
+        }
+        if let Some(c) = &a.cast
+            && let CastKind::Enemy(idx) = c.kind
+            && a.enemy
+                .as_ref()
+                .is_some_and(|es| es.abilities[idx].cfg.kind == AbilityKind::Pulse)
+        {
+            b.pulse_incoming = true;
+        }
+    }
+
+    // Kill target: healers and dangerous casters first, then adds, then the tank's target.
+    let score = |e: ActorId| {
+        let a = sim.actor(e);
+        let mut s = 0.0;
+        if Some(e) == tank_target {
+            s += 20.0;
+        }
+        if has_ability_kind(sim, e, AbilityKind::HealAlly, false) {
+            s += 40.0;
+        }
+        if has_ability_kind(sim, e, AbilityKind::Pulse, true)
+            || has_ability_kind(sim, e, AbilityKind::Bolt, true)
+                && a.rank() != Some(EnemyRank::Boss)
+        {
+            s += 25.0;
+        }
+        if a.enemy.as_ref().is_some_and(|es| es.summoned) {
+            s += 12.0;
+        }
+        if a.rank() == Some(EnemyRank::Boss) {
+            s -= 10.0;
+        }
+        s += 8.0 * (1.0 - a.hp_frac());
+        if let Some(t) = tank {
+            s -= 0.02 * a.pos.dist(sim.actor(t).pos);
+        }
+        s
+    };
+    b.kill_target = b
+        .engaged
+        .iter()
+        .copied()
+        .filter(|&e| !sim.actor(e).is_incapacitated())
+        .max_by(|&x, &y| score(x).total_cmp(&score(y)).then(y.cmp(&x)));
+
+    // Crowd control: with 3+ non-boss enemies, an AI Arcanist hexes the healthiest
+    // extra enemy that nobody is focusing.
+    let hexers: Vec<ActorId> = sim
+        .alive_party()
+        .filter(|&p| {
+            let a = sim.actor(p);
+            a.controller == crate::sim::Controller::Ai
+                && a.ability_slot(AbilityId::Hex).is_some()
+                && a.profile.params().use_cc
+        })
+        .collect();
+    let already_hexed = b
+        .engaged
+        .iter()
+        .copied()
+        .find(|&e| sim.actor(e).is_incapacitated());
+    if let Some(&owner) = hexers.first() {
+        let candidates: Vec<ActorId> = b
+            .engaged
+            .iter()
+            .copied()
+            .filter(|&e| {
+                let a = sim.actor(e);
+                !a.enemy.as_ref().is_some_and(|es| es.cc_immune)
+                    && Some(e) != b.kill_target
+                    && Some(e) != tank_target
+                    && a.hp_frac() > 0.6
+            })
+            .collect();
+        if b.engaged.len() >= 3 {
+            b.cc_owner = Some(owner);
+            b.cc_target = already_hexed.or_else(|| {
+                candidates
+                    .iter()
+                    .copied()
+                    .max_by(|&x, &y| sim.actor(x).hp.total_cmp(&sim.actor(y).hp).then(y.cmp(&x)))
+            });
+        }
+    }
+
+    // Interrupt assignments: one interrupter per interruptible cast.
+    let mut used: Vec<ActorId> = Vec::new();
+    for &e in &b.engaged {
+        let Some(c) = &sim.actor(e).cast else {
+            continue;
+        };
+        if !c.interruptible {
+            continue;
+        }
+        let mut best: Option<(f32, ActorId)> = None;
+        for p in sim.alive_party() {
+            let a = sim.actor(p);
+            if a.controller != crate::sim::Controller::Ai || used.contains(&p) {
+                continue;
+            }
+            let Some(ab) = interrupt_ability(sim, p) else {
+                continue;
+            };
+            let slot = a.ability_slot(ab).expect("has ability");
+            if a.cooldowns[slot] > 0.0 || a.resource < ab.def().cost || a.is_incapacitated() {
+                continue;
+            }
+            let range = ab.def().range;
+            let gap =
+                (a.pos.dist(sim.actor(e).pos) - range - a.radius - sim.actor(e).radius).max(0.0);
+            // Time to get in range at run speed must fit in the remaining cast.
+            if gap / a.speed.max(0.1) > c.remaining {
+                continue;
+            }
+            if best.is_none_or(|(g, _)| gap < g) {
+                best = Some((gap, p));
+            }
+        }
+        if let Some((_, p)) = best {
+            used.push(p);
+            b.interrupts.push((e, p));
+        }
+    }
+
+    for t in &sim.telegraphs {
+        b.dangers.push(Danger {
+            center: t.center,
+            radius: t.radius,
+            age: t.elapsed(),
+        });
+    }
+    for h in &sim.hazards {
+        if sim.encounters[h.encounter].cleared {
+            continue;
+        }
+        if h.active || h.time_to_active(sim.time) <= 1.0 {
+            b.dangers.push(Danger {
+                center: h.cfg.pos,
+                radius: h.cfg.radius,
+                age: 99.0,
+            });
+        }
+    }
+    b
 }
 
 fn slot(sim: &Sim, id: ActorId, ability: AbilityId) -> Option<usize> {
@@ -38,45 +423,93 @@ fn usable(sim: &Sim, id: ActorId, ability: AbilityId, target: ActorId) -> Option
         return None;
     }
     let def = ability.def();
+    if a.is_silenced() && def.school.is_magic() {
+        return None;
+    }
     if def.target != crate::class::TargetRule::SelfOnly && !sim.reach(id, target, def.range) {
         return None;
     }
-    Some((s, target))
+    let t = sim.actor(target);
+    let valid = match def.effect {
+        Effect::Absorb { .. } => !t.has_aura(|k| matches!(k, AuraKind::WeakenedSoul)),
+        Effect::Dispel => t.has_dispellable_debuff(),
+        Effect::Incapacitate { .. } => !t.enemy.as_ref().is_some_and(|e| e.cc_immune),
+        _ => true,
+    };
+    valid.then_some((s, target))
 }
 
-/// If standing in (or about to stand in) a telegraph that we have noticed, a safe point.
+fn in_danger(sim: &Sim, id: ActorId, margin: f32, reaction: f32) -> bool {
+    let me = sim.actor(id);
+    sim.board
+        .dangers
+        .iter()
+        .any(|d| d.age >= reaction && me.pos.dist(d.center) <= d.radius + me.radius + margin)
+}
+
+fn point_safe(sim: &Sim, p: V2, radius: f32, margin: f32) -> bool {
+    sim.board
+        .dangers
+        .iter()
+        .all(|d| p.dist(d.center) > d.radius + radius + margin)
+}
+
+/// If standing in a noticed danger zone, the nearest safe point.
 pub fn escape_point(sim: &Sim, id: ActorId) -> Option<V2> {
     let me = sim.actor(id);
-    let danger = sim.telegraphs.iter().find(|t| {
-        t.elapsed() >= REACTION_TIME && me.pos.dist(t.center) <= t.radius + me.radius + 0.3
+    let p = me.profile.params();
+    let margin = p.danger_margin;
+    let danger = sim.board.dangers.iter().find(|d| {
+        d.age >= p.reaction_time && me.pos.dist(d.center) <= d.radius + me.radius + margin
     })?;
-    let safe_dist = danger.radius + me.radius + 1.5;
+    let safe_dist = danger.radius + me.radius + margin + 1.0;
     let mut dir = (me.pos - danger.center).normalize_or_zero();
     if dir.len_sq() == 0.0 {
         dir = V2::from_heading(id as f32 * 1.7);
     }
     let mut best: Option<V2> = None;
-    for k in 0..12 {
-        // 0, +30, -30, +60, -60, ... degrees around the direct escape route.
+    for k in 0..16 {
         let sign = if k % 2 == 0 { 1.0 } else { -1.0 };
-        let angle = sign * ((k + 1) / 2) as f32 * std::f32::consts::PI / 6.0;
-        let p = sim
-            .nav
-            .project(danger.center + dir.rotate(angle) * safe_dist);
-        let safe = sim
-            .telegraphs
-            .iter()
-            .all(|t| p.dist(t.center) > t.radius + me.radius + 0.2);
-        if safe && best.is_none_or(|b| p.dist(me.pos) < b.dist(me.pos)) {
-            best = Some(p);
+        let angle = sign * ((k + 1) / 2) as f32 * std::f32::consts::PI / 8.0;
+        for dist in [safe_dist, safe_dist + 3.0] {
+            let cand = sim.nav.project(danger.center + dir.rotate(angle) * dist);
+            if point_safe(sim, cand, me.radius, margin * 0.5)
+                && best.is_none_or(|b| cand.dist(me.pos) < b.dist(me.pos))
+            {
+                best = Some(cand);
+            }
         }
     }
     best
 }
 
+/// Keep a desired position out of danger zones by nudging it outward.
+fn safe_spot(sim: &Sim, id: ActorId, want: V2) -> V2 {
+    let me = sim.actor(id);
+    let margin = me.profile.params().danger_margin;
+    if point_safe(sim, want, me.radius, margin) {
+        return want;
+    }
+    for d in &sim.board.dangers {
+        if want.dist(d.center) <= d.radius + me.radius + margin {
+            let dir = (want - d.center).normalize_or_zero();
+            let dir = if dir.len_sq() == 0.0 {
+                V2::new(1.0, 0.0)
+            } else {
+                dir
+            };
+            return sim
+                .nav
+                .project(d.center + dir * (d.radius + me.radius + margin + 1.0));
+        }
+    }
+    want
+}
+
 pub fn party_decision(sim: &Sim, id: ActorId) -> Decision {
     let me = sim.actor(id);
     if let Some(escape) = escape_point(sim, id) {
+        // Instant abilities are still allowed while running out.
         return Decision {
             move_goal: Some(escape),
             stop_cast: me.cast.is_some(),
@@ -84,14 +517,42 @@ pub fn party_decision(sim: &Sim, id: ActorId) -> Decision {
             ..Default::default()
         };
     }
-    let engaged = sim.engaged_enemies();
-    if engaged.is_empty() {
+    if sim.board.engaged.is_empty() {
         return out_of_combat(sim, id);
     }
+    // Assigned interrupt takes priority over everything but dodging.
+    if let Some(&(enemy, _)) = sim.board.interrupts.iter().find(|(_, p)| *p == id)
+        && let Some(ab) = interrupt_ability(sim, id)
+        && let Some(cast) = &sim.actor(enemy).cast
+    {
+        let window = me.profile.params().interrupt_window;
+        if let Some(c) = usable(sim, id, ab, enemy) {
+            if cast.remaining <= window {
+                return Decision {
+                    cast: Some(c),
+                    target: Some(Some(enemy)),
+                    auto_attack: true,
+                    ..Default::default()
+                };
+            }
+        } else if me.cast.is_none() && !sim.reach(id, enemy, ab.def().range) {
+            let mut d = Decision {
+                target: Some(Some(enemy)),
+                move_goal: Some(sim.actor(enemy).pos),
+                auto_attack: true,
+                ..Default::default()
+            };
+            if me.role() == Some(Role::Tank) {
+                // Tanks keep their own target while closing in.
+                d.target = None;
+            }
+            return d;
+        }
+    }
     match me.role() {
-        Some(Role::Tank) => tank(sim, id, &engaged),
-        Some(Role::Healer) => healer(sim, id, &engaged),
-        _ => dps(sim, id, &engaged),
+        Some(Role::Tank) => tank(sim, id),
+        Some(Role::Healer) => healer(sim, id),
+        _ => dps(sim, id),
     }
 }
 
@@ -106,9 +567,10 @@ fn follow_point(sim: &Sim, id: ActorId) -> Option<V2> {
         .filter(|&&p| p != sim.leader)
         .position(|&p| p == id)?;
     let (ox, oz) = FORMATION[index % FORMATION.len()];
+    let ring = (index / FORMATION.len()) as f32 * 3.0;
     let fwd = sim.leader_heading;
     let right = V2::new(fwd.z, -fwd.x);
-    Some(sim.nav.project(leader.pos + right * ox + fwd * oz))
+    Some(sim.nav.project(leader.pos + right * ox + fwd * (oz - ring)))
 }
 
 fn out_of_combat(sim: &Sim, id: ActorId) -> Decision {
@@ -118,13 +580,21 @@ fn out_of_combat(sim: &Sim, id: ActorId) -> Decision {
         ..Default::default()
     };
     if id == sim.leader {
-        if sim.autopilot {
+        if sim.options.autopilot {
             return autopilot(sim, id);
         }
         return d;
     }
-    // Healers top the party off between pulls.
+    // Healers top the party off between pulls and clear lingering debuffs.
     if me.role() == Some(Role::Healer) && me.cast.is_none() {
+        if let Some(p) = sim
+            .alive_party()
+            .find(|&p| sim.actor(p).has_dispellable_debuff())
+            && let Some(c) = usable(sim, id, AbilityId::Purify, p)
+        {
+            d.cast = Some(c);
+            return d;
+        }
         let hurt = sim
             .alive_party()
             .filter(|&p| sim.actor(p).hp_frac() < 0.7)
@@ -143,29 +613,34 @@ fn out_of_combat(sim: &Sim, id: ActorId) -> Decision {
     if let Some(goal) = follow_point(sim, id)
         && goal.dist(me.pos) > 1.5
     {
-        d.move_goal = Some(goal);
+        d.move_goal = Some(safe_spot(sim, id, goal));
     }
     d
 }
 
-/// Leader autopilot used in headless runs: wait for the party to be ready and
-/// gathered, then walk to the next uncleared encounter and pull it.
+/// Leader autopilot (headless / demo): wait until the party is ready and gathered,
+/// then walk to the next uncleared encounter and pull it.
 fn autopilot(sim: &Sim, id: ActorId) -> Decision {
     let me = sim.actor(id);
+    let p = me.profile.params();
     let mut d = Decision {
         target: Some(None),
         ..Default::default()
     };
-    let Some(next) = sim.encounters.iter().position(|e| !e.cleared) else {
+    let Some(next) = sim
+        .encounters
+        .iter()
+        .position(|e| !e.cleared && !(e.optional && sim.options.skip_optional))
+    else {
         return d;
     };
-    let ready = sim.alive_party().all(|p| {
-        let a = sim.actor(p);
-        a.hp_frac() >= 0.9 && (a.max_mana < 400.0 || a.mana_frac() >= 0.8)
-    });
+    let ready = sim.alive_party().all(|q| {
+        let a = sim.actor(q);
+        a.hp_frac() >= p.ready_hp && a.mana_frac() >= p.ready_mana
+    }) && sim.alive_party().count() == sim.party.len();
     let gathered = sim
         .alive_party()
-        .all(|p| sim.actor(p).pos.dist(me.pos) <= 12.0);
+        .all(|q| sim.actor(q).pos.dist(me.pos) <= 12.0);
     if !ready || !gathered {
         return d;
     }
@@ -190,31 +665,64 @@ fn autopilot(sim: &Sim, id: ActorId) -> Decision {
         d.target = Some(Some(nearest));
         return d;
     }
-    d.move_goal = Some(sim.actor(nearest).pos);
+    d.move_goal = Some(safe_spot(sim, id, sim.actor(nearest).pos));
     d
 }
 
 fn rank_weight(sim: &Sim, e: ActorId) -> f32 {
-    match sim.actor(e).enemy.as_ref().map(|s| s.rank) {
+    match sim.actor(e).rank() {
         Some(EnemyRank::Boss) => 3.0,
         Some(EnemyRank::Elite) => 2.0,
         _ => 1.0,
     }
 }
 
-/// Tank: pick up loose enemies (taunt if possible), otherwise hold the enemy on
-/// which our threat lead is smallest. Bulwark when low.
-fn tank(sim: &Sim, id: ActorId, engaged: &[ActorId]) -> Decision {
+/// Where a melee attacker should stand: behind `target` relative to the tank.
+fn behind_spot(sim: &Sim, id: ActorId, target: ActorId) -> V2 {
+    let t = sim.actor(target);
     let me = sim.actor(id);
+    let anchor = sim
+        .board
+        .tanks
+        .first()
+        .map(|&k| sim.actor(k).pos)
+        .unwrap_or(me.pos);
+    let mut behind = (t.pos - anchor).normalize_or_zero();
+    if behind.len_sq() == 0.0 {
+        behind = V2::from_heading(t.facing + std::f32::consts::PI);
+    }
+    let side = if id.is_multiple_of(2) { 0.35 } else { -0.35 };
+    sim.nav
+        .project(t.pos + behind.rotate(side) * (t.radius + me.radius + 1.0))
+}
+
+/// Tank: pick up loose enemies (taunt if possible), hold the enemy whose threat lead
+/// is smallest, AoE threat on packs, defensives on low HP or incoming pulses.
+fn tank(sim: &Sim, id: ActorId) -> Decision {
+    let me = sim.actor(id);
+    let p = me.profile.params();
+    let engaged: Vec<ActorId> = sim
+        .board
+        .engaged
+        .iter()
+        .copied()
+        .filter(|&e| !sim.actor(e).is_incapacitated())
+        .collect();
     let mut d = Decision {
         auto_attack: true,
         ..Default::default()
     };
-    // Enemies attacking someone else, most dangerous first (healer, then by rank).
+    if engaged.is_empty() {
+        return d;
+    }
     let mut loose: Vec<ActorId> = engaged
         .iter()
         .copied()
-        .filter(|&e| sim.actor(e).target.is_some_and(|t| t != id))
+        .filter(|&e| {
+            sim.actor(e)
+                .target
+                .is_some_and(|t| t != id && !sim.is_tank(t))
+        })
         .collect();
     loose.sort_by(|&a, &b| {
         let score = |e: ActorId| {
@@ -227,29 +735,28 @@ fn tank(sim: &Sim, id: ActorId, engaged: &[ActorId]) -> Decision {
         };
         score(b).total_cmp(&score(a)).then(a.cmp(&b))
     });
+    let lead = |e: ActorId| {
+        let mine = sim.threat(e, id);
+        let other = sim
+            .actor(e)
+            .enemy
+            .as_ref()
+            .map(|s| {
+                s.threat
+                    .iter()
+                    .filter(|t| t.actor != id)
+                    .map(|t| t.value)
+                    .fold(0.0, f32::max)
+            })
+            .unwrap_or(0.0);
+        mine - other
+    };
     let target = if let Some(&e) = loose.first() {
         if let Some(c) = usable(sim, id, AbilityId::Challenge, e) {
             d.cast = Some(c);
         }
         e
     } else {
-        // Smallest threat lead: our threat minus the best other threat.
-        let lead = |e: ActorId| {
-            let mine = sim.threat(e, id);
-            let other = sim
-                .actor(e)
-                .enemy
-                .as_ref()
-                .map(|s| {
-                    s.threat
-                        .iter()
-                        .filter(|t| t.actor != id)
-                        .map(|t| t.value)
-                        .fold(0.0, f32::max)
-                })
-                .unwrap_or(0.0);
-            mine - other
-        };
         let current = me.target.filter(|t| engaged.contains(t));
         let best = engaged
             .iter()
@@ -257,76 +764,151 @@ fn tank(sim: &Sim, id: ActorId, engaged: &[ActorId]) -> Decision {
             .min_by(|&a, &b| lead(a).total_cmp(&lead(b)).then(a.cmp(&b)))
             .expect("engaged is non-empty");
         match current {
-            // Stick with the current target unless another is clearly more at risk.
             Some(c) if lead(c) <= lead(best) + 150.0 => c,
             _ => best,
         }
     };
     d.target = Some(Some(target));
+    let stacks: u32 = me
+        .auras
+        .iter()
+        .filter(|a| matches!(a.kind, AuraKind::DamageTaken { .. }))
+        .map(|a| a.stacks)
+        .sum();
     if d.cast.is_none() {
-        if me.hp_frac() < 0.5
-            && let Some(c) = usable(sim, id, AbilityId::Bulwark, id)
-        {
-            d.cast = Some(c);
-        } else if let Some(c) = usable(sim, id, AbilityId::ShieldSlam, target) {
-            d.cast = Some(c);
+        let near = engaged
+            .iter()
+            .filter(|&&e| sim.actor(e).pos.dist(me.pos) <= 8.0 + sim.actor(e).radius)
+            .count();
+        let wants_defensive =
+            me.hp_frac() < p.defensive_hp || sim.board.pulse_incoming || stacks >= 4;
+        d.cast = if wants_defensive {
+            usable(sim, id, AbilityId::Bulwark, id)
+        } else {
+            None
+        }
+        .or_else(|| {
+            // Quake on packs, but never next to a crowd-controlled enemy.
+            let cc_near =
+                sim.board.engaged.iter().any(|&e| {
+                    sim.actor(e).is_incapacitated() && sim.actor(e).pos.dist(me.pos) <= 9.0
+                });
+            (near >= 2 && !cc_near)
+                .then(|| usable(sim, id, AbilityId::QuakeStomp, id))
+                .flatten()
+        })
+        .or_else(|| usable(sim, id, AbilityId::ShieldSlam, target));
+    }
+    // Position: in melee range; for frontal cleavers, on the far side from the party
+    // so the cleave points away from everyone else.
+    let t = sim.actor(target);
+    if sim.board.frontal.contains(&target) {
+        let others: Vec<V2> = sim
+            .alive_party()
+            .filter(|&q| q != id)
+            .map(|q| sim.actor(q).pos)
+            .collect();
+        if !others.is_empty() {
+            let centroid =
+                others.iter().fold(V2::ZERO, |acc, &v| acc + v) * (1.0 / others.len() as f32);
+            let away = (t.pos - centroid).normalize_or_zero();
+            if away.len_sq() > 0.0 {
+                let spot = sim.nav.project(t.pos + away * (t.radius + me.radius + 1.2));
+                if spot.dist(me.pos) > 1.5 {
+                    d.move_goal = Some(safe_spot(sim, id, spot));
+                }
+                return d;
+            }
         }
     }
     if !sim.reach(id, target, 1.6) {
-        d.move_goal = Some(sim.actor(target).pos);
+        d.move_goal = Some(safe_spot(sim, id, t.pos));
     }
     d
 }
 
-fn healer(sim: &Sim, id: ActorId, engaged: &[ActorId]) -> Decision {
+fn healer(sim: &Sim, id: ActorId) -> Decision {
     let me = sim.actor(id);
+    let p = me.profile.params();
     let mut d = Decision::default();
     // Cancel a big heal that would be pure overheal.
-    if let Some(c) = me.cast {
+    if let Some(c) = &me.cast {
         let t = sim.actor(c.target);
-        if c.name == "Mend" && t.hp_frac() > 0.97 && c.remaining > 0.3 {
+        if &*c.name == "Mend" && t.hp_frac() > 0.97 && c.remaining > 0.3 {
             d.stop_cast = true;
         } else {
             return d;
         }
     }
-    let tank = sim.tank();
+    let tank = sim.board.tanks.first().copied();
     let mana = me.mana_frac();
-    // Effective urgency: tank and self are weighted as slightly lower HP.
-    let urgency = |p: ActorId| {
-        let a = sim.actor(p);
+    let urgency = |q: ActorId| {
+        let a = sim.actor(q);
         let mut f = a.hp_frac();
-        if Some(p) == tank {
+        if Some(q) == tank {
             f -= 0.1;
         }
-        if p == id {
+        if q == id {
+            f -= 0.05;
+        }
+        if sim.board.threatened.contains(&q) {
             f -= 0.05;
         }
         f
     };
     let mut allies: Vec<ActorId> = sim.alive_party().collect();
     allies.sort_by(|&a, &b| urgency(a).total_cmp(&urgency(b)).then(a.cmp(&b)));
-    let mend_threshold = if mana < 0.2 { 0.35 } else { 0.6 };
+    let emergency = allies
+        .first()
+        .is_some_and(|&a| sim.actor(a).hp_frac() < 0.35);
+
+    let dispel = || {
+        allies
+            .iter()
+            .copied()
+            .filter(|&q| sim.actor(q).has_dispellable_debuff())
+            .find_map(|q| usable(sim, id, AbilityId::Purify, q))
+    };
+    if p.dispel_first && !emergency {
+        d.cast = dispel();
+    }
+    // Shield ahead of a party-wide pulse, or the tank when it is taking a beating.
+    if d.cast.is_none() && mana > 0.2 {
+        let ward_target = if sim.board.pulse_incoming {
+            allies.first().copied()
+        } else {
+            tank.filter(|&t| sim.actor(t).hp_frac() < 0.75)
+        };
+        if let Some(t) = ward_target {
+            d.cast = usable(sim, id, AbilityId::Ward, t);
+        }
+    }
+    let mend_threshold = if mana < 0.2 { 0.35 } else { p.mend_threshold };
     let mut out_of_range_patient = None;
-    for &p in &allies {
-        let a = sim.actor(p);
-        if a.hp_frac() < mend_threshold && mana > 0.07 {
-            if let Some(c) = usable(sim, id, AbilityId::Mend, p) {
-                d.cast = Some(c);
-                break;
-            } else if !sim.reach(id, p, 30.0) {
-                out_of_range_patient.get_or_insert(p);
+    if d.cast.is_none() {
+        for &q in &allies {
+            let a = sim.actor(q);
+            if a.hp_frac() < mend_threshold && mana > 0.07 {
+                if let Some(c) = usable(sim, id, AbilityId::Mend, q) {
+                    d.cast = Some(c);
+                    break;
+                } else if !sim.reach(id, q, 30.0) {
+                    out_of_range_patient.get_or_insert(q);
+                }
             }
         }
     }
+    if d.cast.is_none() && !p.dispel_first && !emergency {
+        d.cast = dispel();
+    }
     if d.cast.is_none() && mana > 0.25 {
-        for &p in &allies {
-            let a = sim.actor(p);
-            let wants_hot =
-                a.hp_frac() < 0.85 || (Some(p) == tank && a.hp_frac() < 0.97 && mana > 0.5);
+        for &q in &allies {
+            let a = sim.actor(q);
+            let wants_hot = a.hp_frac() < p.hot_threshold
+                || (Some(q) == tank && a.hp_frac() < 0.97 && mana > 0.5);
             if wants_hot
                 && !a.has_hot_from(id)
-                && let Some(c) = usable(sim, id, AbilityId::Renew, p)
+                && let Some(c) = usable(sim, id, AbilityId::Renew, q)
             {
                 d.cast = Some(c);
                 break;
@@ -334,25 +916,23 @@ fn healer(sim: &Sim, id: ActorId, engaged: &[ActorId]) -> Decision {
         }
     }
     if d.cast.is_none()
-        && mana > 0.75
-        && let Some(t) = tank.and_then(|t| sim.actor(t).target)
-        && engaged.contains(&t)
-        && sim.threat(t, tank.unwrap_or(id)) > 300.0
+        && mana > p.smite_mana
+        && let Some(t) = sim.board.kill_target
+        && tank.is_none_or(|k| sim.threat(t, k) > 300.0)
         && let Some(c) = usable(sim, id, AbilityId::Smite, t)
     {
         d.cast = Some(c);
     }
-    // Positioning: stay behind the tank at range, close enough to reach everyone.
     let casting_now = d
         .cast
         .is_some_and(|(s, _)| me.abilities[s].def().cast_time > 0.0);
     if !casting_now {
-        if let Some(p) = out_of_range_patient {
-            d.move_goal = Some(sim.actor(p).pos);
-        } else if let Some(goal) = ranged_spot(sim, id, engaged, 15.0) {
-            let far_from_party = sim.alive_party().any(|p| !sim.reach(id, p, 26.0));
-            if goal.dist(me.pos) > 6.0 || far_from_party {
-                d.move_goal = Some(goal);
+        if let Some(q) = out_of_range_patient {
+            d.move_goal = Some(safe_spot(sim, id, sim.actor(q).pos));
+        } else if let Some(goal) = ranged_spot(sim, id, 15.0) {
+            let far_from_party = sim.alive_party().any(|q| !sim.reach(id, q, 26.0));
+            if goal.dist(me.pos) > 6.0 || far_from_party || in_danger(sim, id, 0.0, 0.0) {
+                d.move_goal = Some(safe_spot(sim, id, goal));
             }
         }
     }
@@ -360,52 +940,56 @@ fn healer(sim: &Sim, id: ActorId, engaged: &[ActorId]) -> Decision {
 }
 
 /// A spot `dist` away from the tank's enemy on the tank's side, offset sideways per actor.
-fn ranged_spot(sim: &Sim, id: ActorId, engaged: &[ActorId], dist: f32) -> Option<V2> {
-    let tank = sim.tank();
+fn ranged_spot(sim: &Sim, id: ActorId, dist: f32) -> Option<V2> {
+    let tank = sim.board.tanks.first().copied();
     let enemy = tank
         .and_then(|t| sim.actor(t).target)
-        .filter(|e| engaged.contains(e))
-        .or_else(|| engaged.first().copied())?;
+        .filter(|e| sim.board.engaged.contains(e))
+        .or_else(|| sim.board.engaged.first().copied())?;
     let epos = sim.actor(enemy).pos;
     let anchor = tank.map(|t| sim.actor(t).pos).unwrap_or(sim.actor(id).pos);
     let mut dir = (anchor - epos).normalize_or_zero();
     if dir.len_sq() == 0.0 {
         dir = (sim.actor(id).pos - epos).normalize_or_zero();
     }
-    let side = if id.is_multiple_of(2) { 0.5 } else { -0.5 };
+    // Spread ranged members around the arc so one ring can't catch everyone.
+    let side = ((id % 5) as f32 - 2.0) * 0.3;
     Some(sim.nav.project(epos + dir.rotate(side) * dist))
 }
 
-fn dps(sim: &Sim, id: ActorId, engaged: &[ActorId]) -> Decision {
+fn dps(sim: &Sim, id: ActorId) -> Decision {
     let me = sim.actor(id);
+    let p = me.profile.params();
     let ranged = me.role() == Some(Role::RangedDps);
     let mut d = Decision::default();
     if me.cast.is_some() {
         return d;
     }
-    let tank = sim.tank();
-    let tank_target = tank.and_then(|t| sim.actor(t).target);
-    // Utility score: assist the tank, finish low enemies, prefer trash, stickiness.
-    let score = |e: ActorId| {
-        let a = sim.actor(e);
-        let mut s = 0.0;
-        if Some(e) == tank_target {
-            s += 10.0;
-        }
-        s += 6.0 * (1.0 - a.hp_frac());
-        if a.enemy.as_ref().is_some_and(|x| x.rank == EnemyRank::Trash) {
-            s += 2.0;
-        }
-        if me.target == Some(e) {
-            s += 3.0;
-        }
-        s - a.pos.dist(me.pos) * 0.02
+    let tank = sim.board.tanks.first().copied();
+    // Crowd-control duty first.
+    if sim.board.cc_owner == Some(id)
+        && let Some(cc) = sim.board.cc_target
+        && !sim.actor(cc).is_incapacitated()
+        && let Some(c) = usable(sim, id, AbilityId::Hex, cc)
+    {
+        d.cast = Some(c);
+        d.target = Some(Some(cc));
+        return d;
+    }
+    let target = sim
+        .board
+        .kill_target
+        .filter(|&t| !sim.actor(t).is_incapacitated())
+        .or_else(|| {
+            sim.board
+                .engaged
+                .iter()
+                .copied()
+                .find(|&e| !sim.actor(e).is_incapacitated())
+        });
+    let Some(target) = target else {
+        return d;
     };
-    let target = engaged
-        .iter()
-        .copied()
-        .max_by(|&a, &b| score(a).total_cmp(&score(b)).then(b.cmp(&a)))
-        .expect("engaged is non-empty");
     d.target = Some(Some(target));
     let t = sim.actor(target);
 
@@ -415,7 +999,7 @@ fn dps(sim: &Sim, id: ActorId, engaged: &[ActorId]) -> Decision {
         let tank_threat = sim.threat(target, tank);
         let my_threat = sim.threat(target, id);
         let on_me = t.target == Some(id);
-        let danger = my_threat > 0.9 * tank_threat;
+        let danger = my_threat > p.threat_cap * tank_threat;
         if (on_me || danger) && my_threat > 100.0 {
             let drop = if ranged {
                 AbilityId::Veil
@@ -424,14 +1008,21 @@ fn dps(sim: &Sim, id: ActorId, engaged: &[ActorId]) -> Decision {
             };
             d.cast = usable(sim, id, drop, id);
         }
-        // Let the tank open and keep a lead, unless the enemy is already on us.
-        hold = !on_me && (tank_threat < 1.0 || danger);
+        hold = !on_me && (tank_threat < p.min_tank_threat.max(1.0) || danger);
     }
     d.auto_attack = !hold;
 
+    let cc_nearby = |center: V2, r: f32| {
+        sim.board
+            .engaged
+            .iter()
+            .any(|&e| sim.actor(e).is_incapacitated() && sim.actor(e).pos.dist(center) <= r + 1.0)
+    };
     if ranged {
-        if !sim.reach(id, target, 26.0) {
-            d.move_goal = ranged_spot(sim, id, engaged, RANGED_DISTANCE).or(Some(t.pos));
+        if !sim.reach(id, target, 26.0) || in_danger(sim, id, 0.0, 0.0) {
+            d.move_goal = ranged_spot(sim, id, RANGED_DISTANCE)
+                .map(|s| safe_spot(sim, id, s))
+                .or(Some(t.pos));
         }
         if !hold && d.cast.is_none() {
             d.cast = usable(sim, id, AbilityId::Flare, target)
@@ -443,28 +1034,27 @@ fn dps(sim: &Sim, id: ActorId, engaged: &[ActorId]) -> Decision {
             d.move_goal = None;
         }
     } else {
-        // Melee: get behind the target relative to the tank.
-        let anchor = tank.map(|t| sim.actor(t).pos).unwrap_or(me.pos);
-        let behind = (t.pos - anchor).normalize_or_zero();
-        let spot = sim
-            .nav
-            .project(t.pos + behind * (t.radius + me.radius + 1.0));
+        let spot = safe_spot(sim, id, behind_spot(sim, id, target));
         if !sim.reach(id, target, 1.6) || spot.dist(me.pos) > 2.5 && tank.is_some() {
             d.move_goal = Some(spot);
         }
         if !hold && d.cast.is_none() {
-            let near: Vec<ActorId> = engaged
+            let near: Vec<ActorId> = sim
+                .board
+                .engaged
                 .iter()
                 .copied()
                 .filter(|&e| sim.actor(e).pos.dist(me.pos) <= 6.0 + sim.actor(e).radius)
                 .collect();
-            // Only AoE when the tank holds a comfortable lead on everything we'd hit.
             let aoe_safe = tank.is_some_and(|tank| {
                 near.iter()
                     .all(|&e| sim.threat(e, tank) > 2.0 * sim.threat(e, id) + 150.0)
-            });
+            }) && !cc_nearby(me.pos, 6.0);
             if near.len() >= 2 && aoe_safe {
                 d.cast = usable(sim, id, AbilityId::Whirl, id);
+            }
+            if d.cast.is_none() && !t.has_dot_from(id) && t.hp_frac() > 0.25 && t.max_hp > 1500.0 {
+                d.cast = usable(sim, id, AbilityId::Lacerate, target);
             }
             if d.cast.is_none() {
                 d.cast = usable(sim, id, AbilityId::RendStrike, target);

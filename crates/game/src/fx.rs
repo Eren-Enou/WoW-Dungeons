@@ -6,6 +6,7 @@ use crate::common::{AppState, to_vec3};
 use crate::dungeon::ActiveRun;
 use bevy::prelude::*;
 use dungeon_sim::EventKind;
+use dungeon_sim::stats::{HitOutcome, School};
 
 pub struct FxPlugin;
 
@@ -52,23 +53,32 @@ struct Fx {
     base_alpha: f32,
 }
 
-/// Effect colour by ability "category".
-fn category_color(what: &str) -> Color {
-    match what {
-        "Arc Bolt" | "Flare" | "Wand" => Color::srgb(0.7, 0.4, 1.0),
-        "Smite" => Color::srgb(1.0, 0.95, 0.5),
-        "Hollow Bolt" => Color::srgb(0.4, 0.1, 0.6),
-        "Cinder Ring" => Color::srgb(1.0, 0.4, 0.05),
-        "Rockfall Cleave" => Color::srgb(0.6, 0.45, 0.3),
-        "Whirl" => Color::srgb(1.0, 0.6, 0.2),
-        _ => Color::srgb(1.0, 1.0, 1.0),
+/// Effect colour by damage school (physical uses an off-white).
+fn school_color(school: School, what: &str) -> Color {
+    if what == "Wand" {
+        return Color::srgb(0.7, 0.4, 1.0);
+    }
+    match school {
+        School::Physical => Color::srgb(0.9, 0.85, 0.75),
+        School::Holy => Color::srgb(1.0, 0.95, 0.5),
+        School::Fire => Color::srgb(1.0, 0.45, 0.1),
+        School::Frost => Color::srgb(0.5, 0.8, 1.0),
+        School::Shadow => Color::srgb(0.45, 0.15, 0.65),
+        School::Arcane => Color::srgb(0.75, 0.45, 1.0),
+        School::Nature => Color::srgb(0.4, 0.9, 0.3),
     }
 }
 
-fn is_projectile(what: &str) -> bool {
+/// Abilities shown as one expanding ring rather than per-target effects.
+fn is_area(what: &str) -> bool {
     matches!(
         what,
-        "Arc Bolt" | "Flare" | "Wand" | "Smite" | "Hollow Bolt"
+        "Whirl"
+            | "Quake Stomp"
+            | "Rockfall Cleave"
+            | "Rending Mandibles"
+            | "Root Lash"
+            | "Hollow Sweep"
     )
 }
 
@@ -155,11 +165,15 @@ fn spawn_fx(
                 src,
                 dst,
                 what,
-                crit,
+                outcome,
+                school,
                 ..
             } => {
-                let color = category_color(what);
-                if is_projectile(what) {
+                let crit = outcome == &HitOutcome::Crit;
+                let ranged = sim.actors[*src].pos.dist(sim.actors[*dst].pos)
+                    > sim.actors[*src].radius + sim.actors[*dst].radius + 3.0;
+                let color = school_color(*school, what);
+                if ranged && (school.is_magic() || &**what == "Wand") && !is_area(what) {
                     spawn_one(
                         &mut commands,
                         &mut materials,
@@ -171,8 +185,8 @@ fn spawn_fx(
                         },
                         0.22,
                     );
-                } else if *what == "Melee" || *what == "Rend Strike" || *what == "Shield Slam" {
-                    let size = if *crit { 1.6 } else { 1.0 };
+                } else if !ranged && !is_area(what) && !outcome.avoided() {
+                    let size = if crit { 1.6 } else { 1.0 };
                     spawn_one(
                         &mut commands,
                         &mut materials,
@@ -210,7 +224,7 @@ fn spawn_fx(
                 },
                 0.4,
             ),
-            EventKind::Buff { dst, .. } => spawn_one(
+            EventKind::AuraApplied { src, dst, .. } if src == dst => spawn_one(
                 &mut commands,
                 &mut materials,
                 assets.sphere.clone(),
@@ -256,7 +270,7 @@ fn spawn_fx(
     let mut seen = Vec::new();
     for e in &run.fresh {
         if let EventKind::Damage { src, what, .. } = &e.kind
-            && matches!(*what, "Whirl" | "Rockfall Cleave")
+            && is_area(what)
             && !seen.contains(src)
         {
             seen.push(*src);
@@ -264,7 +278,7 @@ fn spawn_fx(
                 &mut commands,
                 &mut materials,
                 assets.ring.clone(),
-                category_color(what).with_alpha(0.8),
+                Color::srgba(1.0, 0.6, 0.2, 0.8),
                 Motion::Grow {
                     at: feet(*src),
                     from: 1.0,

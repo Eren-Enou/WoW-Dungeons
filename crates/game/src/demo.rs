@@ -21,6 +21,10 @@ pub struct DemoConfig {
     pub input_test: bool,
     pub speed: f32,
     pub screenshot_every: Option<f32>,
+    /// Demo overrides for the selected dungeon / difficulty / party level.
+    pub dungeon: Option<String>,
+    pub difficulty: Option<String>,
+    pub level: Option<u32>,
 }
 
 #[derive(Resource, Default)]
@@ -39,11 +43,20 @@ pub fn parse_args() -> DemoConfig {
             .and_then(|i| args.get(i + 1))
             .and_then(|v| v.parse::<f32>().ok())
     };
+    let text = |flag: &str| {
+        args.iter()
+            .position(|a| a == flag)
+            .and_then(|i| args.get(i + 1))
+            .cloned()
+    };
     DemoConfig {
         autoplay: args.iter().any(|a| a == "--demo"),
         input_test: args.iter().any(|a| a == "--input-test"),
         speed: value("--speed").unwrap_or(1.0).clamp(0.1, 10.0),
         screenshot_every: value("--screenshots"),
+        dungeon: text("--dungeon"),
+        difficulty: text("--difficulty"),
+        level: value("--level").map(|l| l as u32),
     }
 }
 
@@ -84,6 +97,18 @@ fn demo_driver(
     demo.state_time += time.delta_secs();
     match current {
         AppState::Hub if demo.state_time > 3.0 && demo.runs_started == 0 => {
+            if let Some(d) = &cfg.dungeon {
+                data.profile.selected_dungeon = d.clone();
+            }
+            if let Some(d) = &cfg.difficulty {
+                data.profile.selected_difficulty = d.clone();
+            }
+            if let Some(l) = cfg.level {
+                data.profile.player_level = l;
+                for c in data.profile.roster.iter_mut() {
+                    c.level = l;
+                }
+            }
             if data.reload_content() && !data.profile.party.is_empty() {
                 demo.runs_started += 1;
                 next.set(AppState::Dungeon);
@@ -192,30 +217,29 @@ fn scripted_input(
             .map(|e| run.sim.describe(e))
             .collect();
         let engaged = run.sim.engaged_enemies().len();
-        let report = format!(
-            "INPUT TEST REPORT
-class: {:?}
-moved: {moved:.1} m (from {:?} to {:?})
-tab presses: {}
-current target: {:?}
-successful player casts: {casts}
-player damage done: {:.0}
-failed casts: {}
-{}
-engaged enemies: {engaged}
-",
-            a.class,
-            start.map(|s| (s.x, s.z)),
-            (a.pos.x, a.pos.z),
-            *tab_pressed,
-            a.target.map(|t| run.sim.actors[t].name.clone()),
-            run.sim.metrics.actors[p].damage_done,
-            failures.len(),
-            failures.join(
-                "
-"
+        let report = [
+            "INPUT TEST REPORT".to_string(),
+            format!("class: {:?}", a.class),
+            format!(
+                "moved: {moved:.1} m (from {:?} to {:?})",
+                start.map(|s| (s.x, s.z)),
+                (a.pos.x, a.pos.z)
             ),
-        );
+            format!("tab presses: {}", *tab_pressed),
+            format!(
+                "current target: {:?}",
+                a.target.map(|t| run.sim.actors[t].name.clone())
+            ),
+            format!("successful player casts: {casts}"),
+            format!(
+                "player damage done: {:.0}",
+                run.sim.metrics.actors[p].damage_done
+            ),
+            format!("failed casts: {}", failures.len()),
+            failures.join("\n"),
+            format!("engaged enemies: {engaged}"),
+        ]
+        .join("\n");
         info!("{report}");
         let _ = std::fs::create_dir_all("logs");
         let _ = std::fs::write("logs/input_test.txt", report);

@@ -1,0 +1,480 @@
+# Dungeon Sandbox content file: The Gloomroot Warrens (levels 4-6).
+#
+# A second, harder dungeon built with the same schema as the Sunken Vault.
+# Encounter design goals (see PROGRESS.md):
+#   * Rootweaver Shamans heal their allies - interrupt or kill them first.
+#   * Gloom Hexers cast Shadow Volley on the whole party - interrupt them.
+#   * Mother Brakkis summons spiderlings (switch targets) and stacks a dispellable
+#     poison on the tank; her mandibles cleave in front - stand behind her.
+#   * The Ember Pools have lava vents that pulse on and off.
+#   * Vhorlag has three phases: a party-wide pulse that calls for defensive
+#     cooldowns, rootling adds, double thorn rings, then a stacking tank debuff.
+#   * The Sporecap Grotto is optional.
+
+[dungeon]
+id = "gloomroot_warrens"
+name = "The Gloomroot Warrens"
+description = "Fungal tunnels under the old forest. Healer-casters, a brood mother, lava vents and Vhorlag, the Rootbound King."
+recommended_level = 4
+hp_multiplier = 1.0
+damage_multiplier = 1.0
+entrance = [0.0, 0.0]
+leash_radius = 50.0
+theme = { floor = [0.18, 0.22, 0.16], wall = [0.26, 0.24, 0.20], light = [0.65, 1.0, 0.55] }
+
+[[difficulties]]
+id = "normal"
+name = "Normal"
+
+[[difficulties]]
+id = "heroic"
+name = "Heroic"
+hp = 1.5
+damage = 1.35
+level_bonus = 2
+reward_multiplier = 2.0
+rarity_bonus = 1
+
+[[dungeon.areas]]
+name = "Root Hall"
+min = [-10.0, -6.0]
+max = [10.0, 12.0]
+
+[[dungeon.areas]]
+name = "West Tunnel"
+min = [-18.0, 8.0]
+max = [-8.0, 14.0]
+
+[[dungeon.areas]]
+name = "Sporecap Grotto"
+min = [-42.0, 4.0]
+max = [-16.0, 32.0]
+
+[[dungeon.areas]]
+name = "North Passage"
+min = [-3.0, 10.0]
+max = [3.0, 30.0]
+
+[[dungeon.areas]]
+name = "Weavers' Den"
+min = [-14.0, 28.0]
+max = [14.0, 52.0]
+
+[[dungeon.areas]]
+name = "Den Passage"
+min = [-3.0, 50.0]
+max = [3.0, 64.0]
+
+[[dungeon.areas]]
+name = "Brood Chamber"
+min = [-16.0, 62.0]
+max = [16.0, 90.0]
+
+[[dungeon.areas]]
+name = "East Run"
+min = [14.0, 72.0]
+max = [40.0, 78.0]
+
+[[dungeon.areas]]
+name = "Ember Pools"
+min = [38.0, 60.0]
+max = [62.0, 96.0]
+
+[[dungeon.areas]]
+name = "Root Stair"
+min = [47.0, 94.0]
+max = [53.0, 110.0]
+
+[[dungeon.areas]]
+name = "Throne of Roots"
+min = [30.0, 108.0]
+max = [70.0, 144.0]
+
+# ---------------------------------------------------------------- enemies --
+
+[templates.thornback]
+name = "Thornback Brute"
+rank = "trash"
+level = 4
+hp = 1100.0
+melee_damage = 63.0
+attack_interval = 2.0
+aggro_radius = 10.0
+speed = 6.5
+radius = 0.8
+armor = 220.0
+parry = 0.05
+
+[templates.rootweaver]
+name = "Rootweaver Shaman"
+rank = "trash"
+level = 4
+hp = 800.0
+melee_damage = 30.0
+attack_interval = 2.0
+aggro_radius = 10.0
+speed = 6.0
+radius = 0.6
+armor = 80.0
+resist = 10.0
+
+[[templates.rootweaver.abilities]]
+name = "Mending Sap"         # heals the most injured ally - interrupt it
+kind = "heal_ally"
+interval = 9.0
+initial = 5.0
+cast_time = 2.0
+interruptible = true
+amount = 650.0
+
+[[templates.rootweaver.abilities]]
+name = "Thorn Bolt"
+kind = "bolt"
+interval = 6.0
+initial = 2.0
+cast_time = 1.5
+interruptible = true
+target = "current"
+damage = 128.0
+school = "nature"
+
+[templates.spiderling]
+name = "Brakkis Spiderling"
+rank = "trash"
+level = 4
+hp = 380.0
+melee_damage = 33.0
+attack_interval = 1.6
+aggro_radius = 20.0
+speed = 8.0
+radius = 0.45
+armor = 30.0
+
+[templates.brakkis]
+name = "Mother Brakkis"
+rank = "boss"
+level = 6
+hp = 18000.0
+melee_damage = 180.0
+attack_interval = 2.0
+attack_range = 2.5
+aggro_radius = 14.0
+speed = 6.0
+radius = 1.7
+armor = 300.0
+resist = 10.0
+parry = 0.08
+enrage_seconds = 240.0
+
+[[templates.brakkis.abilities]]
+name = "Call the Brood"      # adds: switch targets
+kind = "summon"
+interval = 16.0
+initial = 8.0
+template = "spiderling"
+count = 2
+
+[[templates.brakkis.abilities]]
+name = "Venom Brand"         # stacking poison on her target; Purify removes it
+kind = "debuff"
+interval = 6.0
+initial = 4.0
+target = "current"
+aura = { name = "Venom Brand", effect = "dot", value = 33.0, duration = 12.0, max_stacks = 5, dispellable = true, school = "nature" }
+
+[[templates.brakkis.abilities]]
+name = "Rending Mandibles"   # frontal cleave: only the tank should be in front
+kind = "cleave"
+interval = 7.0
+initial = 5.0
+damage = 224.0
+radius = 6.0
+frontal = true
+
+[templates.hound]
+name = "Cinderlurk Hound"
+rank = "trash"
+level = 5
+hp = 1200.0
+melee_damage = 75.0
+attack_interval = 1.8
+aggro_radius = 11.0
+speed = 8.0
+radius = 0.8
+armor = 180.0
+resist = 20.0
+
+[templates.hexer]
+name = "Gloom Hexer"
+rank = "elite"
+level = 5
+hp = 2200.0
+melee_damage = 44.0
+attack_interval = 2.2
+aggro_radius = 13.0
+speed = 6.0
+radius = 0.7
+armor = 100.0
+resist = 15.0
+
+[[templates.hexer.abilities]]
+name = "Shadow Volley"       # hits the whole party - interrupt it
+kind = "pulse"
+interval = 9.0
+initial = 4.0
+cast_time = 2.5
+interruptible = true
+damage = 164.0
+school = "shadow"
+
+[[templates.hexer.abilities]]
+name = "Hex of Frailty"      # +15% damage taken; Purify removes it
+kind = "debuff"
+interval = 12.0
+initial = 6.0
+target = "random_non_tank"
+aura = { name = "Hex of Frailty", effect = "damage_taken", value = 0.15, duration = 15.0, max_stacks = 1, dispellable = true }
+
+[templates.sporecap]
+name = "Sporecap Hermit"
+rank = "elite"
+level = 5
+hp = 4500.0
+melee_damage = 104.0
+attack_interval = 2.2
+aggro_radius = 12.0
+speed = 5.5
+radius = 1.2
+armor = 200.0
+
+[[templates.sporecap.abilities]]
+name = "Spore Burst"
+kind = "ring"
+interval = 10.0
+initial = 5.0
+delay = 2.0
+radius = 4.0
+damage = 330.0
+school = "nature"
+target = "random"
+count = 2
+
+[templates.rootling]
+name = "Rootling"
+rank = "trash"
+level = 5
+hp = 750.0
+melee_damage = 68.0
+attack_interval = 2.0
+aggro_radius = 25.0
+speed = 7.0
+radius = 0.6
+armor = 150.0
+
+[templates.vhorlag]
+name = "Vhorlag, the Rootbound King"
+rank = "boss"
+level = 6
+hp = 30000.0
+melee_damage = 248.0
+attack_interval = 2.0
+attack_range = 2.5
+aggro_radius = 15.0
+speed = 6.0
+radius = 1.9
+armor = 350.0
+resist = 15.0
+parry = 0.10
+enrage_seconds = 300.0
+
+[[templates.vhorlag.phases]]
+hp_below = 0.7
+announce = "Vhorlag tears rootlings from the earth!"
+summon = [{ template = "rootling", count = 2 }]
+
+[[templates.vhorlag.phases]]
+hp_below = 0.35
+damage_multiplier = 1.3
+announce = "Vhorlag withers - his touch rots flesh!"
+
+[[templates.vhorlag.abilities]]
+name = "Root Lash"           # frontal cleave
+kind = "cleave"
+interval = 9.0
+initial = 6.0
+damage = 255.0
+radius = 7.0
+frontal = true
+
+[[templates.vhorlag.abilities]]
+name = "Gloom Pulse"         # party-wide: heal up and use defensives
+kind = "pulse"
+interval = 22.0
+initial = 12.0
+cast_time = 3.0
+damage = 344.0
+school = "shadow"
+
+[[templates.vhorlag.abilities]]
+name = "Thorn Eruption"      # two rings in phases 2-3
+kind = "ring"
+interval = 10.0
+initial = 3.0
+delay = 2.5
+radius = 4.5
+damage = 569.0
+school = "nature"
+target = "random"
+count = 2
+phases = [2, 3]
+
+[[templates.vhorlag.abilities]]
+name = "Withering Mark"      # phase 3: stacking +8% damage taken on the tank
+kind = "debuff"
+interval = 6.0
+initial = 2.0
+target = "current"
+phases = [3]
+aura = { name = "Withering Mark", effect = "damage_taken", value = 0.08, duration = 20.0, max_stacks = 10, dispellable = false }
+
+# ------------------------------------------------------------- encounters --
+
+[[encounters]]
+id = "weavers_den"
+name = "Weavers' Den"
+mobs = [
+  { template = "thornback", pos = [-4.0, 40.0] },
+  { template = "thornback", pos = [4.0, 40.0] },
+  { template = "rootweaver", pos = [-8.0, 46.0] },
+  { template = "rootweaver", pos = [8.0, 46.0] },
+]
+
+[[encounters]]
+id = "sporecap_grotto"
+name = "Sporecap Hermit (optional)"
+optional = true
+mobs = [
+  { template = "sporecap", pos = [-30.0, 20.0] },
+]
+hazards = [
+  { name = "Spore Vent", pos = [-36.0, 12.0], radius = 3.0, damage = 75.0, school = "nature", on = 4.0, off = 4.0 },
+  { name = "Spore Vent", pos = [-24.0, 27.0], radius = 3.0, damage = 75.0, school = "nature", on = 4.0, off = 4.0, offset = 4.0 },
+]
+
+[[encounters]]
+id = "brood_chamber"
+name = "Mother Brakkis"
+mobs = [
+  { template = "brakkis", pos = [0.0, 80.0] },
+]
+
+[[encounters]]
+id = "ember_pools"
+name = "Ember Pools"
+mobs = [
+  { template = "hound", pos = [44.0, 74.0] },
+  { template = "hound", pos = [56.0, 74.0] },
+  { template = "hexer", pos = [50.0, 84.0] },
+]
+hazards = [
+  { name = "Lava Vent", pos = [43.0, 88.0], radius = 3.5, damage = 120.0, school = "fire", on = 3.0, off = 5.0 },
+  { name = "Lava Vent", pos = [57.0, 66.0], radius = 3.5, damage = 120.0, school = "fire", on = 3.0, off = 5.0, offset = 4.0 },
+]
+
+[[encounters]]
+id = "throne_of_roots"
+name = "Vhorlag, the Rootbound King"
+mobs = [
+  { template = "vhorlag", pos = [50.0, 130.0] },
+]
+
+# ------------------------------------------------------------------ loot --
+
+[[loot]]
+id = "brood_fang"
+name = "Broodmother's Fang"
+slot = "main_hand"
+rarity = "uncommon"
+role = "melee"
+stats = { power = 9, crit = 1.0 }
+weight = 2
+source = "brood_chamber"
+
+[[loot]]
+id = "silkwrapped_greaves"
+name = "Silkwrapped Greaves"
+slot = "legs"
+rarity = "uncommon"
+role = "tank"
+stats = { stamina = 26, armor = 200, dodge = 1.0 }
+weight = 2
+source = "brood_chamber"
+
+[[loot]]
+id = "venomglass_focus"
+name = "Venomglass Focus"
+slot = "off_hand"
+rarity = "uncommon"
+role = "caster"
+stats = { power = 8, hit = 1.0 }
+weight = 2
+source = "brood_chamber"
+
+[[loot]]
+id = "sporecap_cowl"
+name = "Sporecap Cowl"
+slot = "head"
+rarity = "rare"
+role = "healer"
+stats = { stamina = 14, power = 7, resist = 10 }
+weight = 1
+source = "sporecap_grotto"
+
+[[loot]]
+id = "rootbound_crown"
+name = "Rootbound Crown"
+slot = "head"
+rarity = "rare"
+role = "tank"
+stats = { stamina = 30, armor = 250, dodge = 1.5 }
+weight = 2
+
+[[loot]]
+id = "vhorlags_heartwood"
+name = "Vhorlag's Heartwood"
+slot = "trinket"
+rarity = "rare"
+role = "caster"
+stats = { power = 12, crit = 1.0 }
+weight = 2
+
+[[loot]]
+id = "thornreaver"
+name = "Thornreaver"
+slot = "main_hand"
+rarity = "rare"
+role = "melee"
+stats = { power = 13, crit = 1.5, hit = 1.0 }
+weight = 2
+
+[[loot]]
+id = "gloomroot_vestments"
+name = "Gloomroot Vestments"
+slot = "chest"
+rarity = "rare"
+role = "healer"
+stats = { stamina = 18, power = 9 }
+weight = 2
+
+[[loot]]
+id = "treads_of_the_warren"
+name = "Treads of the Warren"
+slot = "feet"
+rarity = "uncommon"
+stats = { stamina = 14, armor = 60 }
+weight = 3
+
+[rewards]
+marks_per_clear = 20
+marks_per_wipe = 2
+xp_per_clear = 900

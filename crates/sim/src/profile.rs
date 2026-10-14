@@ -1,28 +1,47 @@
-//! Persistent player data: roster of companions, equipment, stash and currency.
+//! Persistent player data: roster of companions, levels, equipment, stash,
+//! currency and run history.
 //!
 //! Saved as pretty JSON. Writes go to a temporary file which is then renamed
-//! over the real one so a crash mid-save cannot corrupt the profile.
+//! over the real one so a crash mid-save cannot corrupt the profile. Version 1
+//! saves (prototype 0.1) are migrated on load.
 
-use crate::class::{ClassId, Role};
-use crate::content::Content;
+use crate::ai::AiProfile;
+use crate::class::{ClassId, MAX_LEVEL, Role};
+use crate::content::{Content, EnemyRank};
+use crate::items::{ItemSlot, ItemStats, Rarity, RoleAffinity};
 use crate::rng::Rng;
-use crate::sim::{PartyMemberSpec, RunOutcome};
+use crate::sim::{PartyMemberSpec, RunOutcome, Sim};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-pub const PROFILE_VERSION: u32 = 1;
+pub const PROFILE_VERSION: u32 = 2;
 pub const SAVE_DIR_ENV_VAR: &str = "DUNGEON_SAVE_DIR";
 pub const PARTY_COMPANIONS: usize = 4;
+const HISTORY_LEN: usize = 20;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ItemSlot {
-    Weapon,
-    Armor,
+/// [orig] Experience needed to go from `level` to `level + 1`.
+pub fn xp_to_next(level: u32) -> u32 {
+    250 * level + 50 * level * level
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// [orig] Experience for killing an enemy of `enemy_level` at `level`.
+/// Enemies 4+ levels below give a quarter.
+pub fn kill_xp(rank: EnemyRank, enemy_level: u32, level: u32) -> u32 {
+    let base = match rank {
+        EnemyRank::Trash => 20,
+        EnemyRank::Elite => 60,
+        EnemyRank::Boss => 250,
+    } * enemy_level;
+    if enemy_level + 4 <= level {
+        base / 4
+    } else {
+        base
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Item {
     /// Unique instance id within this profile.
     pub uid: u64,
@@ -30,54 +49,63 @@ pub struct Item {
     pub base_id: String,
     pub name: String,
     pub slot: ItemSlot,
-    pub power: u32,
-    pub stamina: u32,
+    #[serde(default)]
+    pub rarity: Rarity,
+    #[serde(default)]
+    pub role: RoleAffinity,
+    #[serde(default)]
+    pub stats: ItemStats,
+    #[serde(default)]
+    pub source: String,
 }
 
 impl Item {
     pub fn describe(&self) -> String {
-        let mut stats = Vec::new();
-        if self.power > 0 {
-            stats.push(format!("+{} power", self.power));
-        }
-        if self.stamina > 0 {
-            stats.push(format!("+{} stamina", self.stamina));
-        }
-        format!("{} ({:?}: {})", self.name, self.slot, stats.join(", "))
+        format!(
+            "[{}] {} ({}, {}{}) {}",
+            self.rarity.label(),
+            self.name,
+            self.slot.label(),
+            self.role.label(),
+            if self.source.is_empty() {
+                String::new()
+            } else {
+                format!(", from {}", self.source)
+            },
+            self.stats.describe()
+        )
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Equipment {
-    pub weapon: Option<Item>,
-    pub armor: Option<Item>,
+    pub slots: BTreeMap<ItemSlot, Item>,
 }
 
 impl Equipment {
-    pub fn power(&self) -> u32 {
-        self.items().map(|i| i.power).sum()
-    }
-
-    pub fn stamina(&self) -> u32 {
-        self.items().map(|i| i.stamina).sum()
+    pub fn stats(&self) -> ItemStats {
+        let mut s = ItemStats::default();
+        for i in self.slots.values() {
+            s.add(&i.stats);
+        }
+        s
     }
 
     pub fn items(&self) -> impl Iterator<Item = &Item> {
-        self.weapon.iter().chain(self.armor.iter())
+        self.slots.values()
     }
 
-    pub fn slot_mut(&mut self, slot: ItemSlot) -> &mut Option<Item> {
-        match slot {
-            ItemSlot::Weapon => &mut self.weapon,
-            ItemSlot::Armor => &mut self.armor,
-        }
+    pub fn get(&self, slot: ItemSlot) -> Option<&Item> {
+        self.slots.get(&slot)
     }
 
-    pub fn slot(&self, slot: ItemSlot) -> &Option<Item> {
-        match slot {
-            ItemSlot::Weapon => &self.weapon,
-            ItemSlot::Armor => &self.armor,
-        }
+    /// Put `item` in its slot, returning whatever was there.
+    pub fn put(&mut self, item: Item) -> Option<Item> {
+        self.slots.insert(item.slot, item)
+    }
+
+    pub fn take(&mut self, slot: ItemSlot) -> Option<Item> {
+        self.slots.remove(&slot)
     }
 }
 
@@ -88,6 +116,29 @@ pub struct Companion {
     pub class: ClassId,
     pub equipment: Equipment,
     pub runs_completed: u32,
+    #[serde(default = "one")]
+    pub level: u32,
+    #[serde(default)]
+    pub xp: u32,
+    #[serde(default)]
+    pub profile: AiProfile,
+}
+
+fn one() -> u32 {
+    1
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RunRecord {
+    pub dungeon: String,
+    pub difficulty: String,
+    pub outcome: String,
+    pub duration: f32,
+    pub deaths: u32,
+    pub seed: u64,
+    pub marks: u32,
+    pub xp: u32,
+    pub items: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -96,6 +147,8 @@ pub struct Profile {
     pub player_name: String,
     pub player_class: ClassId,
     pub player_equipment: Equipment,
+    pub player_level: u32,
+    pub player_xp: u32,
     /// Vault Marks: currency awarded per run.
     pub marks: u32,
     pub runs_won: u32,
@@ -106,6 +159,9 @@ pub struct Profile {
     pub roster: Vec<Companion>,
     /// Companion ids currently recruited into the party (up to 4).
     pub party: Vec<String>,
+    pub selected_dungeon: String,
+    pub selected_difficulty: String,
+    pub history: Vec<RunRecord>,
 }
 
 /// Who a piece of gear is being equipped on.
@@ -115,10 +171,85 @@ pub enum Wearer {
     Companion(usize),
 }
 
+/// What happened in a run, distilled from the sim for reward purposes.
+#[derive(Debug, Clone)]
+pub struct RunReport {
+    pub dungeon: String,
+    pub difficulty: String,
+    pub reward_multiplier: f32,
+    pub rarity_bonus: u32,
+    pub outcome: RunOutcome,
+    pub cleared: Vec<String>,
+    /// (rank, level) of every enemy killed.
+    pub kills: Vec<(EnemyRank, u32)>,
+    pub duration: f32,
+    pub deaths: u32,
+    pub seed: u64,
+}
+
+impl RunReport {
+    pub fn from_sim(sim: &Sim) -> RunReport {
+        let kills = sim
+            .events
+            .iter()
+            .filter_map(|e| match e.kind {
+                crate::events::EventKind::Death { actor } => sim.actors[actor]
+                    .enemy
+                    .as_ref()
+                    .map(|es| (es.rank, sim.actors[actor].stats.level)),
+                _ => None,
+            })
+            .collect();
+        RunReport {
+            dungeon: sim.content.dungeon.id.clone(),
+            difficulty: sim.difficulty.id.clone(),
+            reward_multiplier: sim.difficulty.reward_multiplier,
+            rarity_bonus: sim.difficulty.rarity_bonus,
+            outcome: sim.outcome,
+            cleared: sim
+                .encounters
+                .iter()
+                .filter(|e| e.cleared)
+                .map(|e| e.id.clone())
+                .collect(),
+            kills,
+            duration: sim.ended_at.unwrap_or(sim.time),
+            deaths: sim
+                .party
+                .iter()
+                .map(|&p| sim.metrics.actors[p].deaths)
+                .sum(),
+            seed: sim.seed,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct RunRewards {
     pub marks: u32,
-    pub item: Option<Item>,
+    pub xp: u32,
+    pub items: Vec<Item>,
+    /// (name, new level) for everyone who levelled up.
+    pub level_ups: Vec<(String, u32)>,
+}
+
+/// Computed combat numbers for display in the hub.
+#[derive(Debug, Clone)]
+pub struct CharacterSheet {
+    pub name: String,
+    pub class: ClassId,
+    pub level: u32,
+    pub xp: u32,
+    pub xp_next: u32,
+    pub max_hp: f32,
+    pub resource: crate::class::ResourceKind,
+    pub max_resource: f32,
+    pub power_pct: f32,
+    pub stats: crate::stats::Stats,
+    /// Physical damage reduction against an attacker of the same level.
+    pub armor_dr: f32,
+    pub gear: ItemStats,
+    pub profile: AiProfile,
 }
 
 #[derive(Debug)]
@@ -144,6 +275,20 @@ impl Default for Profile {
     }
 }
 
+/// Add XP, levelling up as needed. Returns the new level if it changed.
+fn add_xp(level: &mut u32, xp: &mut u32, gained: u32) -> Option<u32> {
+    let before = *level;
+    *xp += gained;
+    while *level < MAX_LEVEL && *xp >= xp_to_next(*level) {
+        *xp -= xp_to_next(*level);
+        *level += 1;
+    }
+    if *level == MAX_LEVEL {
+        *xp = 0;
+    }
+    (*level != before).then_some(*level)
+}
+
 impl Profile {
     pub fn new_default() -> Self {
         let roster = [
@@ -163,6 +308,9 @@ impl Profile {
             class,
             equipment: Equipment::default(),
             runs_completed: 0,
+            level: 1,
+            xp: 0,
+            profile: AiProfile::Balanced,
         })
         .collect();
         let mut p = Profile {
@@ -170,6 +318,8 @@ impl Profile {
             player_name: "Wayfarer".to_string(),
             player_class: ClassId::Striker,
             player_equipment: Equipment::default(),
+            player_level: 1,
+            player_xp: 0,
             marks: 0,
             runs_won: 0,
             runs_wiped: 0,
@@ -177,13 +327,16 @@ impl Profile {
             stash: Vec::new(),
             roster,
             party: Vec::new(),
+            selected_dungeon: "sunken_vault".into(),
+            selected_difficulty: "normal".into(),
+            history: Vec::new(),
         };
         p.auto_fill_party();
         p
     }
 
     /// Recruit a balanced party around the player's role: one tank, one healer,
-    /// the rest damage dealers (melee and ranged alternating).
+    /// the rest damage dealers (ranged and melee alternating).
     pub fn auto_fill_party(&mut self) {
         let player_role = self.player_class.role();
         let mut needed: Vec<Role> = Vec::new();
@@ -207,7 +360,6 @@ impl Profile {
                 chosen.push(c.id.clone());
             }
         }
-        // Fill any gaps with whoever is left.
         for c in &self.roster {
             if chosen.len() >= PARTY_COMPANIONS {
                 break;
@@ -272,20 +424,29 @@ impl Profile {
         let mut specs = vec![PartyMemberSpec {
             name: self.player_name.clone(),
             class: self.player_class,
-            power: self.player_equipment.power(),
-            stamina: self.player_equipment.stamina(),
+            level: self.player_level,
+            gear: self.player_equipment.stats(),
             player_controlled,
+            profile: AiProfile::Balanced,
         }];
         for c in self.party_companions() {
             specs.push(PartyMemberSpec {
                 name: c.name.clone(),
                 class: c.class,
-                power: c.equipment.power(),
-                stamina: c.equipment.stamina(),
+                level: c.level,
+                gear: c.equipment.stats(),
                 player_controlled: false,
+                profile: c.profile,
             });
         }
         specs
+    }
+
+    pub fn wearer_role(&self, who: Wearer) -> Option<Role> {
+        match who {
+            Wearer::Player => Some(self.player_class.role()),
+            Wearer::Companion(i) => self.roster.get(i).map(|c| c.class.role()),
+        }
     }
 
     fn equipment_mut(&mut self, who: Wearer) -> Option<&mut Equipment> {
@@ -293,6 +454,26 @@ impl Profile {
             Wearer::Player => Some(&mut self.player_equipment),
             Wearer::Companion(i) => self.roster.get_mut(i).map(|c| &mut c.equipment),
         }
+    }
+
+    pub fn equipment(&self, who: Wearer) -> Option<&Equipment> {
+        match who {
+            Wearer::Player => Some(&self.player_equipment),
+            Wearer::Companion(i) => self.roster.get(i).map(|c| &c.equipment),
+        }
+    }
+
+    /// Score change if `item` replaced whatever `who` wears in that slot.
+    pub fn compare(&self, item: &Item, who: Wearer) -> f32 {
+        let Some(role) = self.wearer_role(who) else {
+            return 0.0;
+        };
+        let current = self
+            .equipment(who)
+            .and_then(|e| e.get(item.slot))
+            .map(|i| i.stats.score_for(role))
+            .unwrap_or(0.0);
+        item.stats.score_for(role) - current
     }
 
     /// Equip stash item `stash_index` on `who`; any item already in that slot returns to the stash.
@@ -304,73 +485,231 @@ impl Profile {
             return Err("no such companion".into());
         }
         let item = self.stash.remove(stash_index);
-        let slot = item.slot;
         let eq = self.equipment_mut(who).expect("checked above");
-        let old = eq.slot_mut(slot).replace(item);
-        if let Some(old) = old {
+        if let Some(old) = eq.put(item) {
             self.stash.push(old);
         }
         Ok(())
     }
 
-    /// Roll and grant rewards for a finished run. Deterministic for a given seed.
-    pub fn grant_rewards(
+    /// Move an equipped item back to the stash.
+    pub fn unequip(&mut self, who: Wearer, slot: ItemSlot) -> bool {
+        let Some(item) = self.equipment_mut(who).and_then(|e| e.take(slot)) else {
+            return false;
+        };
+        self.stash.push(item);
+        true
+    }
+
+    /// Give every recruited companion (and the player) the best stash upgrades for
+    /// their role. Returns a description of each change.
+    pub fn auto_equip(&mut self) -> Vec<String> {
+        let mut changes = Vec::new();
+        let mut wearers = vec![Wearer::Player];
+        for id in self.party.clone() {
+            if let Some(i) = self.roster.iter().position(|c| c.id == id) {
+                wearers.push(Wearer::Companion(i));
+            }
+        }
+        for who in wearers {
+            let role = self.wearer_role(who).expect("valid wearer");
+            loop {
+                let best = self
+                    .stash
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, it)| it.role.suits(role))
+                    .map(|(i, it)| (i, self.compare(it, who)))
+                    .filter(|(_, delta)| *delta > 0.5)
+                    .max_by(|a, b| a.1.total_cmp(&b.1).then(b.0.cmp(&a.0)));
+                let Some((i, _)) = best else { break };
+                let name = self.stash[i].name.clone();
+                self.equip(i, who).expect("valid index");
+                let who_name = match who {
+                    Wearer::Player => self.player_name.clone(),
+                    Wearer::Companion(c) => self.roster[c].name.clone(),
+                };
+                changes.push(format!("{who_name} equips {name}"));
+            }
+        }
+        changes
+    }
+
+    fn roll_item(
         &mut self,
         content: &Content,
-        outcome: RunOutcome,
-        seed: u64,
-    ) -> RunRewards {
-        match outcome {
-            RunOutcome::Victory => {
-                self.runs_won += 1;
-                self.marks += content.rewards.marks_per_clear;
-                let party_ids = self.party.clone();
-                for c in self.roster.iter_mut().filter(|c| party_ids.contains(&c.id)) {
-                    c.runs_completed += 1;
-                }
-                let mut rng = Rng::new(seed ^ 0x10_07);
-                let total: u32 = content.loot.iter().map(|l| l.weight).sum();
-                let mut roll = (rng.next_u64() % total as u64) as u32;
-                let entry = content
-                    .loot
-                    .iter()
-                    .find(|l| {
-                        if roll < l.weight {
-                            true
-                        } else {
-                            roll -= l.weight;
-                            false
-                        }
-                    })
-                    .expect("weights sum to total");
-                let item = Item {
-                    uid: self.next_item_uid,
-                    base_id: entry.id.clone(),
-                    name: entry.name.clone(),
-                    slot: entry.slot,
-                    power: entry.power,
-                    stamina: entry.stamina,
-                };
-                self.next_item_uid += 1;
-                self.stash.push(item.clone());
-                RunRewards {
-                    marks: content.rewards.marks_per_clear,
-                    item: Some(item),
-                }
-            }
-            RunOutcome::Wipe | RunOutcome::Timeout | RunOutcome::Abandoned => {
-                self.runs_wiped += 1;
-                self.marks += content.rewards.marks_per_wipe;
-                RunRewards {
-                    marks: content.rewards.marks_per_wipe,
-                    item: None,
-                }
-            }
-            RunOutcome::InProgress => RunRewards {
-                marks: 0,
-                item: None,
-            },
+        source: &str,
+        rarity_bonus: u32,
+        rng: &mut Rng,
+    ) -> Option<Item> {
+        let fin = content.encounters[content.final_encounter()].id.clone();
+        let pool: Vec<&crate::content::LootEntry> = content
+            .loot
+            .iter()
+            .filter(|l| l.source.as_deref().unwrap_or(fin.as_str()) == source)
+            .collect();
+        let total: u32 = pool.iter().map(|l| l.weight).sum();
+        if total == 0 {
+            return None;
         }
+        let mut roll = (rng.next_u64() % total as u64) as u32;
+        let entry = pool.into_iter().find(|l| {
+            if roll < l.weight {
+                true
+            } else {
+                roll -= l.weight;
+                false
+            }
+        })?;
+        let rarity = entry.rarity.upgraded(rarity_bonus);
+        let scale = rarity.stat_mult() / entry.rarity.stat_mult();
+        let item = Item {
+            uid: self.next_item_uid,
+            base_id: entry.id.clone(),
+            name: entry.name.clone(),
+            slot: entry.slot,
+            rarity,
+            role: entry.role,
+            stats: if rarity == entry.rarity {
+                entry.stats
+            } else {
+                entry.stats.scaled(scale)
+            },
+            source: content.dungeon.name.clone(),
+        };
+        self.next_item_uid += 1;
+        Some(item)
+    }
+
+    /// Grant rewards for a finished run. Deterministic for a given seed.
+    ///
+    /// * Every cleared encounter that has loot rolls one item for the stash.
+    /// * Experience: kills + the clear bonus (victory only), times the difficulty's
+    ///   reward multiplier, for the player and every recruited companion.
+    /// * Marks: per clear or per wipe, times the reward multiplier.
+    pub fn grant_rewards(&mut self, content: &Content, report: &RunReport) -> RunRewards {
+        let victory = report.outcome == RunOutcome::Victory;
+        let mult = report.reward_multiplier;
+        let base_marks = if victory {
+            content.rewards.marks_per_clear
+        } else if report.outcome == RunOutcome::InProgress {
+            0
+        } else {
+            content.rewards.marks_per_wipe
+        };
+        let marks = (base_marks as f32 * mult).round() as u32;
+        self.marks += marks;
+        match report.outcome {
+            RunOutcome::Victory => self.runs_won += 1,
+            RunOutcome::InProgress => {}
+            _ => self.runs_wiped += 1,
+        }
+        let mut rng = Rng::new(report.seed ^ 0x10_07);
+        let mut items = Vec::new();
+        for id in &report.cleared {
+            if let Some(item) = self.roll_item(content, id, report.rarity_bonus, &mut rng) {
+                self.stash.push(item.clone());
+                items.push(item);
+            }
+        }
+        let party_ids = self.party.clone();
+        let mut level_ups = Vec::new();
+        let xp_for = |level: u32| -> u32 {
+            let kills: u32 = report
+                .kills
+                .iter()
+                .map(|(rank, lvl)| kill_xp(*rank, *lvl, level))
+                .sum();
+            let clear = if victory {
+                content.rewards.xp_per_clear
+            } else {
+                0
+            };
+            ((kills + clear) as f32 * mult).round() as u32
+        };
+        let player_xp = xp_for(self.player_level);
+        if let Some(l) = add_xp(&mut self.player_level, &mut self.player_xp, player_xp) {
+            level_ups.push((self.player_name.clone(), l));
+        }
+        for c in self.roster.iter_mut().filter(|c| party_ids.contains(&c.id)) {
+            if victory {
+                c.runs_completed += 1;
+            }
+            let gained = xp_for(c.level);
+            if let Some(l) = add_xp(&mut c.level, &mut c.xp, gained) {
+                level_ups.push((c.name.clone(), l));
+            }
+        }
+        self.history.push(RunRecord {
+            dungeon: report.dungeon.clone(),
+            difficulty: report.difficulty.clone(),
+            outcome: format!("{:?}", report.outcome),
+            duration: report.duration,
+            deaths: report.deaths,
+            seed: report.seed,
+            marks,
+            xp: player_xp,
+            items: items.iter().map(|i| i.name.clone()).collect(),
+        });
+        if self.history.len() > HISTORY_LEN {
+            let drop = self.history.len() - HISTORY_LEN;
+            self.history.drain(0..drop);
+        }
+        RunRewards {
+            marks,
+            xp: player_xp,
+            items,
+            level_ups,
+        }
+    }
+
+    /// Combat numbers for the player or a companion (class + level + gear).
+    pub fn sheet(&self, who: Wearer) -> Option<CharacterSheet> {
+        let (name, class, level, xp, eq, profile) = match who {
+            Wearer::Player => (
+                self.player_name.clone(),
+                self.player_class,
+                self.player_level,
+                self.player_xp,
+                &self.player_equipment,
+                AiProfile::Balanced,
+            ),
+            Wearer::Companion(i) => {
+                let c = self.roster.get(i)?;
+                (
+                    c.name.clone(),
+                    c.class,
+                    c.level,
+                    c.xp,
+                    &c.equipment,
+                    c.profile,
+                )
+            }
+        };
+        let cs = class.stats(level);
+        let gear = eq.stats();
+        let mut st = cs.stats;
+        gear.apply(&mut st);
+        Some(CharacterSheet {
+            name,
+            class,
+            level,
+            xp,
+            xp_next: if level >= MAX_LEVEL {
+                0
+            } else {
+                xp_to_next(level)
+            },
+            max_hp: (cs.max_hp + gear.stamina * 10.0).round(),
+            resource: cs.resource,
+            max_resource: cs.max_resource,
+            power_pct: (crate::class::level_power(level) * (1.0 + gear.power / 100.0) - 1.0)
+                * 100.0,
+            armor_dr: crate::stats::armor_reduction(st.armor, level),
+            stats: st,
+            gear,
+            profile,
+        })
     }
 
     pub fn default_path() -> PathBuf {
@@ -399,15 +738,24 @@ impl Profile {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(ProfileError::Io(e.to_string())),
         };
-        let p: Profile = serde_json::from_str(&text)
-            .map_err(|e| ProfileError::Corrupt(format!("{}: {e}", path.display())))?;
-        if p.version != PROFILE_VERSION {
-            return Err(ProfileError::Corrupt(format!(
-                "unsupported profile version {} (expected {PROFILE_VERSION})",
-                p.version
-            )));
+        Profile::from_json(&text)
+            .map(Some)
+            .map_err(|e| ProfileError::Corrupt(format!("{}: {e}", path.display())))
+    }
+
+    /// Parse a save, migrating version 1 files.
+    pub fn from_json(text: &str) -> Result<Profile, String> {
+        let value: serde_json::Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
+        match value.get("version").and_then(|v| v.as_u64()) {
+            Some(1) => {
+                let v1: v1::Profile = serde_json::from_value(value).map_err(|e| e.to_string())?;
+                Ok(v1.migrate())
+            }
+            Some(2) => serde_json::from_value(value).map_err(|e| e.to_string()),
+            other => Err(format!(
+                "unsupported profile version {other:?} (expected {PROFILE_VERSION})"
+            )),
         }
-        Ok(Some(p))
     }
 
     /// Load or create a default profile. A corrupt file is moved aside (never deleted)
@@ -428,6 +776,105 @@ impl Profile {
     }
 }
 
+/// Prototype 0.1 save format, kept only for migration.
+mod v1 {
+    use super::*;
+
+    #[derive(Deserialize)]
+    pub struct Item {
+        pub uid: u64,
+        pub base_id: String,
+        pub name: String,
+        pub slot: ItemSlot,
+        pub power: u32,
+        pub stamina: u32,
+    }
+
+    #[derive(Deserialize, Default)]
+    pub struct Equipment {
+        pub weapon: Option<Item>,
+        pub armor: Option<Item>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Companion {
+        pub id: String,
+        pub name: String,
+        pub class: ClassId,
+        pub equipment: Equipment,
+        pub runs_completed: u32,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Profile {
+        pub player_name: String,
+        pub player_class: ClassId,
+        pub player_equipment: Equipment,
+        pub marks: u32,
+        pub runs_won: u32,
+        pub runs_wiped: u32,
+        pub next_item_uid: u64,
+        pub stash: Vec<Item>,
+        pub roster: Vec<Companion>,
+        pub party: Vec<String>,
+    }
+
+    fn item(i: Item) -> super::Item {
+        super::Item {
+            uid: i.uid,
+            base_id: i.base_id,
+            name: i.name,
+            slot: i.slot,
+            rarity: Rarity::Uncommon,
+            role: RoleAffinity::Any,
+            stats: ItemStats {
+                power: i.power as f32,
+                stamina: i.stamina as f32,
+                ..Default::default()
+            },
+            source: "The Sunken Vault".into(),
+        }
+    }
+
+    fn equipment(e: Equipment) -> super::Equipment {
+        let mut out = super::Equipment::default();
+        for i in e.weapon.into_iter().chain(e.armor) {
+            out.put(item(i));
+        }
+        out
+    }
+
+    impl Profile {
+        pub fn migrate(self) -> super::Profile {
+            let mut p = super::Profile::new_default();
+            p.player_name = self.player_name;
+            p.player_class = self.player_class;
+            p.player_equipment = equipment(self.player_equipment);
+            p.marks = self.marks;
+            p.runs_won = self.runs_won;
+            p.runs_wiped = self.runs_wiped;
+            p.next_item_uid = self.next_item_uid;
+            p.stash = self.stash.into_iter().map(item).collect();
+            p.roster = self
+                .roster
+                .into_iter()
+                .map(|c| super::Companion {
+                    id: c.id,
+                    name: c.name,
+                    class: c.class,
+                    equipment: equipment(c.equipment),
+                    runs_completed: c.runs_completed,
+                    level: 1,
+                    xp: 0,
+                    profile: AiProfile::Balanced,
+                })
+                .collect();
+            p.party = self.party;
+            p
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -439,6 +886,21 @@ mod tests {
         ));
         let _ = std::fs::create_dir_all(&dir);
         dir
+    }
+
+    fn victory_report(content: &Content, seed: u64) -> RunReport {
+        RunReport {
+            dungeon: content.dungeon.id.clone(),
+            difficulty: "normal".into(),
+            reward_multiplier: 1.0,
+            rarity_bonus: 0,
+            outcome: RunOutcome::Victory,
+            cleared: content.encounters.iter().map(|e| e.id.clone()).collect(),
+            kills: vec![(EnemyRank::Trash, 1), (EnemyRank::Boss, 3)],
+            duration: 100.0,
+            deaths: 0,
+            seed,
+        }
     }
 
     #[test]
@@ -461,27 +923,114 @@ mod tests {
         let content = Content::builtin();
         let path = temp_dir("reward").join("profile.json");
         let mut p = Profile::new_default();
-        let rewards = p.grant_rewards(&content, RunOutcome::Victory, 99);
-        let item = rewards.item.expect("victory drops an item");
+        let rewards = p.grant_rewards(&content, &victory_report(&content, 99));
+        assert!(!rewards.items.is_empty(), "victory drops loot");
         p.save(&path).unwrap();
-
         let loaded = Profile::load(&path).unwrap().expect("file exists");
         assert_eq!(loaded.marks, content.rewards.marks_per_clear);
         assert_eq!(loaded.runs_won, 1);
-        assert!(loaded.stash.contains(&item));
+        for item in &rewards.items {
+            assert!(loaded.stash.contains(item));
+        }
         assert_eq!(loaded, p);
+        assert_eq!(loaded.history.len(), 1);
     }
 
     #[test]
-    fn equip_swaps_with_stash() {
+    fn each_cleared_loot_source_drops_one_item() {
         let content = Content::builtin();
         let mut p = Profile::new_default();
-        p.grant_rewards(&content, RunOutcome::Victory, 1);
-        p.grant_rewards(&content, RunOutcome::Victory, 2);
-        let first_slot = p.stash[0].slot;
+        let r = p.grant_rewards(&content, &victory_report(&content, 5));
+        // Sunken Vault: the brute and the final boss have loot tables.
+        assert_eq!(r.items.len(), 2);
+    }
+
+    #[test]
+    fn wipes_give_no_clear_loot_but_keep_kill_xp() {
+        let content = Content::builtin();
+        let mut p = Profile::new_default();
+        let mut report = victory_report(&content, 5);
+        report.outcome = RunOutcome::Wipe;
+        report.cleared.clear();
+        let r = p.grant_rewards(&content, &report);
+        assert!(r.items.is_empty());
+        assert_eq!(r.marks, content.rewards.marks_per_wipe);
+        assert_eq!(r.xp, 20 + 750);
+        assert_eq!(p.runs_wiped, 1);
+    }
+
+    #[test]
+    fn xp_levels_up_and_caps() {
+        let (mut level, mut xp) = (1, 0);
+        assert_eq!(add_xp(&mut level, &mut xp, 299), None);
+        assert_eq!(add_xp(&mut level, &mut xp, 1), Some(2));
+        assert_eq!(xp, 0);
+        add_xp(&mut level, &mut xp, 1_000_000);
+        assert_eq!(level, MAX_LEVEL);
+        assert_eq!(xp, 0);
+    }
+
+    #[test]
+    fn heroic_upgrades_rarity_and_scales_stats() {
+        let content = Content::builtin();
+        let mut p = Profile::new_default();
+        let mut report = victory_report(&content, 11);
+        report.rarity_bonus = 1;
+        report.reward_multiplier = 2.0;
+        let r = p.grant_rewards(&content, &report);
+        for item in &r.items {
+            let base = content.loot.iter().find(|l| l.id == item.base_id).unwrap();
+            assert!(item.rarity > base.rarity || base.rarity == Rarity::Epic);
+        }
+        assert_eq!(r.marks, 2 * content.rewards.marks_per_clear);
+    }
+
+    #[test]
+    fn equip_swaps_with_stash_and_auto_equip_upgrades() {
+        let content = Content::builtin();
+        let mut p = Profile::new_default();
+        for seed in 1..6 {
+            p.grant_rewards(&content, &victory_report(&content, seed));
+        }
+        let n = p.stash.len();
+        let slot = p.stash[0].slot;
         p.equip(0, Wearer::Player).unwrap();
-        assert!(p.player_equipment.slot(first_slot).is_some());
-        assert_eq!(p.stash.len(), 1);
+        assert!(p.player_equipment.get(slot).is_some());
+        assert_eq!(p.stash.len(), n - 1);
+        let changes = p.auto_equip();
+        assert!(!changes.is_empty(), "some companion should find an upgrade");
+        // Every equipped item suits its wearer's role.
+        for c in p.party_companions() {
+            for it in c.equipment.items() {
+                assert!(it.role.suits(c.class.role()), "{} on {}", it.name, c.name);
+            }
+        }
+    }
+
+    #[test]
+    fn v1_saves_are_migrated() {
+        let v1 = r#"{
+          "version": 1, "player_name": "Old", "player_class": "warden",
+          "player_equipment": { "weapon": { "uid": 1, "base_id": "x", "name": "Old Blade", "slot": "weapon", "power": 8, "stamina": 0 }, "armor": null },
+          "marks": 30, "runs_won": 3, "runs_wiped": 1, "next_item_uid": 4,
+          "stash": [ { "uid": 2, "base_id": "y", "name": "Old Mail", "slot": "armor", "power": 0, "stamina": 30 } ],
+          "roster": [ { "id": "kael", "name": "Kael", "class": "striker", "equipment": { "weapon": null, "armor": null }, "runs_completed": 3 } ],
+          "party": ["kael"]
+        }"#;
+        let p = Profile::from_json(v1).expect("migrates");
+        assert_eq!(p.version, PROFILE_VERSION);
+        assert_eq!(p.player_name, "Old");
+        assert_eq!(p.marks, 30);
+        assert_eq!(
+            p.player_equipment
+                .get(ItemSlot::MainHand)
+                .unwrap()
+                .stats
+                .power,
+            8.0
+        );
+        assert_eq!(p.stash[0].slot, ItemSlot::Chest);
+        assert_eq!(p.roster[0].level, 1);
     }
 
     #[test]

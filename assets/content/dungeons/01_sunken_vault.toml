@@ -1,0 +1,270 @@
+# Dungeon Sandbox content file: The Sunken Vault (levels 1-3).
+#
+# Edit this file to change encounters without recompiling. The game re-reads all
+# dungeon files when you enter a portal (and on F5 in the hub); the headless
+# runner reads them on start. Invalid values produce an error naming the field.
+#
+# Coordinates are [x, z] on the ground plane, in metres. Fractions such as
+# dodge = 0.05 mean 5%. See RULES.md for every formula.
+
+[dungeon]
+id = "sunken_vault"
+name = "The Sunken Vault"
+description = "A flooded reliquary beneath the Lantern Ward. Skulker packs, a cleaving brute and Morvane, the Hollow King."
+recommended_level = 1
+hp_multiplier = 1.0          # scales every enemy's max HP (0.05 - 20.0)
+damage_multiplier = 1.0      # scales every enemy's damage (0.0 - 20.0)
+entrance = [0.0, 0.0]
+leash_radius = 45.0          # enemies dragged further than this from home reset
+theme = { floor = [0.22, 0.24, 0.27], wall = [0.32, 0.30, 0.34], light = [1.0, 0.75, 0.45] }
+
+[[difficulties]]
+id = "normal"
+name = "Normal"
+
+[[difficulties]]
+id = "heroic"
+name = "Heroic"
+hp = 1.6
+damage = 1.4
+level_bonus = 2
+reward_multiplier = 2.0
+rarity_bonus = 1
+
+# Walkable floor: overlapping rectangles. Neighbours must overlap to connect.
+[[dungeon.areas]]
+name = "Flooded Antechamber"
+min = [-8.0, -6.0]
+max = [8.0, 10.0]
+
+[[dungeon.areas]]
+name = "Drowned Stair"
+min = [-3.0, 8.0]
+max = [3.0, 30.0]
+
+[[dungeon.areas]]
+name = "Hall of Sluices"
+min = [-12.0, 28.0]
+max = [12.0, 48.0]
+
+[[dungeon.areas]]
+name = "East Culvert"
+min = [10.0, 35.0]
+max = [36.0, 41.0]
+
+[[dungeon.areas]]
+name = "Brute's Cistern"
+min = [34.0, 26.0]
+max = [56.0, 50.0]
+
+[[dungeon.areas]]
+name = "North Culvert"
+min = [42.0, 48.0]
+max = [48.0, 72.0]
+
+[[dungeon.areas]]
+name = "Reliquary"
+min = [34.0, 70.0]
+max = [56.0, 88.0]
+
+[[dungeon.areas]]
+name = "Throne Approach"
+min = [42.0, 86.0]
+max = [48.0, 100.0]
+
+[[dungeon.areas]]
+name = "Hollow Throne"
+min = [28.0, 98.0]
+max = [62.0, 128.0]
+
+# ---------------------------------------------------------------- enemies --
+
+[templates.skulker]
+name = "Gloomfang Skulker"
+rank = "trash"
+level = 1
+hp = 600.0
+melee_damage = 65.0
+attack_interval = 2.0
+aggro_radius = 10.0
+speed = 6.5
+radius = 0.6
+armor = 60.0
+dodge = 0.05
+
+[templates.brute]
+name = "Cragbound Brute"
+rank = "elite"
+level = 2
+hp = 3000.0
+melee_damage = 162.0
+attack_interval = 2.4
+aggro_radius = 12.0
+speed = 6.0
+radius = 1.1
+armor = 120.0
+parry = 0.05
+
+[[templates.brute.abilities]]
+name = "Rockfall Cleave"
+kind = "cleave"
+interval = 8.0
+damage = 94.0
+radius = 5.0
+
+[templates.hollow_king]
+name = "Morvane, the Hollow King"
+rank = "boss"
+level = 3
+hp = 14000.0
+melee_damage = 425.0
+attack_interval = 2.0
+attack_range = 2.5
+aggro_radius = 14.0
+speed = 6.5
+radius = 1.6
+armor = 150.0
+resist = 5.0
+parry = 0.08
+enrage_seconds = 240.0       # hard enrage (x5 damage) after this long in combat
+
+# Phase 2 begins at 50% HP: more damage and the Cinder Rings start.
+[[templates.hollow_king.phases]]
+hp_below = 0.5
+damage_multiplier = 1.25
+announce = "Morvane erupts in cinders! Watch the ground!"
+
+[[templates.hollow_king.abilities]]
+name = "Hollow Bolt"         # phase 1: interruptible shadow bolt on a random non-tank
+kind = "bolt"
+interval = 8.0
+cast_time = 1.5
+interruptible = true
+target = "random_non_tank"
+damage = 408.0
+school = "shadow"
+phases = [1]
+
+[[templates.hollow_king.abilities]]
+name = "Cinder Ring"         # phase 2: BOSS TIMER - a ring every `interval` seconds
+kind = "ring"
+interval = 9.0
+initial = 2.0
+delay = 2.5                  # warning time before detonation
+radius = 5.0
+damage = 600.0
+school = "fire"
+target = "random"
+phases = [2]
+
+# ------------------------------------------------------------- encounters --
+# Encounters are cleared in order by the autopilot. The last required one holds
+# the final boss.
+
+[[encounters]]
+id = "sluice_pack"
+name = "Skulker Pack"
+mobs = [
+  { template = "skulker", pos = [-4.0, 40.0] },
+  { template = "skulker", pos = [0.0, 42.0] },
+  { template = "skulker", pos = [4.0, 40.0] },
+]
+
+[[encounters]]
+id = "cistern_brute"
+name = "Cragbound Brute"
+mobs = [
+  { template = "brute", pos = [45.0, 40.0] },
+  { template = "skulker", pos = [41.0, 43.0] },
+  { template = "skulker", pos = [49.0, 43.0] },
+]
+
+[[encounters]]
+id = "reliquary_pack"
+name = "Reliquary Guard"
+mobs = [
+  { template = "skulker", pos = [40.0, 80.0] },
+  { template = "skulker", pos = [44.0, 82.0] },
+  { template = "skulker", pos = [48.0, 82.0] },
+  { template = "skulker", pos = [52.0, 80.0] },
+]
+
+[[encounters]]
+id = "hollow_king"
+name = "Morvane, the Hollow King"
+mobs = [
+  { template = "hollow_king", pos = [45.0, 116.0] },
+]
+
+# ------------------------------------------------------------------ loot --
+# Each cleared boss/elite encounter rolls one item from the entries whose
+# `source` matches it (default source: the final boss). Rarity scales stats.
+
+[[loot]]
+id = "cistern_treads"
+name = "Cistern Treads"
+slot = "feet"
+rarity = "common"
+stats = { stamina = 8, armor = 40 }
+weight = 1
+source = "cistern_brute"
+
+[[loot]]
+id = "brute_knuckle"
+name = "Brute's Knuckle"
+slot = "trinket"
+rarity = "common"
+role = "melee"
+stats = { power = 3, crit = 0.5 }
+weight = 1
+source = "cistern_brute"
+
+[[loot]]
+id = "sluicewarden_blade"
+name = "Sluicewarden Blade"
+slot = "main_hand"
+rarity = "uncommon"
+role = "melee"
+stats = { power = 6, crit = 1.0 }
+weight = 3
+
+[[loot]]
+id = "hollow_crown_shard"
+name = "Shard of the Hollow Crown"
+slot = "trinket"
+rarity = "rare"
+role = "caster"
+stats = { power = 8, hit = 1.0 }
+weight = 1
+
+[[loot]]
+id = "silted_mail"
+name = "Silted Chainmail"
+slot = "chest"
+rarity = "uncommon"
+role = "tank"
+stats = { stamina = 24, armor = 180, dodge = 1.0 }
+weight = 3
+
+[[loot]]
+id = "vaultkeeper_mantle"
+name = "Vaultkeeper's Mantle"
+slot = "head"
+rarity = "uncommon"
+role = "healer"
+stats = { stamina = 12, power = 5 }
+weight = 2
+
+[[loot]]
+id = "drowned_buckler"
+name = "Drowned Buckler"
+slot = "off_hand"
+rarity = "uncommon"
+role = "tank"
+stats = { stamina = 10, armor = 220 }
+weight = 2
+
+[rewards]
+marks_per_clear = 10
+marks_per_wipe = 1
+xp_per_clear = 400

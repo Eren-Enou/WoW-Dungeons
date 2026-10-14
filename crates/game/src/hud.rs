@@ -227,9 +227,9 @@ pub fn spawn_hud(mut commands: Commands, run: Res<ActiveRun>) {
             Node {
                 position_type: PositionType::Absolute,
                 left: percent(50),
-                margin: UiRect::left(px(-200)),
+                margin: UiRect::left(px(-300)),
                 bottom: px(14),
-                width: px(400),
+                width: px(600),
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
                 row_gap: px(6),
@@ -255,11 +255,11 @@ pub fn spawn_hud(mut commands: Commands, run: Res<ActiveRun>) {
                 ..default()
             })
             .with_children(|row| {
-                for slot in 0..3 {
+                for slot in 0..5 {
                     row.spawn((
                         Node {
-                            width: px(128),
-                            height: px(58),
+                            width: px(112),
+                            height: px(64),
                             flex_direction: FlexDirection::Column,
                             justify_content: JustifyContent::SpaceBetween,
                             padding: UiRect::all(px(4)),
@@ -271,7 +271,7 @@ pub fn spawn_hud(mut commands: Commands, run: Res<ActiveRun>) {
                         children![
                             (Text::new(""), text_font(13.0), HudText::Action(slot)),
                             bar(
-                                116.0,
+                                100.0,
                                 5.0,
                                 Color::srgb(0.6, 0.6, 0.6),
                                 HudBar::Cooldown(slot)
@@ -391,8 +391,33 @@ fn update_texts(run: Res<ActiveRun>, mut q: Query<(&mut Text, &mut TextColor, &H
                     if let Some(tt) = a.target {
                         parts.push(format!("targeting: {}", sim.actors[tt].name));
                     }
-                    if let Some(c) = a.cast {
-                        parts.push(format!("casting {} ({:.1}s)", c.name, c.remaining));
+                    if let Some(c) = &a.cast {
+                        parts.push(format!(
+                            "casting {} ({:.1}s){}",
+                            c.name,
+                            c.remaining,
+                            if c.interruptible {
+                                " INTERRUPTIBLE"
+                            } else {
+                                ""
+                            }
+                        ));
+                    }
+                    let auras: Vec<String> = a
+                        .auras
+                        .iter()
+                        .filter(|x| &*x.name != "Weakened Soul")
+                        .map(|x| {
+                            let st = if x.stacks > 1 {
+                                format!(" x{}", x.stacks)
+                            } else {
+                                String::new()
+                            };
+                            format!("{}{st} {:.0}s", x.name, x.remaining)
+                        })
+                        .collect();
+                    if !auras.is_empty() {
+                        parts.push(auras.join(", "));
                     }
                     if a.is_enemy()
                         && let Some(p) = player
@@ -427,7 +452,7 @@ fn update_texts(run: Res<ActiveRun>, mut q: Query<(&mut Text, &mut TextColor, &H
                     sim.boss_phase(),
                     b.hp_frac() * 100.0
                 );
-                if let Some(c) = b.cast {
+                if let Some(c) = &b.cast {
                     s.push_str(&format!("  | casting {} ", c.name));
                 }
                 if let Some(t) = b.target {
@@ -447,16 +472,18 @@ fn update_texts(run: Res<ActiveRun>, mut q: Query<(&mut Text, &mut TextColor, &H
                     };
                     let status = if cd > 0.0 {
                         format!("{cd:.1}s")
-                    } else if a.mana < def.mana_cost {
-                        "no mana".into()
+                    } else if a.resource < def.cost {
+                        format!("{:.0} {} (low)", def.cost, a.resource_kind.label())
+                    } else if def.cost > 0.0 {
+                        format!("{:.0} {}", def.cost, a.resource_kind.label())
                     } else {
-                        format!("{:.0} mana", def.mana_cost)
+                        "ready".into()
                     };
                     format!("[{}] {}\n{status}", slot + 1, def.name)
                 }
                 _ => String::new(),
             },
-            HudText::CastLabel => match player.and_then(|p| sim.actors[p].cast) {
+            HudText::CastLabel => match player.and_then(|p| sim.actors[p].cast.as_ref()) {
                 Some(c) => format!("{} {:.1}s", c.name, c.remaining.max(0.0)),
                 None => String::new(),
             },
@@ -478,7 +505,7 @@ fn update_texts(run: Res<ActiveRun>, mut q: Query<(&mut Text, &mut TextColor, &H
                 }
                 s.push_str(
                     "\nWASD move | RMB/arrows camera | Tab/click target\n\
-                     1-3 abilities | F attack | F1-F5 party | Esc clear\n\
+                     1-5 abilities | Q/E strafe | G kill target | F attack | F1-F5 party | Esc clear\n\
                      L verbose log | Backspace leave dungeon",
                 );
                 s
@@ -504,21 +531,25 @@ fn update_texts(run: Res<ActiveRun>, mut q: Query<(&mut Text, &mut TextColor, &H
 
 fn update_bars(
     run: Res<ActiveRun>,
-    mut bars: Query<(&mut Node, &HudBar), Without<HudPanel>>,
+    mut bars: Query<(&mut Node, &mut BackgroundColor, &HudBar), Without<HudPanel>>,
     mut panels: Query<(&mut Node, &HudPanel), Without<HudBar>>,
 ) {
     let sim = &run.sim;
     let player = sim.player.map(|p| &sim.actors[p]);
-    for (mut node, kind) in &mut bars {
+    for (mut node, mut bg, kind) in &mut bars {
         let frac = match *kind {
             HudBar::PartyHp(i) => sim.actors[sim.party[i]].hp_frac(),
-            HudBar::PartyMana(i) => sim.actors[sim.party[i]].mana_frac(),
+            HudBar::PartyMana(i) => {
+                let a = &sim.actors[sim.party[i]];
+                bg.0 = crate::common::resource_color(a.resource_kind);
+                a.resource_frac()
+            }
             HudBar::TargetHp => target_of(&run)
                 .map(|t| sim.actors[t].hp_frac())
                 .unwrap_or(0.0),
             HudBar::BossHp => sim.actors[sim.boss].hp_frac(),
             HudBar::Cast => player
-                .and_then(|a| a.cast)
+                .and_then(|a| a.cast.as_ref())
                 .map(|c| 1.0 - c.remaining / c.total)
                 .unwrap_or(0.0),
             HudBar::Cooldown(slot) => player
@@ -543,7 +574,7 @@ fn update_bars(
                 b.alive && b.is_engaged_enemy()
             }
             HudPanel::Cast => player
-                .and_then(|a| a.cast)
+                .and_then(|a| a.cast.as_ref())
                 .is_some_and(|c| matches!(c.kind, CastKind::Ability(_))),
         };
         node.display = if show { Display::Flex } else { Display::None };

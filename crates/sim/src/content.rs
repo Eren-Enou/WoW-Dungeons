@@ -1,26 +1,29 @@
 //! Data-driven dungeon content: schema, loading and validation.
 //!
-//! The content file is TOML (see `assets/content/dungeon.toml`). Unknown fields
-//! are rejected so typos surface as errors instead of silently using defaults.
+//! Each dungeon is one TOML file in `assets/content/dungeons/`. Unknown fields are
+//! rejected so typos surface as errors, and a validation pass reports every
+//! problem with the path of the offending field.
 
+use crate::items::{ItemSlot, ItemStats, Rarity, RoleAffinity};
 use crate::math::V2;
 use crate::nav::{Nav, Rect};
-use crate::profile::ItemSlot;
+use crate::stats::School;
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-/// Default location of the content file, relative to the working directory.
-pub const DEFAULT_CONTENT_PATH: &str = "assets/content/dungeon.toml";
-/// Environment variable that overrides the content file path.
+/// Default content directory, relative to the working directory.
+pub const DEFAULT_CONTENT_DIR: &str = "assets/content/dungeons";
+/// Environment variable that overrides the content location (file or directory).
 pub const CONTENT_ENV_VAR: &str = "DUNGEON_CONTENT";
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Content {
     pub dungeon: DungeonConfig,
-    pub boss: BossConfig,
+    #[serde(default)]
+    pub difficulties: Vec<Difficulty>,
     pub templates: BTreeMap<String, EnemyTemplate>,
     pub encounters: Vec<EncounterConfig>,
     pub loot: Vec<LootEntry>,
@@ -30,7 +33,13 @@ pub struct Content {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DungeonConfig {
+    /// Stable identifier (used in saves and on the command line).
+    pub id: String,
     pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default = "one_u32")]
+    pub recommended_level: u32,
     /// Multiplies every enemy's max HP.
     pub hp_multiplier: f32,
     /// Multiplies all enemy damage.
@@ -41,10 +50,68 @@ pub struct DungeonConfig {
     pub leash_radius: f32,
     /// Walkable floor, as overlapping axis-aligned rectangles.
     pub areas: Vec<AreaConfig>,
+    #[serde(default)]
+    pub theme: Theme,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Theme {
+    pub floor: [f32; 3],
+    pub wall: [f32; 3],
+    pub light: [f32; 3],
+}
+
+impl Default for Theme {
+    fn default() -> Self {
+        Theme {
+            floor: [0.22, 0.24, 0.27],
+            wall: [0.32, 0.3, 0.34],
+            light: [1.0, 0.75, 0.45],
+        }
+    }
 }
 
 fn one() -> f32 {
     1.0
+}
+
+fn one_u32() -> u32 {
+    1
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Difficulty {
+    pub id: String,
+    pub name: String,
+    #[serde(default = "one")]
+    pub hp: f32,
+    #[serde(default = "one")]
+    pub damage: f32,
+    /// Added to every enemy's level (affects hit, crit and mitigation tables).
+    #[serde(default)]
+    pub level_bonus: u32,
+    /// Multiplies marks and experience.
+    #[serde(default = "one")]
+    pub reward_multiplier: f32,
+    /// Loot rarity upgrade steps.
+    #[serde(default)]
+    pub rarity_bonus: u32,
+}
+
+impl Difficulty {
+    pub fn normal() -> Difficulty {
+        Difficulty {
+            id: "normal".into(),
+            name: "Normal".into(),
+            hp: 1.0,
+            damage: 1.0,
+            level_bonus: 0,
+            reward_multiplier: 1.0,
+            rarity_bonus: 0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -68,6 +135,8 @@ pub enum EnemyRank {
 pub struct EnemyTemplate {
     pub name: String,
     pub rank: EnemyRank,
+    #[serde(default = "one_u32")]
+    pub level: u32,
     pub hp: f32,
     pub melee_damage: f32,
     pub attack_interval: f32,
@@ -76,52 +145,200 @@ pub struct EnemyTemplate {
     pub aggro_radius: f32,
     pub speed: f32,
     pub radius: f32,
-    /// Damage taken multiplier (armor). 1.0 = no mitigation.
-    #[serde(default = "one")]
-    pub damage_taken: f32,
     #[serde(default)]
-    pub cleave: Option<CleaveConfig>,
+    pub armor: f32,
+    #[serde(default)]
+    pub resist: f32,
+    #[serde(default = "default_dodge")]
+    pub dodge: f32,
+    #[serde(default)]
+    pub parry: f32,
+    #[serde(default)]
+    pub block: f32,
+    #[serde(default = "default_crit")]
+    pub crit: f32,
+    /// Immune to incapacitate effects. Defaults to true for bosses.
+    #[serde(default)]
+    pub cc_immune: Option<bool>,
+    #[serde(default)]
+    pub abilities: Vec<EnemyAbility>,
+    /// Phase transitions in order of decreasing `hp_below`.
+    #[serde(default)]
+    pub phases: Vec<PhaseConfig>,
+    /// Damage x5 after this many seconds in combat.
+    #[serde(default)]
+    pub enrage_seconds: Option<f32>,
+}
+
+impl EnemyTemplate {
+    pub fn is_cc_immune(&self) -> bool {
+        self.cc_immune.unwrap_or(self.rank == EnemyRank::Boss)
+    }
 }
 
 fn default_attack_range() -> f32 {
     2.0
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CleaveConfig {
-    pub damage: f32,
-    pub radius: f32,
-    pub interval: f32,
+fn default_dodge() -> f32 {
+    0.05
+}
+
+fn default_crit() -> f32 {
+    0.05
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AbilityKind {
+    /// Cast (optionally) then hit one target with spell damage.
+    Bolt,
+    /// Instant physical damage to everyone near the caster (optionally frontal only).
+    Cleave,
+    /// Ground telegraph(s) under target(s) that detonate after `delay`.
+    Ring,
+    /// Damage to the whole party after the cast (needs healing / defensives).
+    Pulse,
+    /// Summon `count` enemies of `template` next to the caster.
+    Summon,
+    /// Apply an aura (debuff) to the target.
+    Debuff,
+    /// Heal the most injured allied enemy (interrupt it!).
+    HealAlly,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TargetSelector {
+    /// The enemy's current (threat) target.
+    #[default]
+    Current,
+    Random,
+    RandomNonTank,
+    Farthest,
+    LowestHealth,
+    #[serde(rename = "self")]
+    Caster,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct BossConfig {
-    /// Template key of the boss in `[templates]`.
+pub struct EnemyAbility {
+    pub name: String,
+    pub kind: AbilityKind,
+    /// Seconds between uses.
+    pub interval: f32,
+    /// Seconds after pull (or phase start) before the first use. Defaults to `interval`.
+    #[serde(default)]
+    pub initial: Option<f32>,
+    #[serde(default)]
+    pub cast_time: f32,
+    #[serde(default)]
+    pub interruptible: bool,
+    /// Phases (1-based) in which the ability is used. Empty = every phase.
+    #[serde(default)]
+    pub phases: Vec<u8>,
+    #[serde(default)]
+    pub target: TargetSelector,
+    #[serde(default)]
+    pub damage: f32,
+    #[serde(default)]
+    pub school: Option<School>,
+    #[serde(default)]
+    pub radius: f32,
+    /// Cleave: only hits targets in front of the caster.
+    #[serde(default)]
+    pub frontal: bool,
+    /// Ring: seconds of warning before detonation.
+    #[serde(default)]
+    pub delay: f32,
+    /// Ring: number of rings (each on a different target); Summon: number of adds.
+    #[serde(default)]
+    pub count: u32,
+    /// Summon: template key.
+    #[serde(default)]
+    pub template: Option<String>,
+    /// Debuff: the aura applied.
+    #[serde(default)]
+    pub aura: Option<AuraConfig>,
+    /// HealAlly: amount healed.
+    #[serde(default)]
+    pub amount: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DebuffEffect {
+    /// `value` damage per second.
+    Dot,
+    /// +`value` (fraction) damage taken per stack.
+    DamageTaken,
+    /// −`value` (fraction) healing received per stack.
+    HealingTaken,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuraConfig {
+    pub name: String,
+    pub effect: DebuffEffect,
+    pub value: f32,
+    pub duration: f32,
+    #[serde(default = "one_u32")]
+    pub max_stacks: u32,
+    #[serde(default = "yes")]
+    pub dispellable: bool,
+    #[serde(default)]
+    pub school: Option<School>,
+}
+
+fn yes() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PhaseConfig {
+    /// Enter this phase when HP fraction falls to or below this value.
+    pub hp_below: f32,
+    #[serde(default = "one")]
+    pub damage_multiplier: f32,
+    #[serde(default)]
+    pub announce: String,
+    #[serde(default)]
+    pub summon: Vec<SummonSpec>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SummonSpec {
     pub template: String,
-    /// Boss enters phase 2 when HP falls to or below this fraction.
-    pub phase2_hp_fraction: f32,
-    pub phase2_damage_multiplier: f32,
-    /// Boss timer: seconds between Cinder Ring casts in phase 2.
-    pub ring_interval: f32,
-    /// Seconds of ground warning before a Cinder Ring detonates.
-    pub ring_telegraph: f32,
-    pub ring_radius: f32,
-    pub ring_damage: f32,
-    /// Phase-1 ranged spell on a random non-tank.
-    pub bolt_damage: f32,
-    pub bolt_interval: f32,
-    pub bolt_cast_time: f32,
-    /// After this many seconds of combat the boss enrages (x5 damage).
-    pub enrage_seconds: f32,
+    #[serde(default = "one_u32")]
+    pub count: u32,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EncounterConfig {
     pub id: String,
+    #[serde(default)]
+    pub name: String,
+    /// Optional encounters are not required for victory (but drop their loot).
+    #[serde(default)]
+    pub optional: bool,
     pub mobs: Vec<MobSpawn>,
+    #[serde(default)]
+    pub hazards: Vec<HazardConfig>,
+}
+
+impl EncounterConfig {
+    pub fn display_name(&self) -> &str {
+        if self.name.is_empty() {
+            &self.id
+        } else {
+            &self.name
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -131,6 +348,24 @@ pub struct MobSpawn {
     pub pos: V2,
 }
 
+/// An environmental hazard that pulses on and off while its encounter is alive.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HazardConfig {
+    pub name: String,
+    pub pos: V2,
+    pub radius: f32,
+    /// Damage per second to party members inside while active.
+    pub damage: f32,
+    #[serde(default)]
+    pub school: Option<School>,
+    /// Seconds active, then seconds dormant.
+    pub on: f32,
+    pub off: f32,
+    #[serde(default)]
+    pub offset: f32,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LootEntry {
@@ -138,10 +373,15 @@ pub struct LootEntry {
     pub name: String,
     pub slot: ItemSlot,
     #[serde(default)]
-    pub power: u32,
+    pub rarity: Rarity,
     #[serde(default)]
-    pub stamina: u32,
+    pub role: RoleAffinity,
+    #[serde(default)]
+    pub stats: ItemStats,
     pub weight: u32,
+    /// Encounter that drops this item; default: the final boss.
+    #[serde(default)]
+    pub source: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -150,6 +390,9 @@ pub struct RewardConfig {
     pub marks_per_clear: u32,
     #[serde(default)]
     pub marks_per_wipe: u32,
+    /// Experience for clearing the dungeon (kills give extra).
+    #[serde(default)]
+    pub xp_per_clear: u32,
 }
 
 #[derive(Debug)]
@@ -189,11 +432,6 @@ impl fmt::Display for ContentError {
 impl std::error::Error for ContentError {}
 
 impl Content {
-    /// Path from `DUNGEON_CONTENT` or the default.
-    pub fn default_path() -> String {
-        std::env::var(CONTENT_ENV_VAR).unwrap_or_else(|_| DEFAULT_CONTENT_PATH.to_string())
-    }
-
     pub fn load(path: impl AsRef<Path>) -> Result<Content, ContentError> {
         let path = path.as_ref();
         let text = std::fs::read_to_string(path).map_err(|e| ContentError::Io {
@@ -204,17 +442,27 @@ impl Content {
     }
 
     pub fn from_toml_str(text: &str, origin: &str) -> Result<Content, ContentError> {
-        let content: Content = toml::from_str(text).map_err(|e| ContentError::Parse {
+        let mut content: Content = toml::from_str(text).map_err(|e| ContentError::Parse {
             origin: origin.to_string(),
             message: e.to_string(),
         })?;
+        if content.difficulties.is_empty() {
+            content.difficulties.push(Difficulty::normal());
+        }
         content.validate(origin)?;
         Ok(content)
     }
 
-    /// The built-in default content (the same file shipped in assets), used by tests.
+    /// The shipped Sunken Vault (used by tests).
     pub fn builtin() -> Content {
-        Content::from_toml_str(BUILTIN_CONTENT, "<builtin>").expect("builtin content is valid")
+        Content::from_toml_str(BUILTIN_SUNKEN_VAULT, "<builtin sunken_vault>")
+            .expect("builtin content is valid")
+    }
+
+    /// The shipped Gloomroot Warrens (used by tests).
+    pub fn builtin_warrens() -> Content {
+        Content::from_toml_str(BUILTIN_WARRENS, "<builtin gloomroot_warrens>")
+            .expect("builtin content is valid")
     }
 
     pub fn nav(&self) -> Nav {
@@ -227,9 +475,23 @@ impl Content {
         )
     }
 
-    /// Index of the encounter holding the boss (validated to be the last one).
-    pub fn boss_encounter(&self) -> usize {
-        self.encounters.len() - 1
+    /// Index of the final (required) encounter, which holds the final boss.
+    pub fn final_encounter(&self) -> usize {
+        self.encounters
+            .iter()
+            .rposition(|e| !e.optional)
+            .unwrap_or(self.encounters.len() - 1)
+    }
+
+    pub fn difficulty(&self, id: &str) -> Option<&Difficulty> {
+        self.difficulties.iter().find(|d| d.id == id)
+    }
+
+    pub fn encounter_has_boss(&self, i: usize) -> bool {
+        self.encounters[i]
+            .mobs
+            .iter()
+            .any(|m| self.templates.get(&m.template).map(|t| t.rank) == Some(EnemyRank::Boss))
     }
 
     pub fn validate(&self, origin: &str) -> Result<(), ContentError> {
@@ -239,11 +501,27 @@ impl Content {
                 issues.push(msg);
             }
         };
+        let known = self.template_keys();
 
         let d = &self.dungeon;
         check(
+            !d.id.trim().is_empty() && d.id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'),
+            format!(
+                "dungeon.id '{}' must be non-empty and use only a-z, 0-9 and _",
+                d.id
+            ),
+        );
+        check(
             !d.name.trim().is_empty(),
             "dungeon.name must not be empty".into(),
+        );
+        check(
+            (1..=crate::class::MAX_LEVEL).contains(&d.recommended_level),
+            format!(
+                "dungeon.recommended_level = {} must be between 1 and {}",
+                d.recommended_level,
+                crate::class::MAX_LEVEL
+            ),
         );
         check(
             d.hp_multiplier.is_finite() && (0.05..=20.0).contains(&d.hp_multiplier),
@@ -282,7 +560,8 @@ impl Content {
             );
         }
         let nav = self.nav();
-        if !d.areas.is_empty() {
+        let walkable = !d.areas.is_empty();
+        if walkable {
             check(
                 nav.is_connected(),
                 "dungeon.areas are not all connected; neighbouring rectangles must overlap".into(),
@@ -296,11 +575,39 @@ impl Content {
             );
         }
 
+        let mut diff_ids = BTreeSet::new();
+        for (i, df) in self.difficulties.iter().enumerate() {
+            let p = format!("difficulties[{i}] ('{}')", df.id);
+            check(
+                diff_ids.insert(df.id.as_str()),
+                format!("{p}: id is used more than once"),
+            );
+            check(
+                (0.05..=20.0).contains(&df.hp) && (0.0..=20.0).contains(&df.damage),
+                format!("{p}: hp must be in 0.05..=20 and damage in 0..=20"),
+            );
+            check(
+                df.level_bonus <= 5,
+                format!("{p}: level_bonus must be at most 5"),
+            );
+            check(
+                (0.0..=10.0).contains(&df.reward_multiplier),
+                format!("{p}: reward_multiplier must be in 0..=10"),
+            );
+        }
+
         for (key, t) in &self.templates {
             let p = format!("templates.{key}");
             check(
                 t.hp.is_finite() && t.hp > 0.0,
                 format!("{p}.hp must be > 0 (got {})", t.hp),
+            );
+            check(
+                (1..=crate::class::MAX_LEVEL + 5).contains(&t.level),
+                format!(
+                    "{p}.level must be between 1 and {}",
+                    crate::class::MAX_LEVEL + 5
+                ),
             );
             check(
                 t.melee_damage.is_finite() && t.melee_damage >= 0.0,
@@ -314,11 +621,11 @@ impl Content {
                 ),
             );
             check(
-                t.attack_range.is_finite() && t.attack_range > 0.0,
+                t.attack_range > 0.0,
                 format!("{p}.attack_range must be > 0"),
             );
             check(
-                t.aggro_radius.is_finite() && t.aggro_radius >= 0.0,
+                t.aggro_radius >= 0.0,
                 format!("{p}.aggro_radius must be >= 0"),
             );
             check(
@@ -330,146 +637,215 @@ impl Content {
                 format!("{p}.radius must be between 0.2 and 5.0 (got {})", t.radius),
             );
             check(
-                t.damage_taken.is_finite() && t.damage_taken > 0.0,
-                format!("{p}.damage_taken must be > 0"),
+                t.armor >= 0.0 && t.resist >= 0.0,
+                format!("{p}.armor and resist must be >= 0"),
             );
-            if let Some(c) = &t.cleave {
+            for (name, v) in [
+                ("dodge", t.dodge),
+                ("parry", t.parry),
+                ("block", t.block),
+                ("crit", t.crit),
+            ] {
                 check(
-                    c.damage >= 0.0 && c.radius > 0.0 && c.interval >= 1.0,
-                    format!("{p}.cleave needs damage >= 0, radius > 0 and interval >= 1.0"),
+                    (0.0..=0.5).contains(&v),
+                    format!(
+                        "{p}.{name} = {v} must be a fraction between 0 and 0.5 (e.g. 0.05 = 5%)"
+                    ),
                 );
             }
+            if let Some(e) = t.enrage_seconds {
+                check(
+                    e >= 30.0,
+                    format!("{p}.enrage_seconds = {e} must be at least 30"),
+                );
+            }
+            let mut last = 1.0;
+            for (i, ph) in t.phases.iter().enumerate() {
+                let pp = format!("{p}.phases[{i}]");
+                check(
+                    ph.hp_below > 0.0 && ph.hp_below < last,
+                    format!(
+                        "{pp}.hp_below = {} must be between 0 and 1 and lower than the previous phase ({last})",
+                        ph.hp_below
+                    ),
+                );
+                last = ph.hp_below;
+                check(
+                    ph.damage_multiplier >= 0.0,
+                    format!("{pp}.damage_multiplier must be >= 0"),
+                );
+                for (j, s) in ph.summon.iter().enumerate() {
+                    check(
+                        self.templates.contains_key(&s.template),
+                        format!(
+                            "{pp}.summon[{j}].template '{}' is not defined; known templates: {known}",
+                            s.template
+                        ),
+                    );
+                    check(
+                        (1..=10).contains(&s.count),
+                        format!("{pp}.summon[{j}].count must be 1..=10"),
+                    );
+                }
+            }
+            let phase_count = t.phases.len() as u8 + 1;
+            for (i, a) in t.abilities.iter().enumerate() {
+                let ap = format!("{p}.abilities[{i}] ('{}')", a.name);
+                check(
+                    a.interval.is_finite() && a.interval >= 1.0,
+                    format!(
+                        "{ap}: interval = {} must be at least 1.0 seconds",
+                        a.interval
+                    ),
+                );
+                if let Some(init) = a.initial {
+                    check(init >= 0.0, format!("{ap}: initial must be >= 0"));
+                }
+                check(
+                    a.cast_time >= 0.0 && a.cast_time < a.interval,
+                    format!(
+                        "{ap}: cast_time = {} must be >= 0 and smaller than interval ({})",
+                        a.cast_time, a.interval
+                    ),
+                );
+                for ph in &a.phases {
+                    check(
+                        *ph >= 1 && *ph <= phase_count,
+                        format!(
+                            "{ap}: phase {ph} does not exist (this enemy has {phase_count} phase(s))"
+                        ),
+                    );
+                }
+                check(a.damage >= 0.0, format!("{ap}: damage must be >= 0"));
+                match a.kind {
+                    AbilityKind::Bolt | AbilityKind::Pulse => {
+                        check(
+                            a.damage > 0.0,
+                            format!("{ap}: {:?} needs damage > 0", a.kind),
+                        );
+                    }
+                    AbilityKind::Cleave => {
+                        check(
+                            a.damage > 0.0 && a.radius > 0.0,
+                            format!("{ap}: cleave needs damage > 0 and radius > 0"),
+                        );
+                    }
+                    AbilityKind::Ring => {
+                        check(
+                            a.damage > 0.0 && a.radius > 0.0 && a.radius <= 20.0,
+                            format!("{ap}: ring needs damage > 0 and radius in (0, 20]"),
+                        );
+                        check(
+                            a.delay >= 0.5 && a.delay < a.interval,
+                            format!(
+                                "{ap}: ring delay = {} must be >= 0.5 and smaller than interval ({})",
+                                a.delay, a.interval
+                            ),
+                        );
+                        check(a.count <= 5, format!("{ap}: ring count must be at most 5"));
+                    }
+                    AbilityKind::Summon => match &a.template {
+                        Some(k) => {
+                            check(
+                                self.templates.contains_key(k),
+                                format!(
+                                    "{ap}: summon template '{k}' is not defined; known templates: {known}"
+                                ),
+                            );
+                            check(
+                                (1..=10).contains(&a.count),
+                                format!("{ap}: summon count must be 1..=10"),
+                            );
+                        }
+                        None => check(false, format!("{ap}: summon needs a `template`")),
+                    },
+                    AbilityKind::Debuff => match &a.aura {
+                        Some(aura) => {
+                            check(
+                                aura.duration > 0.0 && aura.value > 0.0,
+                                format!("{ap}: aura needs duration > 0 and value > 0"),
+                            );
+                            check(
+                                (1..=20).contains(&aura.max_stacks),
+                                format!("{ap}: aura max_stacks must be 1..=20"),
+                            );
+                        }
+                        None => check(false, format!("{ap}: debuff needs an `aura` table")),
+                    },
+                    AbilityKind::HealAlly => {
+                        check(a.amount > 0.0, format!("{ap}: heal_ally needs amount > 0"));
+                    }
+                }
+            }
         }
-
-        let b = &self.boss;
-        match self.templates.get(&b.template) {
-            None => check(
-                false,
-                format!(
-                    "boss.template '{}' is not defined in [templates]; known templates: {}",
-                    b.template,
-                    self.template_keys()
-                ),
-            ),
-            Some(t) => check(
-                t.rank == EnemyRank::Boss,
-                format!("boss.template '{}' must have rank = \"boss\"", b.template),
-            ),
-        }
-        check(
-            b.phase2_hp_fraction > 0.0 && b.phase2_hp_fraction < 1.0,
-            format!(
-                "boss.phase2_hp_fraction = {} must be strictly between 0 and 1 (e.g. 0.5 for 50%)",
-                b.phase2_hp_fraction
-            ),
-        );
-        check(
-            b.phase2_damage_multiplier.is_finite() && b.phase2_damage_multiplier >= 0.0,
-            "boss.phase2_damage_multiplier must be >= 0".into(),
-        );
-        check(
-            b.ring_interval.is_finite() && b.ring_interval >= 1.0,
-            format!(
-                "boss.ring_interval = {} must be at least 1.0 seconds",
-                b.ring_interval
-            ),
-        );
-        check(
-            b.ring_telegraph.is_finite()
-                && b.ring_telegraph >= 0.5
-                && b.ring_telegraph < b.ring_interval,
-            format!(
-                "boss.ring_telegraph = {} must be >= 0.5 and smaller than boss.ring_interval ({})",
-                b.ring_telegraph, b.ring_interval
-            ),
-        );
-        check(
-            b.ring_radius > 0.0 && b.ring_radius <= 20.0,
-            "boss.ring_radius must be in (0, 20]".into(),
-        );
-        check(b.ring_damage >= 0.0, "boss.ring_damage must be >= 0".into());
-        check(b.bolt_damage >= 0.0, "boss.bolt_damage must be >= 0".into());
-        check(
-            b.bolt_interval >= 1.0,
-            "boss.bolt_interval must be >= 1.0".into(),
-        );
-        check(
-            b.bolt_cast_time >= 0.0 && b.bolt_cast_time < b.bolt_interval,
-            "boss.bolt_cast_time must be >= 0 and smaller than boss.bolt_interval".into(),
-        );
-        check(
-            b.enrage_seconds >= 30.0,
-            format!(
-                "boss.enrage_seconds = {} must be at least 30",
-                b.enrage_seconds
-            ),
-        );
 
         check(
             !self.encounters.is_empty(),
             "at least one [[encounters]] entry is required".into(),
         );
         let mut ids = BTreeSet::new();
-        let mut boss_spawns = Vec::new();
+        let mut boss_count = 0;
         for (i, e) in self.encounters.iter().enumerate() {
+            let p = format!("encounters[{i}] ('{}')", e.id);
             check(
                 ids.insert(e.id.as_str()),
-                format!("encounters[{i}].id '{}' is used more than once", e.id),
+                format!("{p}: id is used more than once"),
             );
-            check(
-                !e.mobs.is_empty(),
-                format!("encounters[{i}] ('{}') has no mobs", e.id),
-            );
+            check(!e.mobs.is_empty(), format!("{p}: has no mobs"));
             for (j, m) in e.mobs.iter().enumerate() {
-                let p = format!("encounters[{i}].mobs[{j}]");
+                let mp = format!("encounters[{i}].mobs[{j}]");
                 match self.templates.get(&m.template) {
                     None => check(
                         false,
                         format!(
-                            "{p}.template '{}' is not defined; known templates: {}",
-                            m.template,
-                            self.template_keys()
+                            "{mp}.template '{}' is not defined; known templates: {known}",
+                            m.template
                         ),
                     ),
                     Some(t) => {
                         if t.rank == EnemyRank::Boss {
-                            boss_spawns.push((i, m.template.clone()));
+                            boss_count += 1;
                         }
                     }
                 }
-                if !d.areas.is_empty() {
+                if walkable {
                     check(
                         nav.contains(m.pos),
                         format!(
-                            "{p}.pos {:?} is outside every walkable area",
+                            "{mp}.pos {:?} is outside every walkable area",
                             <[f32; 2]>::from(m.pos)
                         ),
                     );
                 }
             }
+            for (j, h) in e.hazards.iter().enumerate() {
+                let hp = format!("{p}.hazards[{j}] ('{}')", h.name);
+                check(
+                    h.radius > 0.0
+                        && h.damage >= 0.0
+                        && h.on > 0.0
+                        && h.off >= 0.0
+                        && h.offset >= 0.0,
+                    format!("{hp}: needs radius > 0, damage >= 0, on > 0, off >= 0, offset >= 0"),
+                );
+            }
         }
         check(
-            boss_spawns.len() == 1,
-            format!(
-                "exactly one boss must be spawned across all encounters (found {})",
-                boss_spawns.len()
-            ),
+            boss_count >= 1,
+            "the dungeon must spawn at least one boss".into(),
         );
-        if let Some((i, key)) = boss_spawns.first() {
+        if !self.encounters.is_empty() {
+            let fin = self.final_encounter();
             check(
-                *i + 1 == self.encounters.len(),
-                "the boss must be in the last encounter".into(),
+                !self.encounters.iter().all(|e| e.optional),
+                "at least one encounter must be required (not optional)".into(),
             );
             check(
-                *key == b.template,
+                self.encounter_has_boss(fin),
                 format!(
-                    "spawned boss '{key}' does not match boss.template '{}'",
-                    b.template
+                    "the last required encounter ('{}') must contain a boss",
+                    self.encounters[fin].id
                 ),
-            );
-            check(
-                self.encounters[*i].mobs.len() == 1,
-                "the boss encounter must contain only the boss".into(),
             );
         }
 
@@ -479,15 +855,30 @@ impl Content {
         );
         let mut loot_ids = BTreeSet::new();
         for (i, l) in self.loot.iter().enumerate() {
+            let p = format!("loot[{i}] ('{}')", l.id);
             check(
                 loot_ids.insert(l.id.as_str()),
-                format!("loot[{i}].id '{}' is used more than once", l.id),
+                format!("{p}: id is used more than once"),
             );
-            check(l.weight > 0, format!("loot[{i}].weight must be > 0"));
+            check(l.weight > 0, format!("{p}: weight must be > 0"));
+            let s = &l.stats;
             check(
-                l.power <= 200 && l.stamina <= 500,
-                format!("loot[{i}] stats are unreasonably large (power <= 200, stamina <= 500)"),
+                s.stamina <= 300.0
+                    && s.power <= 100.0
+                    && s.armor <= 3000.0
+                    && s.crit <= 10.0
+                    && s.hit <= 10.0
+                    && s.dodge <= 10.0,
+                format!(
+                    "{p}: stats are unreasonably large (stamina <= 300, power <= 100, armor <= 3000, crit/hit/dodge <= 10)"
+                ),
             );
+            if let Some(src) = &l.source {
+                check(
+                    self.encounters.iter().any(|e| e.id == *src),
+                    format!("{p}: source '{src}' is not an encounter id"),
+                );
+            }
         }
 
         if issues.is_empty() {
@@ -509,8 +900,85 @@ impl Content {
     }
 }
 
-/// The shipped content file, embedded for tests and as a fallback reference.
-pub const BUILTIN_CONTENT: &str = include_str!("../../../assets/content/dungeon.toml");
+/// All dungeons found in a directory (or a single file), plus files that failed.
+#[derive(Debug, Default)]
+pub struct ContentLibrary {
+    pub dungeons: Vec<Content>,
+    pub errors: Vec<ContentError>,
+    pub source: String,
+}
+
+impl ContentLibrary {
+    /// Content location from `DUNGEON_CONTENT` or the default directory.
+    pub fn default_path() -> String {
+        std::env::var(CONTENT_ENV_VAR).unwrap_or_else(|_| DEFAULT_CONTENT_DIR.to_string())
+    }
+
+    /// Load every `*.toml` in a directory (sorted by file name), or one file.
+    pub fn load(path: impl AsRef<Path>) -> ContentLibrary {
+        let path = path.as_ref();
+        let mut lib = ContentLibrary {
+            source: path.display().to_string(),
+            ..Default::default()
+        };
+        let files: Vec<PathBuf> = if path.is_dir() {
+            match std::fs::read_dir(path) {
+                Ok(rd) => {
+                    let mut v: Vec<PathBuf> = rd
+                        .filter_map(|e| e.ok().map(|e| e.path()))
+                        .filter(|p| p.extension().is_some_and(|x| x == "toml"))
+                        .collect();
+                    v.sort();
+                    v
+                }
+                Err(e) => {
+                    lib.errors.push(ContentError::Io {
+                        path: lib.source.clone(),
+                        message: e.to_string(),
+                    });
+                    return lib;
+                }
+            }
+        } else {
+            vec![path.to_path_buf()]
+        };
+        for f in files {
+            match Content::load(&f) {
+                Ok(c) => {
+                    if lib.dungeons.iter().any(|d| d.dungeon.id == c.dungeon.id) {
+                        lib.errors.push(ContentError::Invalid {
+                            origin: f.display().to_string(),
+                            issues: vec![format!(
+                                "dungeon.id '{}' is already used by another file",
+                                c.dungeon.id
+                            )],
+                        });
+                    } else {
+                        lib.dungeons.push(c);
+                    }
+                }
+                Err(e) => lib.errors.push(e),
+            }
+        }
+        if lib.dungeons.is_empty() && lib.errors.is_empty() {
+            lib.errors.push(ContentError::Io {
+                path: lib.source.clone(),
+                message: "no dungeon .toml files found".into(),
+            });
+        }
+        lib
+    }
+
+    pub fn get(&self, id: &str) -> Option<&Content> {
+        self.dungeons.iter().find(|d| d.dungeon.id == id)
+    }
+}
+
+/// The shipped content files, embedded for tests.
+pub const BUILTIN_SUNKEN_VAULT: &str =
+    include_str!("../../../assets/content/dungeons/01_sunken_vault.toml");
+pub const BUILTIN_WARRENS: &str =
+    include_str!("../../../assets/content/dungeons/02_gloomroot_warrens.toml");
 
 #[cfg(test)]
 mod tests {
@@ -520,12 +988,19 @@ mod tests {
     fn builtin_content_is_valid() {
         let c = Content::builtin();
         assert_eq!(c.encounters.len(), 4);
-        assert_eq!(c.boss_encounter(), 3);
+        assert_eq!(c.final_encounter(), 3);
+        let w = Content::builtin_warrens();
+        let bosses = (0..w.encounters.len())
+            .filter(|&i| w.encounter_has_boss(i))
+            .count();
+        assert!(bosses >= 2, "second dungeon needs two bosses");
+        assert!(w.encounters.iter().any(|e| e.optional));
+        assert!(w.difficulties.len() >= 2);
     }
 
     #[test]
     fn bad_multiplier_is_reported_with_path() {
-        let text = BUILTIN_CONTENT.replace("hp_multiplier = 1.0", "hp_multiplier = -2.0");
+        let text = BUILTIN_SUNKEN_VAULT.replace("hp_multiplier = 1.0", "hp_multiplier = -2.0");
         let err = Content::from_toml_str(&text, "test")
             .unwrap_err()
             .to_string();
@@ -534,7 +1009,8 @@ mod tests {
 
     #[test]
     fn unknown_template_lists_known_ones() {
-        let text = BUILTIN_CONTENT.replacen("template = \"skulker\"", "template = \"skulkr\"", 1);
+        let text =
+            BUILTIN_SUNKEN_VAULT.replacen("template = \"skulker\"", "template = \"skulkr\"", 1);
         let err = Content::from_toml_str(&text, "test")
             .unwrap_err()
             .to_string();
@@ -544,19 +1020,47 @@ mod tests {
 
     #[test]
     fn typo_field_is_rejected() {
-        let text = BUILTIN_CONTENT.replace("ring_interval", "ring_intervall");
+        let text = BUILTIN_SUNKEN_VAULT.replace("interval = 9.0", "intervall = 9.0");
         let err = Content::from_toml_str(&text, "test")
             .unwrap_err()
             .to_string();
-        assert!(err.contains("ring_interval"), "{err}");
+        assert!(err.contains("intervall"), "{err}");
     }
 
     #[test]
     fn telegraph_longer_than_interval_is_rejected() {
-        let text = BUILTIN_CONTENT.replace("ring_telegraph = 2.5", "ring_telegraph = 50.0");
+        let text = BUILTIN_SUNKEN_VAULT.replace("delay = 2.5", "delay = 50.0");
         let err = Content::from_toml_str(&text, "test")
             .unwrap_err()
             .to_string();
-        assert!(err.contains("boss.ring_telegraph"), "{err}");
+        assert!(err.contains("ring delay"), "{err}");
+    }
+
+    #[test]
+    fn phase_thresholds_must_descend() {
+        let text = BUILTIN_SUNKEN_VAULT.replace("hp_below = 0.5", "hp_below = 1.5");
+        let err = Content::from_toml_str(&text, "test")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("hp_below"), "{err}");
+    }
+
+    #[test]
+    fn library_loads_shipped_directory() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/content/dungeons");
+        let lib = ContentLibrary::load(dir);
+        let errs: Vec<String> = lib.errors.iter().map(|e| e.to_string()).collect();
+        assert!(errs.is_empty(), "{errs:?}");
+        assert!(lib.get("sunken_vault").is_some());
+        assert!(lib.get("gloomroot_warrens").is_some());
+    }
+
+    #[test]
+    fn example_variants_are_valid() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/content/variants");
+        let lib = ContentLibrary::load(dir);
+        let errs: Vec<String> = lib.errors.iter().map(|e| e.to_string()).collect();
+        assert!(errs.is_empty(), "{errs:?}");
+        assert!(lib.dungeons.len() >= 2);
     }
 }

@@ -1,35 +1,60 @@
-//! Seeded headless batch runner.
+//! Seeded headless batch runner and AI evaluation tool.
 //!
-//! Usage: dungeon-headless [--seed N] [--runs N] [--class warden|mender|striker|arcanist]
-//!                         [--content PATH] [--max-seconds S] [--log FILE] [--json]
+//! Examples:
+//!   dungeon-headless --runs 20
+//!   dungeon-headless --dungeon gloomroot_warrens --level 5 --runs 50
+//!   dungeon-headless --compare-profiles --runs 40 --dungeon gloomroot_warrens --level 5
+//!   dungeon-headless --party-size 25 --level 10 --runs 3 --bench
 
 use dungeon_sim::ClassId;
-use dungeon_sim::content::Content;
+use dungeon_sim::ai::AiProfile;
+use dungeon_sim::content::{Content, ContentLibrary};
 use dungeon_sim::metrics::RunSummary;
-use dungeon_sim::runner::{DEFAULT_MAX_SECONDS, batch_stats, default_party, run_headless};
+use dungeon_sim::runner::{DEFAULT_MAX_SECONDS, batch_stats, party_at_level, raid_party, run_with};
+use dungeon_sim::sim::PartyMemberSpec;
 use std::process::ExitCode;
+use std::time::Instant;
 
-const USAGE: &str = "usage: dungeon-headless [--seed N] [--runs N] [--class warden|mender|striker|arcanist] [--content PATH] [--max-seconds S] [--log FILE] [--json]";
+const USAGE: &str = "usage: dungeon-headless [--seed N] [--runs N] [--dungeon ID] [--content PATH] \
+[--difficulty ID] [--class warden|mender|striker|arcanist] [--level N] \
+[--profile conservative|balanced|aggressive|support|mechanic] [--party-size N] \
+[--compare-profiles] [--bench] [--max-seconds S] [--log FILE] [--json] [--quiet]";
 
 struct Args {
     seed: u64,
     runs: usize,
-    class: ClassId,
+    dungeon: Option<String>,
     content: String,
+    difficulty: String,
+    class: ClassId,
+    level: u32,
+    profile: AiProfile,
+    party_size: Option<usize>,
+    compare_profiles: bool,
+    bench: bool,
     max_seconds: f32,
     log: Option<String>,
     json: bool,
+    quiet: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
     let mut args = Args {
         seed: 1,
         runs: 10,
+        dungeon: None,
+        content: ContentLibrary::default_path(),
+        difficulty: "normal".into(),
         class: ClassId::Striker,
-        content: Content::default_path(),
+        level: 0,
+        profile: AiProfile::Balanced,
+        party_size: None,
+        compare_profiles: false,
+        bench: false,
         max_seconds: DEFAULT_MAX_SECONDS,
         log: None,
         json: false,
+        quiet: false,
     };
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
@@ -37,6 +62,18 @@ fn parse_args() -> Result<Args, String> {
         match a.as_str() {
             "--seed" => args.seed = val("--seed")?.parse().map_err(|e| format!("--seed: {e}"))?,
             "--runs" => args.runs = val("--runs")?.parse().map_err(|e| format!("--runs: {e}"))?,
+            "--level" => {
+                args.level = val("--level")?
+                    .parse()
+                    .map_err(|e| format!("--level: {e}"))?
+            }
+            "--party-size" => {
+                args.party_size = Some(
+                    val("--party-size")?
+                        .parse()
+                        .map_err(|e| format!("--party-size: {e}"))?,
+                )
+            }
             "--max-seconds" => {
                 args.max_seconds = val("--max-seconds")?
                     .parse()
@@ -51,9 +88,19 @@ fn parse_args() -> Result<Args, String> {
                     other => return Err(format!("unknown class '{other}'\n{USAGE}")),
                 }
             }
+            "--profile" => {
+                let v = val("--profile")?;
+                args.profile =
+                    AiProfile::parse(&v).ok_or(format!("unknown profile '{v}'\n{USAGE}"))?
+            }
+            "--dungeon" => args.dungeon = Some(val("--dungeon")?),
             "--content" => args.content = val("--content")?,
+            "--difficulty" => args.difficulty = val("--difficulty")?,
             "--log" => args.log = Some(val("--log")?),
             "--json" => args.json = true,
+            "--quiet" => args.quiet = true,
+            "--compare-profiles" => args.compare_profiles = true,
+            "--bench" => args.bench = true,
             "-h" | "--help" => return Err(USAGE.into()),
             other => return Err(format!("unknown argument '{other}'\n{USAGE}")),
         }
@@ -64,35 +111,31 @@ fn parse_args() -> Result<Args, String> {
     Ok(args)
 }
 
-fn main() -> ExitCode {
-    let args = match parse_args() {
-        Ok(a) => a,
-        Err(e) => {
-            eprintln!("{e}");
-            return ExitCode::from(2);
-        }
+fn build_party(args: &Args, content: &Content, profile: AiProfile) -> Vec<PartyMemberSpec> {
+    let level = if args.level == 0 {
+        content.dungeon.recommended_level
+    } else {
+        args.level
     };
-    let content = match Content::load(&args.content) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("error: {e}");
-            return ExitCode::from(1);
-        }
-    };
-    let party = default_party(args.class);
-    println!(
-        "Dungeon Sandbox headless runner | '{}' | hp x{} | ring every {}s | player class {:?} | {} run(s) from seed {}",
-        content.dungeon.name,
-        content.dungeon.hp_multiplier,
-        content.boss.ring_interval,
-        args.class,
-        args.runs,
-        args.seed
-    );
-    let mut summaries: Vec<RunSummary> = Vec::new();
+    match args.party_size {
+        Some(n) if n != 5 => raid_party(n, level, profile),
+        _ => party_at_level(args.class, level, profile),
+    }
+}
+
+fn run_batch(
+    args: &Args,
+    content: &Content,
+    party: &[PartyMemberSpec],
+    print: bool,
+) -> (Vec<RunSummary>, f64, u64) {
+    let mut summaries = Vec::new();
+    let start = Instant::now();
+    let mut ticks = 0u64;
     for i in 0..args.runs {
         let seed = args.seed + i as u64;
-        let (sim, summary) = run_headless(&content, &party, seed, args.max_seconds);
+        let (sim, summary) = run_with(content, party, seed, args.max_seconds, &args.difficulty);
+        ticks += sim.tick;
         if i == 0
             && let Some(path) = &args.log
         {
@@ -101,32 +144,108 @@ fn main() -> ExitCode {
                 eprintln!("could not write log {path}: {e}");
             }
         }
-        if args.json {
-            println!("{}", serde_json::to_string(&summary).expect("serializable"));
-        } else {
-            print!("{}", summary.format_table());
+        if print {
+            if args.json {
+                println!("{}", serde_json::to_string(&summary).expect("serializable"));
+            } else if !args.quiet {
+                print!("{}", summary.format_table());
+            }
         }
         summaries.push(summary);
     }
+    (summaries, start.elapsed().as_secs_f64(), ticks)
+}
 
-    // Determinism self-check: replay the first seed and compare the log hash.
-    let (_, replay) = run_headless(&content, &party, args.seed, args.max_seconds);
-    let deterministic = replay.log_hash == summaries[0].log_hash;
+fn main() -> ExitCode {
+    let args = match parse_args() {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("{e}");
+            return ExitCode::from(2);
+        }
+    };
+    let lib = ContentLibrary::load(&args.content);
+    if !lib.errors.is_empty() {
+        for e in &lib.errors {
+            eprintln!("error: {e}");
+        }
+        return ExitCode::from(1);
+    }
+    let content = match &args.dungeon {
+        Some(id) => match lib.get(id) {
+            Some(c) => c.clone(),
+            None => {
+                let known: Vec<&str> = lib.dungeons.iter().map(|d| d.dungeon.id.as_str()).collect();
+                eprintln!(
+                    "error: no dungeon '{id}' in {}; known: {}",
+                    lib.source,
+                    known.join(", ")
+                );
+                return ExitCode::from(1);
+            }
+        },
+        None => lib.dungeons[0].clone(),
+    };
+    if content.difficulty(&args.difficulty).is_none() {
+        let known: Vec<&str> = content.difficulties.iter().map(|d| d.id.as_str()).collect();
+        eprintln!(
+            "error: dungeon '{}' has no difficulty '{}'; known: {}",
+            content.dungeon.id,
+            args.difficulty,
+            known.join(", ")
+        );
+        return ExitCode::from(1);
+    }
 
-    let s = batch_stats(&summaries);
-    println!(
-        "SUMMARY: runs {} | victories {} | wipes {} | timeouts {} | win rate {:.0}% | mean duration {:.1}s | mean deaths {:.2} | mean party dps {:.1} | mean ring hits {:.2} | deterministic replay: {}",
-        s.runs,
-        s.victories,
-        s.wipes,
-        s.timeouts,
-        100.0 * s.victories as f32 / s.runs as f32,
-        s.mean_duration,
-        s.mean_deaths,
-        s.mean_party_dps,
-        s.mean_ring_hits,
-        if deterministic { "OK" } else { "MISMATCH" }
-    );
+    let profiles: Vec<AiProfile> = if args.compare_profiles {
+        AiProfile::ALL.to_vec()
+    } else {
+        vec![args.profile]
+    };
+    let mut deterministic = true;
+    for profile in profiles {
+        let party = build_party(&args, &content, profile);
+        println!(
+            "== '{}' [{}] | {} members at level {} | profile {} | hp x{} | {} run(s) from seed {}",
+            content.dungeon.name,
+            args.difficulty,
+            party.len(),
+            party[0].level,
+            profile.label(),
+            content.dungeon.hp_multiplier,
+            args.runs,
+            args.seed
+        );
+        let (summaries, secs, ticks) = run_batch(&args, &content, &party, !args.compare_profiles);
+        // Determinism self-check: replay the first seed and compare the log hash.
+        let (_, replay) = run_with(
+            &content,
+            &party,
+            args.seed,
+            args.max_seconds,
+            &args.difficulty,
+        );
+        let same = replay.log_hash == summaries[0].log_hash;
+        deterministic &= same;
+        let s = batch_stats(&summaries);
+        println!(
+            "SUMMARY [{}]: {} | deterministic replay: {}",
+            profile.label(),
+            s.one_line(),
+            if same { "OK" } else { "MISMATCH" }
+        );
+        if args.bench {
+            println!(
+                "BENCH: {} runs, {} ticks in {:.3}s wall = {:.0} ticks/s ({:.3} ms/tick, {:.1}x real time)",
+                args.runs,
+                ticks,
+                secs,
+                ticks as f64 / secs.max(1e-9),
+                1000.0 * secs / ticks.max(1) as f64,
+                ticks as f64 * dungeon_sim::DT as f64 / secs.max(1e-9)
+            );
+        }
+    }
     if deterministic {
         ExitCode::SUCCESS
     } else {

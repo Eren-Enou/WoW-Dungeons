@@ -1,16 +1,22 @@
 //! Deterministic fixed-timestep dungeon simulation.
 //!
 //! Everything gameplay-relevant lives here; the Bevy game only feeds player input
-//! in and renders `Sim` state out. See `RULES.md` for the combat rules in prose.
+//! in and renders `Sim` state out. See `RULES.md` for the rules in prose and
+//! `stats.rs` for the mitigation / hit-table formulas.
 
-use crate::ai;
-use crate::class::{AbilityId, ClassId, Effect, GCD, Role, TargetRule};
-use crate::content::{CleaveConfig, Content, EnemyRank};
-use crate::events::{CastError, Event, EventKind};
+use crate::ai::{self, AiProfile, Blackboard};
+use crate::class::{AbilityId, ClassId, Effect, GCD, ResourceKind, Role, TargetRule, level_power};
+use crate::content::{
+    AbilityKind, Content, DebuffEffect, Difficulty, EnemyAbility, EnemyRank, HazardConfig,
+    PhaseConfig, TargetSelector,
+};
+use crate::events::{CastError, Event, EventKind, Label};
+use crate::items::ItemStats;
 use crate::math::V2;
 use crate::metrics::Metrics;
 use crate::nav::Nav;
 use crate::rng::Rng;
+use crate::stats::{self, HitKind, HitOutcome, MELEE_CRIT_MULT, SPELL_CRIT_MULT, School, Stats};
 
 /// Fixed simulation timestep in seconds (20 Hz).
 pub const DT: f32 = 0.05;
@@ -23,13 +29,21 @@ pub const HEAL_THREAT_FACTOR: f32 = 0.5;
 /// Threat ratio needed for an enemy to switch to a new target in / out of its melee reach.
 pub const SWITCH_MELEE: f32 = 1.1;
 pub const SWITCH_RANGED: f32 = 1.3;
-pub const CRIT_CHANCE: f32 = 0.05;
-pub const CRIT_MULT: f32 = 1.5;
 pub const PARTY_RADIUS: f32 = 0.5;
 /// Seconds the whole party must be out of combat before fallen members rally.
 pub const RALLY_DELAY: f32 = 8.0;
-/// Fraction of HP and mana fallen members rally with.
+/// Fraction of HP and resource fallen members rally with.
 pub const RALLY_FRACTION: f32 = 0.4;
+/// Mana regenerates at the full rate only this long after the last mana spent.
+pub const FIVE_SECOND_RULE: f32 = 5.0;
+/// Fraction of normal mana regen that still trickles in during the five seconds.
+pub const CASTING_REGEN_FRACTION: f32 = 0.35;
+/// Out-of-combat regeneration per second (fraction of max).
+pub const OOC_MANA_REGEN: f32 = 0.10;
+pub const OOC_HP_REGEN: f32 = 0.08;
+pub const ENERGY_PER_SECOND: f32 = 10.0;
+pub const RAGE_DECAY_PER_SECOND: f32 = 2.0;
+pub const ENRAGE_MULT: f32 = 5.0;
 
 pub type ActorId = usize;
 
@@ -58,46 +72,126 @@ pub enum Controller {
 pub struct PartyMemberSpec {
     pub name: String,
     pub class: ClassId,
-    /// Equipment power: +1% damage and healing per point.
-    pub power: u32,
-    /// Equipment stamina: +10 max HP per point.
-    pub stamina: u32,
+    pub level: u32,
+    pub gear: ItemStats,
     pub player_controlled: bool,
+    pub profile: AiProfile,
+}
+
+impl PartyMemberSpec {
+    pub fn new(name: &str, class: ClassId) -> Self {
+        PartyMemberSpec {
+            name: name.to_string(),
+            class,
+            level: 1,
+            gear: ItemStats::default(),
+            player_controlled: false,
+            profile: AiProfile::Balanced,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct RunOptions {
+    pub difficulty: String,
+    /// The AI leader walks the party through the dungeon.
+    pub autopilot: bool,
+    /// Autopilot skips optional encounters.
+    pub skip_optional: bool,
+}
+
+impl Default for RunOptions {
+    fn default() -> Self {
+        RunOptions {
+            difficulty: "normal".into(),
+            autopilot: false,
+            skip_optional: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CastKind {
-    /// Index into the caster's ability list.
+    /// Index into the caster's (player-side) ability list.
     Ability(usize),
-    /// The boss's phase-1 Hollow Bolt.
-    BossBolt,
+    /// Index into an enemy's ability list.
+    Enemy(usize),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Cast {
     pub kind: CastKind,
-    pub name: &'static str,
+    pub name: Label,
     pub target: ActorId,
     pub remaining: f32,
     pub total: f32,
+    pub interruptible: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Aura {
+pub enum AuraKind {
     Hot {
-        source: ActorId,
         per_tick: f32,
-        remaining: f32,
-        tick_timer: f32,
+    },
+    Dot {
+        per_tick: f32,
+        school: School,
+        ignores_armor: bool,
     },
     DamageReduction {
         pct: f32,
+    },
+    Absorb {
         remaining: f32,
     },
+    /// Cannot receive another absorb shield.
+    WeakenedSoul,
     Taunted {
         by: ActorId,
-        remaining: f32,
     },
+    /// No actions or movement; broken by damage.
+    Incapacitated,
+    /// Cannot cast spells or use special abilities.
+    Silenced,
+    /// +pct damage taken per stack.
+    DamageTaken {
+        pct: f32,
+    },
+    /// −pct healing received per stack.
+    HealingTaken {
+        pct: f32,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Aura {
+    pub name: Label,
+    pub kind: AuraKind,
+    pub source: ActorId,
+    pub remaining: f32,
+    pub duration: f32,
+    pub tick_timer: f32,
+    pub stacks: u32,
+    pub max_stacks: u32,
+    pub dispellable: bool,
+    pub harmful: bool,
+}
+
+impl Aura {
+    fn new(name: Label, kind: AuraKind, source: ActorId, duration: f32, harmful: bool) -> Self {
+        Aura {
+            name,
+            kind,
+            source,
+            remaining: duration,
+            duration,
+            tick_timer: 1.0,
+            stacks: 1,
+            max_stacks: 1,
+            dispellable: false,
+            harmful,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,16 +208,14 @@ pub struct ThreatEntry {
     pub value: f32,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct BossState {
-    pub phase: u8,
-    pub pull_time: f32,
-    pub bolt_timer: f32,
-    pub ring_timer: f32,
-    pub enraged: bool,
+#[derive(Debug, Clone)]
+pub struct EnemyAbilityState {
+    pub cfg: EnemyAbility,
+    pub label: Label,
+    pub timer: f32,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct EnemyState {
     pub template_key: String,
     pub rank: EnemyRank,
@@ -134,9 +226,17 @@ pub struct EnemyState {
     pub threat: Vec<ThreatEntry>,
     pub mode: EnemyMode,
     pub base_power_mult: f32,
-    pub cleave: Option<CleaveConfig>,
-    pub cleave_timer: f32,
-    pub boss: Option<BossState>,
+    pub cc_immune: bool,
+    /// Summoned mid-fight: not required for clearing and removed on reset.
+    pub summoned: bool,
+    /// Removed from the world (summon despawned); not a kill.
+    pub despawned: bool,
+    pub phase: u8,
+    pub phases: Vec<PhaseConfig>,
+    pub abilities: Vec<EnemyAbilityState>,
+    pub enrage_seconds: Option<f32>,
+    pub enraged: bool,
+    pub pull_time: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -146,27 +246,32 @@ pub struct Actor {
     pub team: Team,
     pub class: Option<ClassId>,
     pub controller: Controller,
+    pub profile: AiProfile,
     pub pos: V2,
     pub facing: f32,
     pub radius: f32,
     pub speed: f32,
     pub hp: f32,
     pub max_hp: f32,
-    pub mana: f32,
-    pub max_mana: f32,
+    pub resource_kind: ResourceKind,
+    pub resource: f32,
+    pub max_resource: f32,
+    pub last_mana_spend: f32,
     pub alive: bool,
+    pub stats: Stats,
     /// Outgoing damage/healing multiplier.
     pub power_mult: f32,
-    /// Incoming damage multiplier.
-    pub damage_taken: f32,
     pub threat_mult: f32,
-    pub combat_mana_regen: f32,
+    pub mana_regen: f32,
     pub attack_damage: f32,
     pub attack_interval: f32,
     pub attack_range: f32,
+    pub attack_kind: HitKind,
+    pub attack_school: School,
     pub swing_timer: f32,
     pub auto_attack: bool,
     pub abilities: Vec<AbilityId>,
+    pub ability_labels: Vec<Label>,
     pub cooldowns: Vec<f32>,
     pub gcd: f32,
     pub cast: Option<Cast>,
@@ -194,9 +299,18 @@ impl Actor {
         }
     }
 
+    pub fn resource_frac(&self) -> f32 {
+        if self.max_resource > 0.0 {
+            self.resource / self.max_resource
+        } else {
+            1.0
+        }
+    }
+
+    /// Mana fraction for mana users, 1.0 for everyone else.
     pub fn mana_frac(&self) -> f32 {
-        if self.max_mana > 0.0 {
-            self.mana / self.max_mana
+        if self.resource_kind == ResourceKind::Mana {
+            self.resource_frac()
         } else {
             1.0
         }
@@ -214,25 +328,85 @@ impl Actor {
         self.alive && self.mode() == Some(EnemyMode::Engaged)
     }
 
+    pub fn rank(&self) -> Option<EnemyRank> {
+        self.enemy.as_ref().map(|e| e.rank)
+    }
+
+    pub fn has_aura(&self, f: impl Fn(&AuraKind) -> bool) -> bool {
+        self.auras.iter().any(|a| f(&a.kind))
+    }
+
     pub fn has_hot_from(&self, source: ActorId) -> bool {
         self.auras
             .iter()
-            .any(|a| matches!(a, Aura::Hot { source: s, .. } if *s == source))
+            .any(|a| a.source == source && matches!(a.kind, AuraKind::Hot { .. }))
+    }
+
+    pub fn has_dot_from(&self, source: ActorId) -> bool {
+        self.auras
+            .iter()
+            .any(|a| a.source == source && matches!(a.kind, AuraKind::Dot { .. }))
+    }
+
+    pub fn is_incapacitated(&self) -> bool {
+        self.has_aura(|k| matches!(k, AuraKind::Incapacitated))
+    }
+
+    pub fn is_silenced(&self) -> bool {
+        self.has_aura(|k| matches!(k, AuraKind::Silenced))
+    }
+
+    pub fn absorb_remaining(&self) -> f32 {
+        self.auras
+            .iter()
+            .map(|a| match a.kind {
+                AuraKind::Absorb { remaining } => remaining,
+                _ => 0.0,
+            })
+            .sum()
     }
 
     pub fn damage_reduction(&self) -> f32 {
         self.auras
             .iter()
-            .filter_map(|a| match a {
-                Aura::DamageReduction { pct, .. } => Some(*pct),
+            .filter_map(|a| match a.kind {
+                AuraKind::DamageReduction { pct } => Some(pct),
                 _ => None,
             })
             .fold(0.0, f32::max)
     }
 
+    /// Multiplier from stacking "damage taken" debuffs.
+    pub fn damage_taken_mult(&self) -> f32 {
+        1.0 + self
+            .auras
+            .iter()
+            .map(|a| match a.kind {
+                AuraKind::DamageTaken { pct } => pct * a.stacks as f32,
+                _ => 0.0,
+            })
+            .sum::<f32>()
+    }
+
+    pub fn healing_taken_mult(&self) -> f32 {
+        (1.0 - self
+            .auras
+            .iter()
+            .map(|a| match a.kind {
+                AuraKind::HealingTaken { pct } => pct * a.stacks as f32,
+                _ => 0.0,
+            })
+            .sum::<f32>())
+        .max(0.0)
+    }
+
+    pub fn has_dispellable_debuff(&self) -> bool {
+        self.auras.iter().any(|a| a.harmful && a.dispellable)
+    }
+
     pub fn taunted_by(&self) -> Option<ActorId> {
-        self.auras.iter().find_map(|a| match a {
-            Aura::Taunted { by, .. } => Some(*by),
+        self.auras.iter().find_map(|a| match a.kind {
+            AuraKind::Taunted { by } => Some(by),
             _ => None,
         })
     }
@@ -244,13 +418,19 @@ impl Actor {
     pub fn ability_ready(&self, slot: usize) -> bool {
         self.cooldowns.get(slot).is_some_and(|c| *c <= 0.0)
             && self.gcd <= 0.0
-            && self.mana >= self.abilities[slot].def().mana_cost
+            && self.resource >= self.abilities[slot].def().cost
+    }
+
+    pub fn phase(&self) -> u8 {
+        self.enemy.as_ref().map(|e| e.phase).unwrap_or(1)
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct EncounterState {
     pub id: String,
+    pub name: String,
+    pub optional: bool,
     pub mobs: Vec<ActorId>,
     pub cleared: bool,
     pub cleared_at: Option<f32>,
@@ -261,6 +441,8 @@ pub struct EncounterState {
 pub struct Telegraph {
     pub id: u32,
     pub source: ActorId,
+    pub what: Label,
+    pub school: School,
     pub center: V2,
     pub radius: f32,
     pub remaining: f32,
@@ -275,8 +457,60 @@ impl Telegraph {
 }
 
 #[derive(Debug, Clone)]
+pub struct HazardState {
+    pub cfg: HazardConfig,
+    pub label: Label,
+    pub encounter: usize,
+    pub active: bool,
+    tick_timer: f32,
+}
+
+impl HazardState {
+    /// Seconds until this hazard next turns on (0 if active).
+    pub fn time_to_active(&self, time: f32) -> f32 {
+        if self.active {
+            return 0.0;
+        }
+        let period = self.cfg.on + self.cfg.off;
+        let phase = (time + self.cfg.offset) % period;
+        period - phase
+    }
+}
+
+/// Everything about how one hit is resolved.
+#[derive(Debug, Clone)]
+pub struct DamageSpec {
+    pub base: f32,
+    pub school: School,
+    pub kind: HitKind,
+    pub threat_mult: f32,
+    pub ignores_armor: bool,
+    pub what: Label,
+    /// Counts toward "avoidable damage" metrics (rings, hazards, frontal cleaves).
+    pub avoidable: bool,
+    /// White melee swings generate rage.
+    pub auto_attack: bool,
+}
+
+impl DamageSpec {
+    pub fn new(base: f32, school: School, kind: HitKind, what: Label) -> Self {
+        DamageSpec {
+            base,
+            school,
+            kind,
+            threat_mult: 1.0,
+            ignores_armor: false,
+            what,
+            avoidable: false,
+            auto_attack: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Sim {
     pub content: Content,
+    pub difficulty: Difficulty,
     pub nav: Nav,
     pub seed: u64,
     pub(crate) rng: Rng,
@@ -287,6 +521,7 @@ pub struct Sim {
     pub enemies: Vec<ActorId>,
     pub encounters: Vec<EncounterState>,
     pub telegraphs: Vec<Telegraph>,
+    pub hazards: Vec<HazardState>,
     next_telegraph_id: u32,
     pub events: Vec<Event>,
     pub metrics: Metrics,
@@ -295,23 +530,42 @@ pub struct Sim {
     /// Party member the others follow out of combat.
     pub leader: ActorId,
     pub leader_heading: V2,
-    /// When true and the leader is AI-controlled it walks the party through the dungeon.
-    pub autopilot: bool,
+    pub options: RunOptions,
     pending_player_cast: Option<usize>,
+    /// The final boss (shown in the boss frame).
     pub boss: ActorId,
     pub phase2_at: Option<f32>,
     /// Sim time at which the outcome was decided.
     pub ended_at: Option<f32>,
+    /// Shared party tactical state, recomputed every tick.
+    pub board: Blackboard,
+    label_melee: Label,
+    label_wand: Label,
 }
 
 impl Sim {
-    /// Build a run. `party[0]` is the player slot. The leader is the player if one is
-    /// player-controlled, otherwise the tank (or the first member).
+    /// Build a run on Normal difficulty with no autopilot.
     pub fn new(content: &Content, party: &[PartyMemberSpec], seed: u64) -> Sim {
+        Sim::with_options(content, party, seed, RunOptions::default())
+    }
+
+    /// Build a run. `party[0]` is the player slot. The leader is the player if one is
+    /// player-controlled, otherwise the first tank (or the first member).
+    pub fn with_options(
+        content: &Content,
+        party: &[PartyMemberSpec],
+        seed: u64,
+        options: RunOptions,
+    ) -> Sim {
         let content = content.clone();
         let nav = content.nav();
+        let difficulty = content
+            .difficulty(&options.difficulty)
+            .cloned()
+            .unwrap_or_else(|| content.difficulties[0].clone());
         let mut sim = Sim {
             nav,
+            difficulty,
             seed,
             rng: Rng::new(seed),
             time: 0.0,
@@ -321,6 +575,7 @@ impl Sim {
             enemies: Vec::new(),
             encounters: Vec::new(),
             telegraphs: Vec::new(),
+            hazards: Vec::new(),
             next_telegraph_id: 1,
             events: Vec::new(),
             metrics: Metrics::default(),
@@ -328,20 +583,36 @@ impl Sim {
             player: None,
             leader: 0,
             leader_heading: V2::new(0.0, 1.0),
-            autopilot: false,
+            options,
             pending_player_cast: None,
             boss: 0,
             phase2_at: None,
             ended_at: None,
+            board: Blackboard::default(),
+            label_melee: Label::from("Melee"),
+            label_wand: Label::from("Wand"),
             content,
         };
         let entrance = sim.content.dungeon.entrance;
         for (i, spec) in party.iter().enumerate() {
-            let stats = spec.class.stats();
-            let offset = V2::new((i as f32 - 2.0) * 1.5, -(i as f32 % 2.0) * 1.5);
-            let max_hp = stats.max_hp + spec.stamina as f32 * 10.0;
+            let cs = spec.class.stats(spec.level);
+            // Spread the party in a small grid behind the entrance.
+            let col = (i % 5) as f32;
+            let row = (i / 5) as f32;
+            let offset = V2::new((col - 2.0) * 1.5, -row * 1.5 - (i % 2) as f32 * 0.5);
+            let mut st = cs.stats;
+            spec.gear.apply(&mut st);
+            let max_hp = (cs.max_hp + spec.gear.stamina * 10.0).round();
             let abilities = spec.class.abilities().to_vec();
+            let labels = abilities
+                .iter()
+                .map(|a| Label::from(a.def().name))
+                .collect();
             let id = sim.actors.len();
+            let start_resource = match cs.resource {
+                ResourceKind::Rage => 0.0,
+                _ => cs.max_resource,
+            };
             sim.actors.push(Actor {
                 id,
                 name: spec.name.clone(),
@@ -352,26 +623,32 @@ impl Sim {
                 } else {
                     Controller::Ai
                 },
+                profile: spec.profile,
                 pos: sim.nav.project(entrance + offset),
                 facing: 0.0,
                 radius: PARTY_RADIUS,
-                speed: stats.speed,
+                speed: cs.speed,
                 hp: max_hp,
                 max_hp,
-                mana: stats.max_mana,
-                max_mana: stats.max_mana,
+                resource_kind: cs.resource,
+                resource: start_resource,
+                max_resource: cs.max_resource,
+                last_mana_spend: f32::NEG_INFINITY,
                 alive: true,
-                power_mult: 1.0 + spec.power as f32 / 100.0,
-                damage_taken: stats.damage_taken,
-                threat_mult: stats.threat_mult,
-                combat_mana_regen: stats.combat_mana_regen,
-                attack_damage: stats.attack_damage,
-                attack_interval: stats.attack_interval,
-                attack_range: stats.attack_range,
+                stats: st,
+                power_mult: level_power(spec.level) * (1.0 + spec.gear.power / 100.0),
+                threat_mult: cs.threat_mult,
+                mana_regen: cs.mana_regen,
+                attack_damage: cs.attack_damage,
+                attack_interval: cs.attack_interval,
+                attack_range: cs.attack_range,
+                attack_kind: cs.attack_kind,
+                attack_school: cs.attack_school,
                 swing_timer: 0.0,
                 auto_attack: false,
                 cooldowns: vec![0.0; abilities.len()],
                 abilities,
+                ability_labels: labels,
                 gcd: 0.0,
                 cast: None,
                 target: None,
@@ -395,88 +672,137 @@ impl Sim {
                 .unwrap_or(0)
         });
 
-        let hp_mult = sim.content.dungeon.hp_multiplier;
-        let dmg_mult = sim.content.dungeon.damage_multiplier;
         let encounters = sim.content.encounters.clone();
         for (ei, enc) in encounters.iter().enumerate() {
-            let mut mobs = Vec::new();
-            for spawn in &enc.mobs {
-                let t = sim.content.templates[&spawn.template].clone();
-                let id = sim.actors.len();
-                let max_hp = (t.hp * hp_mult).round().max(1.0);
-                let boss = (t.rank == EnemyRank::Boss).then_some(BossState {
-                    phase: 1,
-                    pull_time: 0.0,
-                    bolt_timer: sim.content.boss.bolt_interval,
-                    ring_timer: sim.content.boss.ring_interval,
-                    enraged: false,
-                });
-                if boss.is_some() {
-                    sim.boss = id;
-                }
-                let home_facing = (entrance - spawn.pos).heading();
-                sim.actors.push(Actor {
-                    id,
-                    name: t.name.clone(),
-                    team: Team::Enemy,
-                    class: None,
-                    controller: Controller::Ai,
-                    pos: spawn.pos,
-                    facing: home_facing,
-                    radius: t.radius,
-                    speed: t.speed,
-                    hp: max_hp,
-                    max_hp,
-                    mana: 0.0,
-                    max_mana: 0.0,
-                    alive: true,
-                    power_mult: dmg_mult,
-                    damage_taken: t.damage_taken,
-                    threat_mult: 1.0,
-                    combat_mana_regen: 0.0,
-                    attack_damage: t.melee_damage,
-                    attack_interval: t.attack_interval,
-                    attack_range: t.attack_range,
-                    swing_timer: 0.0,
-                    auto_attack: true,
-                    abilities: Vec::new(),
-                    cooldowns: Vec::new(),
-                    gcd: 0.0,
-                    cast: None,
-                    target: None,
-                    auras: Vec::new(),
-                    last_combat: f32::NEG_INFINITY,
-                    move_goal: None,
-                    move_dir: V2::ZERO,
-                    moved_last_tick: false,
-                    enemy: Some(EnemyState {
-                        template_key: spawn.template.clone(),
-                        rank: t.rank,
-                        encounter: ei,
-                        home: spawn.pos,
-                        home_facing,
-                        aggro_radius: t.aggro_radius,
-                        threat: Vec::new(),
-                        mode: EnemyMode::Idle,
-                        base_power_mult: dmg_mult,
-                        cleave_timer: t.cleave.as_ref().map(|c| c.interval).unwrap_or(0.0),
-                        cleave: t.cleave.clone(),
-                        boss,
-                    }),
-                });
-                sim.enemies.push(id);
-                mobs.push(id);
-            }
             sim.encounters.push(EncounterState {
                 id: enc.id.clone(),
-                mobs,
+                name: enc.display_name().to_string(),
+                optional: enc.optional,
+                mobs: Vec::new(),
                 cleared: false,
                 cleared_at: None,
                 pulls: 0,
             });
+            for spawn in &enc.mobs {
+                let id = sim.spawn_enemy(&spawn.template, spawn.pos, ei, false);
+                sim.encounters[ei].mobs.push(id);
+            }
+            for h in &enc.hazards {
+                sim.hazards.push(HazardState {
+                    label: Label::from(h.name.as_str()),
+                    cfg: h.clone(),
+                    encounter: ei,
+                    active: false,
+                    tick_timer: 0.0,
+                });
+            }
         }
+        let fin = sim.content.final_encounter();
+        sim.boss = sim.encounters[fin]
+            .mobs
+            .iter()
+            .copied()
+            .find(|&m| sim.actors[m].rank() == Some(EnemyRank::Boss))
+            .unwrap_or(sim.encounters[fin].mobs[0]);
         sim.metrics = Metrics::new(&sim.actors);
         sim
+    }
+
+    /// Create an enemy from a template. Summoned enemies start engaged elsewhere.
+    fn spawn_enemy(&mut self, key: &str, pos: V2, encounter: usize, summoned: bool) -> ActorId {
+        let t = self.content.templates[key].clone();
+        let id = self.actors.len();
+        let hp_mult = self.content.dungeon.hp_multiplier * self.difficulty.hp;
+        let dmg_mult = self.content.dungeon.damage_multiplier * self.difficulty.damage;
+        let max_hp = (t.hp * hp_mult).round().max(1.0);
+        let entrance = self.content.dungeon.entrance;
+        let home_facing = (entrance - pos).heading();
+        let abilities = t
+            .abilities
+            .iter()
+            .map(|a| EnemyAbilityState {
+                label: Label::from(a.name.as_str()),
+                timer: a.initial.unwrap_or(a.interval),
+                cfg: a.clone(),
+            })
+            .collect();
+        let stats = Stats {
+            level: t.level + self.difficulty.level_bonus,
+            armor: t.armor,
+            resist: t.resist,
+            dodge: t.dodge,
+            parry: t.parry,
+            block: t.block,
+            block_value: 0.0,
+            crit: t.crit,
+            hit: 0.0,
+        };
+        self.actors.push(Actor {
+            id,
+            name: t.name.clone(),
+            team: Team::Enemy,
+            class: None,
+            controller: Controller::Ai,
+            profile: AiProfile::Balanced,
+            pos,
+            facing: home_facing,
+            radius: t.radius,
+            speed: t.speed,
+            hp: max_hp,
+            max_hp,
+            resource_kind: ResourceKind::Mana,
+            resource: 0.0,
+            max_resource: 0.0,
+            last_mana_spend: f32::NEG_INFINITY,
+            alive: true,
+            stats,
+            power_mult: dmg_mult,
+            threat_mult: 1.0,
+            mana_regen: 0.0,
+            attack_damage: t.melee_damage,
+            attack_interval: t.attack_interval,
+            attack_range: t.attack_range,
+            attack_kind: HitKind::Melee,
+            attack_school: School::Physical,
+            swing_timer: 0.0,
+            auto_attack: true,
+            abilities: Vec::new(),
+            ability_labels: Vec::new(),
+            cooldowns: Vec::new(),
+            gcd: 0.0,
+            cast: None,
+            target: None,
+            auras: Vec::new(),
+            last_combat: f32::NEG_INFINITY,
+            move_goal: None,
+            move_dir: V2::ZERO,
+            moved_last_tick: false,
+            enemy: Some(EnemyState {
+                template_key: key.to_string(),
+                rank: t.rank,
+                encounter,
+                home: pos,
+                home_facing,
+                aggro_radius: t.aggro_radius,
+                threat: Vec::new(),
+                mode: EnemyMode::Idle,
+                base_power_mult: dmg_mult,
+                cc_immune: t.is_cc_immune(),
+                summoned,
+                despawned: false,
+                phase: 1,
+                phases: t.phases.clone(),
+                abilities,
+                enrage_seconds: t.enrage_seconds,
+                enraged: false,
+                pull_time: 0.0,
+            }),
+        });
+        self.enemies.push(id);
+        if self.metrics.actors.len() < self.actors.len() {
+            self.metrics.push_actor(&self.actors[id]);
+        }
+        id
     }
 
     // ------------------------------------------------------------ queries --
@@ -507,6 +833,14 @@ impl Sim {
             .unwrap_or(0.0)
     }
 
+    pub fn top_threat(&self, enemy: ActorId) -> f32 {
+        self.actors[enemy]
+            .enemy
+            .as_ref()
+            .map(|e| e.threat.iter().map(|t| t.value).fold(0.0, f32::max))
+            .unwrap_or(0.0)
+    }
+
     pub fn on_threat_table(&self, enemy: ActorId, actor: ActorId) -> bool {
         self.actors[enemy]
             .enemy
@@ -518,18 +852,19 @@ impl Sim {
         self.party.iter().copied().filter(|&p| self.actors[p].alive)
     }
 
+    /// The first living tank.
     pub fn tank(&self) -> Option<ActorId> {
         self.alive_party()
             .find(|&p| self.actors[p].role() == Some(Role::Tank))
     }
 
+    pub fn is_tank(&self, id: ActorId) -> bool {
+        self.actors[id].role() == Some(Role::Tank)
+    }
+
+    /// Phase of the final boss.
     pub fn boss_phase(&self) -> u8 {
-        self.actors[self.boss]
-            .enemy
-            .as_ref()
-            .and_then(|e| e.boss.as_ref())
-            .map(|b| b.phase)
-            .unwrap_or(1)
+        self.actors[self.boss].phase()
     }
 
     pub fn is_hostile(&self, a: ActorId, b: ActorId) -> bool {
@@ -545,6 +880,10 @@ impl Sim {
             time: self.time,
             kind,
         });
+    }
+
+    pub fn label(&self, id: ActorId, slot: usize) -> Label {
+        self.actors[id].ability_labels[slot].clone()
     }
 
     // ------------------------------------------------------- player input --
@@ -573,7 +912,7 @@ impl Sim {
         }
     }
 
-    /// Queue an ability press (slot 0..3) to be resolved on the next tick.
+    /// Queue an ability press (slot 0..5) to be resolved on the next tick.
     pub fn queue_player_cast(&mut self, slot: usize) {
         self.pending_player_cast = Some(slot);
     }
@@ -609,6 +948,7 @@ impl Sim {
         self.auto_attacks();
         self.enemy_specials();
         self.update_telegraphs();
+        self.update_hazards();
         self.regen();
         self.check_resets();
         self.check_progress();
@@ -629,30 +969,32 @@ impl Sim {
 
     fn refresh_combat_flags(&mut self) {
         let now = self.time;
-        for e in self.enemies.clone() {
+        for i in 0..self.enemies.len() {
+            let e = self.enemies[i];
             if !self.actors[e].is_engaged_enemy() {
                 continue;
             }
-            let entries: Vec<ActorId> = self.actors[e]
-                .enemy
-                .as_ref()
-                .map(|s| s.threat.iter().map(|t| t.actor).collect())
-                .unwrap_or_default();
             self.actors[e].last_combat = now;
-            for a in entries {
+            let n = self.actors[e].enemy.as_ref().map_or(0, |s| s.threat.len());
+            for k in 0..n {
+                let a = self.actors[e].enemy.as_ref().expect("enemy").threat[k].actor;
                 self.actors[a].last_combat = now;
             }
         }
     }
 
     fn run_ai(&mut self) {
-        // Leader heading for formation following.
         let leader = &self.actors[self.leader];
         if leader.moved_last_tick {
             self.leader_heading = V2::from_heading(leader.facing);
         }
+        self.board = ai::compute_blackboard(self);
         for id in 0..self.actors.len() {
             if !self.actors[id].alive || self.actors[id].controller == Controller::Player {
+                continue;
+            }
+            if self.actors[id].is_incapacitated() {
+                self.actors[id].move_goal = None;
                 continue;
             }
             let decision = if self.actors[id].is_enemy() {
@@ -662,7 +1004,6 @@ impl Sim {
             };
             self.apply_decision(id, decision);
         }
-        // Player: auto-attack engaged targets automatically.
         if let Some(p) = self.player
             && let Some(t) = self.actors[p].target
             && self.actors[t].is_engaged_enemy()
@@ -673,12 +1014,12 @@ impl Sim {
     }
 
     fn apply_decision(&mut self, id: ActorId, d: ai::Decision) {
-        if d.stop_cast && self.actors[id].cast.is_some() {
-            let name = self.actors[id].cast.map(|c| c.name).unwrap_or("");
-            self.actors[id].cast = None;
+        if d.stop_cast
+            && let Some(c) = self.actors[id].cast.take()
+        {
             self.emit(EventKind::Interrupted {
                 src: id,
-                what: name,
+                what: c.name,
             });
         }
         if let Some(t) = d.target {
@@ -690,6 +1031,14 @@ impl Sim {
                     enemy: id,
                     target: nt,
                 });
+                // A non-tank pulled off the tank while a tank is alive: threat failure.
+                if !self.is_tank(nt)
+                    && self.tank().is_some()
+                    && self.actors[id].target.is_some()
+                    && self.actors[id].taunted_by().is_none()
+                {
+                    self.metrics.threat_failures += 1;
+                }
             }
             self.actors[id].target = t;
         }
@@ -707,10 +1056,10 @@ impl Sim {
         let target = self.actors[p].target;
         if let Err(reason) = self.try_cast(p, slot, target) {
             let what = self.actors[p]
-                .abilities
+                .ability_labels
                 .get(slot)
-                .map(|a| a.def().name)
-                .unwrap_or("?");
+                .cloned()
+                .unwrap_or_else(|| Label::from("?"));
             self.emit(EventKind::CastFailed {
                 src: p,
                 what,
@@ -736,6 +1085,9 @@ impl Sim {
         if !a.alive {
             return Err(CastError::Dead);
         }
+        if a.is_incapacitated() {
+            return Err(CastError::Incapacitated);
+        }
         if a.cast.is_some() {
             return Err(CastError::Busy);
         }
@@ -749,8 +1101,11 @@ impl Sim {
         if a.gcd > 0.0 {
             return Err(CastError::OnGlobalCooldown);
         }
-        if a.mana < def.mana_cost {
-            return Err(CastError::NotEnoughMana);
+        if a.resource < def.cost {
+            return Err(CastError::NotEnoughResource);
+        }
+        if a.is_silenced() && def.school.is_magic() {
+            return Err(CastError::Silenced);
         }
         let target = match def.target {
             TargetRule::SelfOnly => caster,
@@ -769,6 +1124,19 @@ impl Sim {
                 _ => caster,
             },
         };
+        let t = &self.actors[target];
+        match def.effect {
+            Effect::Incapacitate { .. } if t.enemy.as_ref().is_some_and(|e| e.cc_immune) => {
+                return Err(CastError::Immune);
+            }
+            Effect::Dispel if !t.has_dispellable_debuff() => {
+                return Err(CastError::NothingToDispel);
+            }
+            Effect::Absorb { .. } if t.has_aura(|k| matches!(k, AuraKind::WeakenedSoul)) => {
+                return Err(CastError::TargetWeakened);
+            }
+            _ => {}
+        }
         if def.target != TargetRule::SelfOnly && !self.reach(caster, target, def.range) {
             return Err(CastError::OutOfRange);
         }
@@ -778,19 +1146,21 @@ impl Sim {
             {
                 return Err(CastError::Moving);
             }
+            let name = self.label(caster, slot);
             let a = &mut self.actors[caster];
             a.cast = Some(Cast {
                 kind: CastKind::Ability(slot),
-                name: def.name,
+                name: name.clone(),
                 target,
                 remaining: def.cast_time,
                 total: def.cast_time,
+                interruptible: true,
             });
             a.gcd = GCD;
             a.move_goal = None;
             self.emit(EventKind::CastStart {
                 src: caster,
-                what: def.name,
+                what: name,
                 target,
             });
         } else {
@@ -800,71 +1170,136 @@ impl Sim {
         Ok(())
     }
 
+    fn spend(&mut self, id: ActorId, cost: f32) {
+        let a = &mut self.actors[id];
+        if cost > 0.0 {
+            a.resource = (a.resource - cost).max(0.0);
+            if a.resource_kind == ResourceKind::Mana {
+                a.last_mana_spend = self.time;
+            }
+            self.metrics.actors[id].resource_spent += cost;
+        }
+    }
+
     fn execute_ability(&mut self, caster: ActorId, slot: usize, target: ActorId) {
         let def = self.actors[caster].abilities[slot].def();
-        {
-            let a = &mut self.actors[caster];
-            a.mana = (a.mana - def.mana_cost).max(0.0);
-            a.cooldowns[slot] = def.cooldown;
-        }
-        self.metrics.actor_mut(caster).casts += 1;
+        let what = self.label(caster, slot);
+        self.spend(caster, def.cost);
+        self.actors[caster].cooldowns[slot] = def.cooldown;
+        self.metrics.actors[caster].casts += 1;
         match def.effect {
             Effect::Damage {
                 amount,
                 threat_mult,
+                kind,
             } => {
-                self.deal_damage(caster, target, amount, def.name, threat_mult, true);
+                let mut spec = DamageSpec::new(amount, def.school, kind, what);
+                spec.threat_mult = threat_mult;
+                self.deal(caster, target, spec);
             }
-            Effect::AoeDamage { amount, radius } => {
+            Effect::AoeDamage {
+                amount,
+                radius,
+                threat_mult,
+            } => {
                 let center = self.actors[caster].pos;
                 let hits: Vec<ActorId> = self
                     .engaged_enemies()
                     .into_iter()
-                    .filter(|&e| self.actors[e].pos.dist(center) <= radius + self.actors[e].radius)
+                    .filter(|&e| {
+                        !self.actors[e].is_incapacitated()
+                            && self.actors[e].pos.dist(center) <= radius + self.actors[e].radius
+                    })
                     .collect();
                 for e in hits {
-                    self.deal_damage(caster, e, amount, def.name, 1.0, true);
+                    let mut spec =
+                        DamageSpec::new(amount, def.school, HitKind::Melee, what.clone());
+                    spec.threat_mult = threat_mult;
+                    self.deal(caster, e, spec);
                 }
             }
             Effect::Heal { amount } => {
-                self.heal(caster, target, amount, def.name);
+                self.heal(caster, target, amount, what, true);
             }
             Effect::Hot { total, duration } => {
                 let ticks = duration.max(1.0);
-                let t = &mut self.actors[target];
-                t.auras
-                    .retain(|a| !matches!(a, Aura::Hot { source, .. } if *source == caster));
-                t.auras.push(Aura::Hot {
-                    source: caster,
-                    per_tick: total / ticks,
-                    remaining: duration,
-                    tick_timer: 1.0,
-                });
-                self.emit(EventKind::Buff {
-                    src: caster,
-                    dst: target,
-                    what: def.name,
-                });
+                let mut aura = Aura::new(
+                    what,
+                    AuraKind::Hot {
+                        per_tick: total / ticks,
+                    },
+                    caster,
+                    duration,
+                    false,
+                );
+                aura.dispellable = false;
+                self.apply_aura(target, aura);
+            }
+            Effect::Dot {
+                total,
+                duration,
+                ignores_armor,
+            } => {
+                let ticks = duration.max(1.0);
+                let aura = Aura::new(
+                    what,
+                    AuraKind::Dot {
+                        per_tick: total / ticks,
+                        school: def.school,
+                        ignores_armor,
+                    },
+                    caster,
+                    duration,
+                    true,
+                );
+                self.engage_enemy_of(caster, target);
+                self.apply_aura(target, aura);
+            }
+            Effect::Absorb {
+                amount,
+                duration,
+                lockout,
+            } => {
+                let shield = (amount * self.actors[caster].power_mult).round();
+                self.apply_aura(
+                    target,
+                    Aura::new(
+                        what,
+                        AuraKind::Absorb { remaining: shield },
+                        caster,
+                        duration,
+                        false,
+                    ),
+                );
+                self.apply_aura(
+                    target,
+                    Aura::new(
+                        Label::from("Weakened Soul"),
+                        AuraKind::WeakenedSoul,
+                        caster,
+                        lockout,
+                        true,
+                    ),
+                );
             }
             Effect::Taunt { duration } => {
                 self.taunt(caster, target, duration);
             }
             Effect::DamageReduction { pct, duration } => {
-                let t = &mut self.actors[target];
-                t.auras
-                    .retain(|a| !matches!(a, Aura::DamageReduction { .. }));
-                t.auras.push(Aura::DamageReduction {
-                    pct,
-                    remaining: duration,
-                });
-                self.emit(EventKind::Buff {
-                    src: caster,
-                    dst: target,
-                    what: def.name,
-                });
+                self.apply_aura(
+                    target,
+                    Aura::new(
+                        what,
+                        AuraKind::DamageReduction { pct },
+                        caster,
+                        duration,
+                        false,
+                    ),
+                );
             }
             Effect::ThreatDrop { pct } => {
-                for e in self.enemies.clone() {
+                for i in 0..self.enemies.len() {
+                    let e = self.enemies[i];
                     if let Some(es) = self.actors[e].enemy.as_mut() {
                         for t in es.threat.iter_mut().filter(|t| t.actor == caster) {
                             t.value *= 1.0 - pct;
@@ -873,7 +1308,118 @@ impl Sim {
                 }
                 self.emit(EventKind::ThreatDrop { src: caster });
             }
+            Effect::Interrupt { lockout, damage } => {
+                self.metrics.actors[caster].interrupts_attempted += 1;
+                if damage > 0.0 {
+                    let mut spec =
+                        DamageSpec::new(damage, def.school, HitKind::Melee, what.clone());
+                    spec.threat_mult = 2.0;
+                    self.deal(caster, target, spec);
+                } else {
+                    self.engage_enemy_of(caster, target);
+                }
+                let interruptible = self.actors[target]
+                    .cast
+                    .as_ref()
+                    .is_some_and(|c| c.interruptible);
+                if interruptible && self.actors[target].alive {
+                    let c = self.actors[target].cast.take().expect("casting");
+                    self.metrics.actors[caster].interrupts += 1;
+                    self.metrics.interrupted_casts += 1;
+                    self.emit(EventKind::Interrupt {
+                        src: caster,
+                        dst: target,
+                        what: c.name,
+                    });
+                    self.apply_aura(
+                        target,
+                        Aura::new(
+                            Label::from("Silenced"),
+                            AuraKind::Silenced,
+                            caster,
+                            lockout,
+                            true,
+                        ),
+                    );
+                }
+            }
+            Effect::Incapacitate { duration } => {
+                // One incapacitate per caster: break the previous one.
+                for i in 0..self.enemies.len() {
+                    let e = self.enemies[i];
+                    self.actors[e].auras.retain(|a| {
+                        !(a.source == caster && matches!(a.kind, AuraKind::Incapacitated))
+                    });
+                }
+                self.engage_enemy_of(caster, target);
+                let t = &mut self.actors[target];
+                t.cast = None;
+                t.move_goal = None;
+                self.metrics.cc_applied += 1;
+                self.apply_aura(
+                    target,
+                    Aura::new(what, AuraKind::Incapacitated, caster, duration, true),
+                );
+            }
+            Effect::Dispel => {
+                if let Some(i) = self.actors[target]
+                    .auras
+                    .iter()
+                    .position(|a| a.harmful && a.dispellable)
+                {
+                    let aura = self.actors[target].auras.remove(i);
+                    self.metrics.dispels += 1;
+                    self.emit(EventKind::Dispel {
+                        src: caster,
+                        dst: target,
+                        what: aura.name,
+                    });
+                }
+            }
         }
+    }
+
+    /// Put `target`'s pack in combat with `src` (for effects that don't deal damage).
+    fn engage_enemy_of(&mut self, src: ActorId, target: ActorId) {
+        if let Some(enc) = self.actors[target].enemy.as_ref().map(|e| e.encounter)
+            && self.actors[src].team == Team::Party
+        {
+            self.engage(enc, src);
+            self.add_threat(target, src, 1.0);
+        }
+    }
+
+    /// Apply or refresh an aura. Same-name auras from the same source stack up to
+    /// `max_stacks` and refresh their duration.
+    pub fn apply_aura(&mut self, dst: ActorId, aura: Aura) {
+        if !self.actors[dst].alive {
+            return;
+        }
+        let stacks = {
+            let auras = &mut self.actors[dst].auras;
+            if let Some(existing) = auras
+                .iter_mut()
+                .find(|a| a.name == aura.name && a.source == aura.source)
+            {
+                existing.stacks = (existing.stacks + 1).min(existing.max_stacks.max(1));
+                existing.remaining = aura.duration;
+                existing.kind = match (existing.kind, aura.kind) {
+                    // Refreshing a shield replaces its remaining amount.
+                    (AuraKind::Absorb { .. }, k) => k,
+                    (k, _) => k,
+                };
+                existing.stacks
+            } else {
+                auras.push(aura.clone());
+                1
+            }
+        };
+        self.emit(EventKind::AuraApplied {
+            src: aura.source,
+            dst,
+            what: aura.name,
+            stacks,
+        });
     }
 
     /// Taunt: raise the taunter's threat to the current top value and force the
@@ -884,21 +1430,21 @@ impl Sim {
             None => return,
         };
         self.engage(enc, caster);
-        let top = self.actors[enemy]
-            .enemy
-            .as_ref()
-            .map(|e| e.threat.iter().map(|t| t.value).fold(0.0, f32::max))
-            .unwrap_or(0.0);
+        let top = self.top_threat(enemy);
         let mine = self.threat(enemy, caster);
         if top > mine {
             self.add_threat(enemy, caster, top - mine);
         }
         let a = &mut self.actors[enemy];
-        a.auras.retain(|x| !matches!(x, Aura::Taunted { .. }));
-        a.auras.push(Aura::Taunted {
-            by: caster,
-            remaining: duration,
-        });
+        a.auras
+            .retain(|x| !matches!(x.kind, AuraKind::Taunted { .. }));
+        a.auras.push(Aura::new(
+            Label::from("Taunted"),
+            AuraKind::Taunted { by: caster },
+            caster,
+            duration,
+            true,
+        ));
         a.target = Some(caster);
         self.actors[caster].last_combat = self.time;
         self.emit(EventKind::Taunt {
@@ -926,15 +1472,21 @@ impl Sim {
         }
     }
 
+    fn reset_ability_timers(es: &mut EnemyState) {
+        for a in es.abilities.iter_mut() {
+            a.timer = a.cfg.initial.unwrap_or(a.cfg.interval);
+        }
+    }
+
     /// Put an encounter (pack) into combat. `trigger` is placed on every mob's
     /// threat table first; other living party members nearby join at zero threat.
     pub fn engage(&mut self, enc: usize, trigger: ActorId) {
         if self.encounters[enc].cleared || !self.actors[trigger].alive {
             return;
         }
-        let mobs = self.encounters[enc].mobs.clone();
         let mut newly = false;
-        for &m in &mobs {
+        for k in 0..self.encounters[enc].mobs.len() {
+            let m = self.encounters[enc].mobs[k];
             if !self.actors[m].alive {
                 continue;
             }
@@ -962,14 +1514,8 @@ impl Sim {
                         value: 0.0,
                     });
                 }
-                if let Some(c) = &es.cleave {
-                    es.cleave_timer = c.interval;
-                }
-                if let Some(b) = es.boss.as_mut() {
-                    b.pull_time = now;
-                    b.bolt_timer = self.content.boss.bolt_interval;
-                    b.ring_timer = self.content.boss.ring_interval;
-                }
+                es.pull_time = now;
+                Self::reset_ability_timers(es);
                 self.actors[m].swing_timer = 0.5;
             } else if mode == Some(EnemyMode::Engaged) && !self.on_threat_table(m, trigger) {
                 self.actors[m]
@@ -992,50 +1538,156 @@ impl Sim {
         }
     }
 
-    /// Apply damage with all modifiers. Returns the HP actually removed.
-    pub fn deal_damage(
-        &mut self,
-        src: ActorId,
-        dst: ActorId,
-        base: f32,
-        what: &'static str,
-        threat_mult: f32,
-        can_crit: bool,
-    ) -> f32 {
-        if !self.actors[dst].alive || !self.actors[src].alive && what != "Cinder Ring" {
+    /// Resolve and apply one hit. Returns the HP actually removed.
+    pub fn deal(&mut self, src: ActorId, dst: ActorId, spec: DamageSpec) -> f32 {
+        if !self.actors[dst].alive {
             return 0.0;
         }
         if self.actors[dst].mode() == Some(EnemyMode::Resetting) {
             self.emit(EventKind::Evade { enemy: dst });
             return 0.0;
         }
-        let mut amount = base * self.actors[src].power_mult * self.rng.range_f32(0.9, 1.1);
-        let crit = can_crit && self.rng.chance(CRIT_CHANCE);
-        if crit {
-            amount *= CRIT_MULT;
+        // Hostile actions put the target's pack in combat even when they miss.
+        let src_is_party = self.actors[src].team == Team::Party;
+        let enemy_enc = self.actors[dst].enemy.as_ref().map(|e| e.encounter);
+        if let Some(enc) = enemy_enc
+            && src_is_party
+        {
+            self.engage(enc, src);
         }
-        let d = &self.actors[dst];
-        amount *= d.damage_taken * (1.0 - d.damage_reduction());
-        let amount = amount.round().max(0.0);
-        let applied = amount.min(self.actors[dst].hp);
-        self.actors[dst].hp = (self.actors[dst].hp - amount).max(0.0);
         let now = self.time;
         self.actors[dst].last_combat = now;
         self.actors[src].last_combat = now;
-        self.metrics.actor_mut(src).damage_done += applied;
-        self.metrics.actor_mut(dst).damage_taken += applied;
+
+        let att = self.actors[src].stats;
+        let mut def = self.actors[dst].stats;
+        if self.actors[dst].is_incapacitated() {
+            def.dodge = 0.0;
+            def.parry = 0.0;
+            def.block = 0.0;
+        }
+        let outcome = match spec.kind {
+            HitKind::Melee => {
+                let front = stats::is_in_front(
+                    self.actors[dst].pos,
+                    self.actors[dst].facing,
+                    self.actors[src].pos,
+                );
+                let roll = self.rng.next_f32();
+                stats::melee_table(&att, &def, front, true, roll)
+            }
+            HitKind::Spell => {
+                let (a, b) = (self.rng.next_f32(), self.rng.next_f32());
+                stats::spell_table(&att, &def, true, a, b)
+            }
+            HitKind::Periodic | HitKind::Unavoidable => HitOutcome::Hit,
+        };
+        if outcome.avoided() {
+            self.emit(EventKind::Damage {
+                src,
+                dst,
+                what: spec.what,
+                amount: 0.0,
+                absorbed: 0.0,
+                outcome,
+                school: spec.school,
+            });
+            return 0.0;
+        }
+        let variance = match spec.kind {
+            HitKind::Periodic => 1.0,
+            _ => self.rng.range_f32(0.9, 1.1),
+        };
+        let mut amount = spec.base * self.actors[src].power_mult * variance;
+        if outcome == HitOutcome::Crit {
+            amount *= if spec.kind == HitKind::Melee {
+                MELEE_CRIT_MULT
+            } else {
+                SPELL_CRIT_MULT
+            };
+        }
+        if spec.school == School::Physical {
+            if !spec.ignores_armor {
+                amount *= 1.0 - stats::armor_reduction(def.armor, att.level);
+            }
+        } else {
+            amount *= 1.0 - stats::resist_reduction(def.resist, att.level);
+        }
+        if outcome == HitOutcome::Block {
+            amount = (amount - def.block_value).max(0.0);
+        }
+        let d = &self.actors[dst];
+        amount *= (1.0 - d.damage_reduction()) * d.damage_taken_mult();
+        let mut amount = amount.round().max(0.0);
+        // Absorb shields soak damage first.
+        let mut absorbed = 0.0;
+        let mut absorbed_by = Vec::new();
+        for aura in self.actors[dst].auras.iter_mut() {
+            if amount <= 0.0 {
+                break;
+            }
+            if let AuraKind::Absorb { remaining } = &mut aura.kind {
+                let soak = remaining.min(amount);
+                *remaining -= soak;
+                amount -= soak;
+                absorbed += soak;
+                absorbed_by.push((aura.source, soak));
+            }
+        }
+        self.actors[dst]
+            .auras
+            .retain(|a| !matches!(a.kind, AuraKind::Absorb { remaining } if remaining <= 0.0));
+        for (s, v) in absorbed_by {
+            self.metrics.actors[s].absorb_done += v;
+        }
+        let outcome = if amount <= 0.0 && absorbed > 0.0 {
+            HitOutcome::Absorb
+        } else {
+            outcome
+        };
+        let applied = amount.min(self.actors[dst].hp);
+        self.actors[dst].hp = (self.actors[dst].hp - amount).max(0.0);
+        self.metrics.actors[src].damage_done += applied;
+        self.metrics.actors[dst].damage_taken += applied;
+        if spec.avoidable && self.actors[dst].team == Team::Party {
+            self.metrics.actors[dst].avoidable_taken += applied + absorbed;
+        }
+        // Rage: white melee swings dealt, and any damage taken.
+        let lvl_src = att.level;
+        let lvl_dst = def.level;
+        if spec.auto_attack && self.actors[src].resource_kind == ResourceKind::Rage {
+            let r = stats::rage_from_dealt(applied, lvl_src);
+            let a = &mut self.actors[src];
+            a.resource = (a.resource + r).min(a.max_resource);
+        }
+        if self.actors[dst].resource_kind == ResourceKind::Rage && self.actors[dst].class.is_some()
+        {
+            let r = stats::rage_from_taken(applied + absorbed, lvl_dst);
+            let a = &mut self.actors[dst];
+            a.resource = (a.resource + r).min(a.max_resource);
+        }
+        // Any damage breaks incapacitation.
+        if (applied > 0.0 || absorbed > 0.0)
+            && let Some(i) = self.actors[dst]
+                .auras
+                .iter()
+                .position(|a| matches!(a.kind, AuraKind::Incapacitated))
+        {
+            let a = self.actors[dst].auras.remove(i);
+            self.metrics.cc_broken += 1;
+            self.emit(EventKind::CcBroken { dst, what: a.name });
+        }
         self.emit(EventKind::Damage {
             src,
             dst,
-            what,
-            amount,
-            crit,
+            what: spec.what,
+            amount: applied,
+            absorbed,
+            outcome,
+            school: spec.school,
         });
-        if let Some(enc) = self.actors[dst].enemy.as_ref().map(|e| e.encounter)
-            && self.actors[src].team == Team::Party
-        {
-            self.engage(enc, src);
-            let threat = amount * threat_mult * self.actors[src].threat_mult;
+        if enemy_enc.is_some() && src_is_party {
+            let threat = applied * spec.threat_mult * self.actors[src].threat_mult;
             self.add_threat(dst, src, threat);
         }
         if self.actors[dst].hp <= 0.0 {
@@ -1046,16 +1698,28 @@ impl Sim {
 
     /// Heal `dst`. Effective healing generates threat on every engaged enemy:
     /// `HEAL_THREAT_FACTOR * effective * healer.threat_mult`, split evenly.
-    pub fn heal(&mut self, src: ActorId, dst: ActorId, base: f32, what: &'static str) -> f32 {
+    pub fn heal(
+        &mut self,
+        src: ActorId,
+        dst: ActorId,
+        base: f32,
+        what: Label,
+        can_crit: bool,
+    ) -> f32 {
         if !self.actors[dst].alive || !self.actors[src].alive {
             return 0.0;
         }
-        let amount = (base * self.actors[src].power_mult).round();
+        let crit = can_crit && self.rng.chance(self.actors[src].stats.crit);
+        let mut amount = base * self.actors[src].power_mult * self.actors[dst].healing_taken_mult();
+        if crit {
+            amount *= SPELL_CRIT_MULT;
+        }
+        let amount = amount.round();
         let d = &mut self.actors[dst];
         let effective = amount.min(d.max_hp - d.hp).max(0.0);
         let overheal = amount - effective;
         d.hp += effective;
-        let m = self.metrics.actor_mut(src);
+        let m = &mut self.metrics.actors[src];
         m.healing_done += effective;
         m.overhealing += overheal;
         self.emit(EventKind::Heal {
@@ -1064,8 +1728,9 @@ impl Sim {
             what,
             amount: effective,
             overheal,
+            crit,
         });
-        if effective > 0.0 && self.in_combat(dst) {
+        if effective > 0.0 && self.in_combat(dst) && self.actors[src].team == Team::Party {
             self.actors[src].last_combat = self.time;
             let engaged = self.engaged_enemies();
             if !engaged.is_empty() {
@@ -1092,9 +1757,15 @@ impl Sim {
             a.move_goal = None;
             a.target = None;
         }
-        self.metrics.actor_mut(id).deaths += 1;
+        self.metrics.actors[id].deaths += 1;
         self.emit(EventKind::Death { actor: id });
-        for e in self.enemies.clone() {
+        self.forget(id);
+    }
+
+    /// Remove `id` from every threat table and target.
+    fn forget(&mut self, id: ActorId) {
+        for i in 0..self.enemies.len() {
+            let e = self.enemies[i];
             if let Some(es) = self.actors[e].enemy.as_mut() {
                 es.threat.retain(|t| t.actor != id);
             }
@@ -1103,9 +1774,10 @@ impl Sim {
             }
             self.actors[e]
                 .auras
-                .retain(|a| !matches!(a, Aura::Taunted { by, .. } if *by == id));
+                .retain(|a| !matches!(a.kind, AuraKind::Taunted { by } if by == id));
         }
-        for p in self.party.clone() {
+        for k in 0..self.party.len() {
+            let p = self.party[k];
             if self.actors[p].target == Some(id) {
                 self.actors[p].target = None;
                 self.actors[p].auto_attack = false;
@@ -1114,11 +1786,26 @@ impl Sim {
         self.telegraphs.retain(|t| t.source != id);
     }
 
+    /// Remove a summoned enemy from the world without counting it as a kill.
+    fn despawn(&mut self, id: ActorId) {
+        if !self.actors[id].alive {
+            return;
+        }
+        let a = &mut self.actors[id];
+        a.alive = false;
+        a.cast = None;
+        a.auras.clear();
+        if let Some(es) = a.enemy.as_mut() {
+            es.despawned = true;
+        }
+        self.forget(id);
+    }
+
     fn move_actors(&mut self) {
         for id in 0..self.actors.len() {
             self.actors[id].moved_last_tick = false;
             let a = &self.actors[id];
-            if !a.alive {
+            if !a.alive || a.is_incapacitated() {
                 continue;
             }
             let resetting = a.mode() == Some(EnemyMode::Resetting);
@@ -1137,9 +1824,9 @@ impl Sim {
                 V2::ZERO
             };
             if step.len_sq() > 0.0 {
-                if let Some(c) = self.actors[id].cast {
+                if self.actors[id].cast.is_some() {
                     if self.actors[id].controller == Controller::Player {
-                        self.actors[id].cast = None;
+                        let c = self.actors[id].cast.take().expect("casting");
                         self.emit(EventKind::Interrupted {
                             src: id,
                             what: c.name,
@@ -1169,7 +1856,8 @@ impl Sim {
     }
 
     fn check_aggro(&mut self) {
-        for e in self.enemies.clone() {
+        for i in 0..self.enemies.len() {
+            let e = self.enemies[i];
             let a = &self.actors[e];
             if !a.alive || a.mode() != Some(EnemyMode::Idle) {
                 continue;
@@ -1187,46 +1875,51 @@ impl Sim {
 
     fn update_auras(&mut self) {
         let mut hot_ticks = Vec::new();
+        let mut dot_ticks = Vec::new();
         for id in 0..self.actors.len() {
             if !self.actors[id].alive {
                 continue;
             }
             let auras = &mut self.actors[id].auras;
             for aura in auras.iter_mut() {
-                match aura {
-                    Aura::Hot {
-                        source,
-                        per_tick,
-                        remaining,
-                        tick_timer,
-                    } => {
-                        *remaining -= DT;
-                        *tick_timer -= DT;
-                        if *tick_timer <= 1e-4 {
-                            *tick_timer += 1.0;
-                            hot_ticks.push((*source, id, *per_tick));
+                aura.remaining -= DT;
+                match aura.kind {
+                    AuraKind::Hot { per_tick } | AuraKind::Dot { per_tick, .. } => {
+                        aura.tick_timer -= DT;
+                        if aura.tick_timer <= 1e-4 {
+                            aura.tick_timer += 1.0;
+                            let amount = per_tick * aura.stacks as f32;
+                            if matches!(aura.kind, AuraKind::Hot { .. }) {
+                                hot_ticks.push((aura.source, id, amount, aura.name.clone()));
+                            } else if let AuraKind::Dot {
+                                school,
+                                ignores_armor,
+                                ..
+                            } = aura.kind
+                            {
+                                dot_ticks.push((
+                                    aura.source,
+                                    id,
+                                    amount,
+                                    aura.name.clone(),
+                                    school,
+                                    ignores_armor,
+                                ));
+                            }
                         }
                     }
-                    Aura::DamageReduction { remaining, .. } | Aura::Taunted { remaining, .. } => {
-                        *remaining -= DT;
-                    }
+                    _ => {}
                 }
             }
-            auras.retain(|a| match a {
-                Aura::Hot { remaining, .. }
-                | Aura::DamageReduction { remaining, .. }
-                | Aura::Taunted { remaining, .. } => *remaining > 1e-4,
-            });
+            auras.retain(|a| a.remaining > 1e-4);
         }
-        for (src, dst, amount) in hot_ticks {
-            let name = self.actors[src]
-                .abilities
-                .iter()
-                .find(|a| matches!(a.def().effect, Effect::Hot { .. }))
-                .map(|a| a.def().name)
-                .unwrap_or("Heal over time");
-            // HoT power was already applied at cast time in per_tick? No: apply here.
-            self.heal(src, dst, amount, name);
+        for (src, dst, amount, name) in hot_ticks {
+            self.heal(src, dst, amount, name, false);
+        }
+        for (src, dst, amount, name, school, ignores_armor) in dot_ticks {
+            let mut spec = DamageSpec::new(amount, school, HitKind::Periodic, name);
+            spec.ignores_armor = ignores_armor;
+            self.deal(src, dst, spec);
         }
     }
 
@@ -1243,47 +1936,43 @@ impl Sim {
             if !self.actors[id].alive {
                 continue;
             }
-            let Some(mut cast) = self.actors[id].cast else {
+            let Some(cast) = self.actors[id].cast.as_mut() else {
                 continue;
             };
             cast.remaining -= DT;
             if cast.remaining > 1e-4 {
-                self.actors[id].cast = Some(cast);
                 continue;
             }
-            self.actors[id].cast = None;
+            let cast = self.actors[id].cast.take().expect("casting");
             let t = cast.target;
             match cast.kind {
                 CastKind::Ability(slot) => {
                     let def = self.actors[id].abilities[slot].def();
                     let valid =
                         self.actors[t].alive && self.actors[t].mode() != Some(EnemyMode::Resetting);
-                    // Small leeway so targets drifting out at the last moment still land.
-                    if !valid {
-                        self.emit(EventKind::CastFailed {
-                            src: id,
-                            what: def.name,
-                            reason: CastError::InvalidTarget,
-                        });
+                    let reason = if !valid {
+                        Some(CastError::InvalidTarget)
                     } else if !self.reach(id, t, def.range + 3.0) {
-                        self.emit(EventKind::CastFailed {
-                            src: id,
-                            what: def.name,
-                            reason: CastError::OutOfRange,
-                        });
-                    } else if self.actors[id].mana < def.mana_cost {
-                        self.emit(EventKind::CastFailed {
-                            src: id,
-                            what: def.name,
-                            reason: CastError::NotEnoughMana,
-                        });
+                        Some(CastError::OutOfRange)
+                    } else if self.actors[id].resource < def.cost {
+                        Some(CastError::NotEnoughResource)
                     } else {
-                        self.execute_ability(id, slot, t);
+                        None
+                    };
+                    match reason {
+                        Some(reason) => self.emit(EventKind::CastFailed {
+                            src: id,
+                            what: cast.name,
+                            reason,
+                        }),
+                        None => self.execute_ability(id, slot, t),
                     }
                 }
-                CastKind::BossBolt => {
-                    let dmg = self.content.boss.bolt_damage;
-                    self.deal_damage(id, t, dmg, "Hollow Bolt", 1.0, false);
+                CastKind::Enemy(idx) => {
+                    if cast.interruptible {
+                        self.metrics.completed_interruptible += 1;
+                    }
+                    self.enemy_ability_effect(id, idx, t);
                 }
             }
         }
@@ -1292,7 +1981,12 @@ impl Sim {
     fn auto_attacks(&mut self) {
         for id in 0..self.actors.len() {
             let a = &self.actors[id];
-            if !a.alive || a.cast.is_some() || !a.auto_attack || a.swing_timer > 0.0 {
+            if !a.alive
+                || a.cast.is_some()
+                || !a.auto_attack
+                || a.swing_timer > 0.0
+                || a.is_incapacitated()
+            {
                 continue;
             }
             if a.is_enemy() && a.mode() != Some(EnemyMode::Engaged) {
@@ -1302,195 +1996,381 @@ impl Sim {
             if !self.actors[t].alive || !self.is_hostile(id, t) {
                 continue;
             }
-            if self.actors[t].mode() == Some(EnemyMode::Resetting) {
+            if self.actors[t].mode() == Some(EnemyMode::Resetting)
+                || self.actors[t].is_incapacitated()
+            {
                 continue;
             }
             if !self.reach(id, t, a.attack_range) {
                 continue;
             }
-            let (dmg, interval) = (a.attack_damage, a.attack_interval);
             let what = if a.attack_range > 5.0 {
-                "Wand"
+                self.label_wand.clone()
             } else {
-                "Melee"
+                self.label_melee.clone()
             };
-            self.actors[id].swing_timer = interval;
-            self.deal_damage(id, t, dmg, what, 1.0, true);
+            let mut spec = DamageSpec::new(a.attack_damage, a.attack_school, a.attack_kind, what);
+            spec.auto_attack = true;
+            self.actors[id].swing_timer = a.attack_interval;
+            self.deal(id, t, spec);
         }
     }
 
     fn enemy_specials(&mut self) {
-        let boss_cfg = self.content.boss.clone();
-        for e in self.enemies.clone() {
+        for i in 0..self.enemies.len() {
+            let e = self.enemies[i];
             if !self.actors[e].is_engaged_enemy() {
                 continue;
             }
-            // Elite cleave.
-            let cleave = {
-                let es = self.actors[e].enemy.as_mut().expect("enemy");
-                match es.cleave.clone() {
-                    Some(c) => {
-                        es.cleave_timer -= DT;
-                        if es.cleave_timer <= 0.0 {
-                            es.cleave_timer = c.interval;
-                            Some(c)
-                        } else {
-                            None
-                        }
-                    }
-                    None => None,
-                }
-            };
-            if let Some(c) = cleave {
-                let pos = self.actors[e].pos;
-                let hits: Vec<ActorId> = self
-                    .alive_party()
-                    .filter(|&p| {
-                        self.actors[p].pos.dist(pos)
-                            <= c.radius + self.actors[p].radius + self.actors[e].radius
-                    })
-                    .collect();
-                for p in hits {
-                    self.deal_damage(e, p, c.damage, "Rockfall Cleave", 0.0, false);
-                }
-            }
-            if self.actors[e]
+            self.check_phase(e);
+            self.check_enrage(e);
+            // Ability timers keep running while the enemy casts or is controlled;
+            // abilities only fire when it is free to act.
+            let busy = self.actors[e].cast.is_some()
+                || self.actors[e].is_incapacitated()
+                || self.actors[e].is_silenced();
+            let phase = self.actors[e].phase();
+            let n = self.actors[e]
                 .enemy
                 .as_ref()
-                .is_some_and(|s| s.boss.is_some())
-            {
-                self.boss_script(e, &boss_cfg);
+                .map_or(0, |s| s.abilities.len());
+            for idx in 0..n {
+                let ready = {
+                    let es = self.actors[e].enemy.as_mut().expect("enemy");
+                    let ab = &mut es.abilities[idx];
+                    if !ab.cfg.phases.is_empty() && !ab.cfg.phases.contains(&phase) {
+                        continue;
+                    }
+                    ab.timer -= DT;
+                    ab.timer <= 0.0
+                };
+                if !ready || busy || self.actors[e].cast.is_some() {
+                    continue;
+                }
+                let cfg = self.actors[e].enemy.as_ref().expect("enemy").abilities[idx]
+                    .cfg
+                    .clone();
+                let Some(target) = self.pick_target(e, &cfg) else {
+                    // Nothing valid to do: retry soon.
+                    self.actors[e].enemy.as_mut().expect("enemy").abilities[idx].timer = 1.0;
+                    continue;
+                };
+                self.actors[e].enemy.as_mut().expect("enemy").abilities[idx].timer = cfg.interval;
+                let label = self.actors[e].enemy.as_ref().expect("enemy").abilities[idx]
+                    .label
+                    .clone();
+                if cfg.cast_time > 0.0 {
+                    self.actors[e].cast = Some(Cast {
+                        kind: CastKind::Enemy(idx),
+                        name: label.clone(),
+                        target,
+                        remaining: cfg.cast_time,
+                        total: cfg.cast_time,
+                        interruptible: cfg.interruptible,
+                    });
+                    if cfg.interruptible {
+                        self.metrics.interruptible_casts += 1;
+                    }
+                    self.emit(EventKind::CastStart {
+                        src: e,
+                        what: label,
+                        target,
+                    });
+                } else {
+                    self.enemy_ability_effect(e, idx, target);
+                }
             }
         }
     }
 
-    fn boss_script(&mut self, e: ActorId, cfg: &crate::content::BossConfig) {
-        let now = self.time;
-        let hp_frac = self.actors[e].hp_frac();
-        let (phase, pull_time, enraged) = {
-            let b = self.actors[e]
-                .enemy
-                .as_ref()
-                .and_then(|s| s.boss.as_ref())
-                .expect("boss");
-            (b.phase, b.pull_time, b.enraged)
-        };
-        if phase == 1 && hp_frac <= cfg.phase2_hp_fraction {
+    fn check_phase(&mut self, e: ActorId) {
+        loop {
+            let (phase, next) = {
+                let es = self.actors[e].enemy.as_ref().expect("enemy");
+                (es.phase, es.phases.get(es.phase as usize - 1).cloned())
+            };
+            let Some(next) = next else { return };
+            if self.actors[e].hp_frac() > next.hp_below {
+                return;
+            }
+            let new_phase = phase + 1;
             {
                 let a = &mut self.actors[e];
-                a.power_mult *= cfg.phase2_damage_multiplier;
-                if matches!(
-                    a.cast,
-                    Some(Cast {
-                        kind: CastKind::BossBolt,
-                        ..
-                    })
-                ) {
-                    a.cast = None;
+                a.power_mult *= next.damage_multiplier;
+                let es = a.enemy.as_mut().expect("enemy");
+                es.phase = new_phase;
+                // Abilities that start in this phase get fresh timers.
+                for ab in es.abilities.iter_mut() {
+                    if ab.cfg.phases.contains(&new_phase) && !ab.cfg.phases.contains(&phase) {
+                        ab.timer = ab.cfg.initial.unwrap_or(ab.cfg.interval);
+                    }
                 }
-                let b = a
-                    .enemy
-                    .as_mut()
-                    .and_then(|s| s.boss.as_mut())
-                    .expect("boss");
-                b.phase = 2;
-                b.ring_timer = 2.0;
             }
-            if self.phase2_at.is_none() {
-                self.phase2_at = Some(now);
+            if e == self.boss && new_phase == 2 && self.phase2_at.is_none() {
+                self.phase2_at = Some(self.time);
             }
-            self.emit(EventKind::PhaseChange { boss: e, phase: 2 });
+            self.emit(EventKind::PhaseChange {
+                boss: e,
+                phase: new_phase,
+                announce: Label::from(next.announce.as_str()),
+            });
+            for s in &next.summon {
+                self.summon(e, &s.template, s.count, Label::from("Summon"));
+            }
         }
-        if !enraged && now - pull_time >= cfg.enrage_seconds {
+    }
+
+    fn check_enrage(&mut self, e: ActorId) {
+        let (limit, enraged, pull) = {
+            let es = self.actors[e].enemy.as_ref().expect("enemy");
+            (es.enrage_seconds, es.enraged, es.pull_time)
+        };
+        if let Some(limit) = limit
+            && !enraged
+            && self.time - pull >= limit
+        {
             let a = &mut self.actors[e];
-            a.power_mult *= 5.0;
-            a.enemy
-                .as_mut()
-                .and_then(|s| s.boss.as_mut())
-                .expect("boss")
-                .enraged = true;
+            a.power_mult *= ENRAGE_MULT;
+            a.enemy.as_mut().expect("enemy").enraged = true;
             self.emit(EventKind::Enrage { boss: e });
         }
-        let phase = self.boss_phase_of(e);
-        if phase == 1 {
-            let fire = {
-                let b = self.boss_state_mut(e);
-                b.bolt_timer -= DT;
-                b.bolt_timer <= 0.0
-            };
-            if fire && self.actors[e].cast.is_none() {
-                let tank_target = self.actors[e].target;
-                let candidates: Vec<ActorId> = self
-                    .alive_party()
-                    .filter(|&p| Some(p) != tank_target && self.on_threat_table(e, p))
-                    .collect();
-                if !candidates.is_empty() {
-                    let t = candidates[self.rng.index(candidates.len())];
-                    self.actors[e].cast = Some(Cast {
-                        kind: CastKind::BossBolt,
-                        name: "Hollow Bolt",
-                        target: t,
-                        remaining: cfg.bolt_cast_time,
-                        total: cfg.bolt_cast_time,
-                    });
-                    self.emit(EventKind::CastStart {
-                        src: e,
-                        what: "Hollow Bolt",
-                        target: t,
-                    });
-                }
-                self.boss_state_mut(e).bolt_timer = cfg.bolt_interval;
-            }
+    }
+
+    fn pick_target(&mut self, e: ActorId, cfg: &EnemyAbility) -> Option<ActorId> {
+        if cfg.kind == AbilityKind::HealAlly {
+            let enc = self.actors[e].enemy.as_ref()?.encounter;
+            return self.encounters[enc]
+                .mobs
+                .iter()
+                .copied()
+                .filter(|&m| self.actors[m].alive && self.actors[m].hp_frac() < 0.8)
+                .min_by(|&a, &b| {
+                    self.actors[a]
+                        .hp_frac()
+                        .total_cmp(&self.actors[b].hp_frac())
+                        .then(a.cmp(&b))
+                });
+        }
+        let on_table: Vec<ActorId> = self
+            .alive_party()
+            .filter(|&p| self.on_threat_table(e, p))
+            .collect();
+        let pool = if on_table.is_empty() {
+            self.alive_party().collect()
         } else {
-            let fire = {
-                let b = self.boss_state_mut(e);
-                b.ring_timer -= DT;
-                b.ring_timer <= 0.0
-            };
-            if fire {
-                self.boss_state_mut(e).ring_timer = cfg.ring_interval;
-                let targets: Vec<ActorId> = self.alive_party().collect();
-                if !targets.is_empty() {
-                    let t = targets[self.rng.index(targets.len())];
+            on_table
+        };
+        if pool.is_empty() {
+            return None;
+        }
+        let current = self.actors[e].target.filter(|t| self.actors[*t].alive);
+        let pos = self.actors[e].pos;
+        Some(match cfg.target {
+            TargetSelector::Caster => e,
+            TargetSelector::Current => current.unwrap_or(pool[0]),
+            TargetSelector::Random => pool[self.rng.index(pool.len())],
+            TargetSelector::RandomNonTank => {
+                let non: Vec<ActorId> = pool
+                    .iter()
+                    .copied()
+                    .filter(|&p| Some(p) != current && !self.is_tank(p))
+                    .collect();
+                if non.is_empty() {
+                    return None;
+                }
+                non[self.rng.index(non.len())]
+            }
+            TargetSelector::Farthest => *pool
+                .iter()
+                .max_by(|&&a, &&b| {
+                    self.actors[a]
+                        .pos
+                        .dist(pos)
+                        .total_cmp(&self.actors[b].pos.dist(pos))
+                })
+                .expect("non-empty"),
+            TargetSelector::LowestHealth => *pool
+                .iter()
+                .min_by(|&&a, &&b| {
+                    self.actors[a]
+                        .hp_frac()
+                        .total_cmp(&self.actors[b].hp_frac())
+                })
+                .expect("non-empty"),
+        })
+    }
+
+    fn enemy_ability_effect(&mut self, e: ActorId, idx: usize, target: ActorId) {
+        if !self.actors[e].alive {
+            return;
+        }
+        let (cfg, label) = {
+            let ab = &self.actors[e].enemy.as_ref().expect("enemy").abilities[idx];
+            (ab.cfg.clone(), ab.label.clone())
+        };
+        match cfg.kind {
+            AbilityKind::Bolt => {
+                if self.actors[target].alive {
+                    let spec = DamageSpec::new(
+                        cfg.damage,
+                        cfg.school.unwrap_or(School::Shadow),
+                        HitKind::Spell,
+                        label,
+                    );
+                    self.deal(e, target, spec);
+                }
+            }
+            AbilityKind::Cleave => {
+                let pos = self.actors[e].pos;
+                let facing = self.actors[e].facing;
+                let r = self.actors[e].radius;
+                let hits: Vec<ActorId> = self
+                    .alive_party()
+                    .filter(|&p| {
+                        let a = &self.actors[p];
+                        a.pos.dist(pos) <= cfg.radius + a.radius + r
+                            && (!cfg.frontal || stats::is_in_front(pos, facing, a.pos))
+                    })
+                    .collect();
+                for p in hits {
+                    let mut spec = DamageSpec::new(
+                        cfg.damage,
+                        cfg.school.unwrap_or(School::Physical),
+                        HitKind::Unavoidable,
+                        label.clone(),
+                    );
+                    // Standing in front of a frontal cleave is a mistake unless you tank it.
+                    spec.avoidable = cfg.frontal && !self.is_tank(p);
+                    self.deal(e, p, spec);
+                }
+            }
+            AbilityKind::Ring => {
+                let mut picked = vec![target];
+                let others: Vec<ActorId> = self.alive_party().filter(|&p| p != target).collect();
+                let mut others = others;
+                for _ in 1..cfg.count.max(1) {
+                    if others.is_empty() {
+                        break;
+                    }
+                    let k = self.rng.index(others.len());
+                    picked.push(others.remove(k));
+                }
+                for t in picked {
                     let id = self.next_telegraph_id;
                     self.next_telegraph_id += 1;
                     let center = self.actors[t].pos;
+                    let school = cfg.school.unwrap_or(School::Fire);
                     self.telegraphs.push(Telegraph {
                         id,
                         source: e,
+                        what: label.clone(),
+                        school,
                         center,
-                        radius: cfg.ring_radius,
-                        remaining: cfg.ring_telegraph,
-                        total: cfg.ring_telegraph,
-                        damage: cfg.ring_damage,
+                        radius: cfg.radius,
+                        remaining: cfg.delay,
+                        total: cfg.delay,
+                        damage: cfg.damage,
                     });
                     self.emit(EventKind::TelegraphStart {
                         id,
                         source: e,
+                        what: label.clone(),
                         center,
-                        radius: cfg.ring_radius,
-                        delay: cfg.ring_telegraph,
+                        radius: cfg.radius,
+                        delay: cfg.delay,
                     });
+                }
+            }
+            AbilityKind::Pulse => {
+                let hits: Vec<ActorId> = self.alive_party().collect();
+                for p in hits {
+                    let spec = DamageSpec::new(
+                        cfg.damage,
+                        cfg.school.unwrap_or(School::Shadow),
+                        HitKind::Unavoidable,
+                        label.clone(),
+                    );
+                    self.deal(e, p, spec);
+                }
+            }
+            AbilityKind::Summon => {
+                let key = cfg.template.clone().unwrap_or_default();
+                self.summon(e, &key, cfg.count.max(1), label);
+            }
+            AbilityKind::Debuff => {
+                if let Some(ac) = &cfg.aura
+                    && self.actors[target].alive
+                {
+                    let kind = match ac.effect {
+                        DebuffEffect::Dot => AuraKind::Dot {
+                            per_tick: ac.value,
+                            school: ac.school.unwrap_or(School::Nature),
+                            ignores_armor: true,
+                        },
+                        DebuffEffect::DamageTaken => AuraKind::DamageTaken { pct: ac.value },
+                        DebuffEffect::HealingTaken => AuraKind::HealingTaken { pct: ac.value },
+                    };
+                    let mut aura =
+                        Aura::new(Label::from(ac.name.as_str()), kind, e, ac.duration, true);
+                    aura.max_stacks = ac.max_stacks;
+                    aura.dispellable = ac.dispellable;
+                    self.apply_aura(target, aura);
+                }
+            }
+            AbilityKind::HealAlly => {
+                if self.actors[target].alive {
+                    let amount = cfg.amount;
+                    // Enemy heals ignore the party's power scaling.
+                    let mult = self.actors[e].power_mult.max(1e-6);
+                    self.heal(e, target, amount / mult, label, false);
                 }
             }
         }
     }
 
-    fn boss_phase_of(&self, e: ActorId) -> u8 {
-        self.actors[e]
+    /// Spawn `count` engaged adds of `key` around `src`, in `src`'s encounter.
+    fn summon(&mut self, src: ActorId, key: &str, count: u32, what: Label) {
+        let Some(enc) = self.actors[src].enemy.as_ref().map(|e| e.encounter) else {
+            return;
+        };
+        if !self.content.templates.contains_key(key) {
+            return;
+        }
+        let center = self.actors[src].pos;
+        let threat: Vec<ThreatEntry> = self.actors[src]
             .enemy
             .as_ref()
-            .and_then(|s| s.boss.as_ref())
-            .map(|b| b.phase)
-            .unwrap_or(1)
-    }
-
-    fn boss_state_mut(&mut self, e: ActorId) -> &mut BossState {
-        self.actors[e]
-            .enemy
-            .as_mut()
-            .and_then(|s| s.boss.as_mut())
-            .expect("boss")
+            .map(|e| {
+                e.threat
+                    .iter()
+                    .map(|t| ThreatEntry {
+                        actor: t.actor,
+                        value: 0.0,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let current = self.actors[src].target;
+        for i in 0..count {
+            let angle = i as f32 * std::f32::consts::TAU / count as f32 + self.time;
+            let pos = self.nav.project(center + V2::from_heading(angle) * 3.0);
+            let id = self.spawn_enemy(key, pos, enc, true);
+            self.encounters[enc].mobs.push(id);
+            let now = self.time;
+            let a = &mut self.actors[id];
+            let es = a.enemy.as_mut().expect("enemy");
+            es.mode = EnemyMode::Engaged;
+            es.threat = threat.clone();
+            es.pull_time = now;
+            if let Some(t) = current
+                && let Some(entry) = es.threat.iter_mut().find(|x| x.actor == t)
+            {
+                entry.value = 1.0;
+            }
+            a.target = current;
+            a.swing_timer = 1.0;
+        }
+        self.emit(EventKind::Summon { src, what, count });
     }
 
     fn update_telegraphs(&mut self) {
@@ -1509,24 +2389,92 @@ impl Sim {
                 .collect();
             let n = hits.len() as u32;
             for p in hits {
-                self.deal_damage(t.source, p, t.damage, "Cinder Ring", 0.0, false);
+                let mut spec =
+                    DamageSpec::new(t.damage, t.school, HitKind::Unavoidable, t.what.clone());
+                spec.avoidable = true;
+                self.deal(t.source, p, spec);
             }
             self.metrics.ring_hits += n;
             self.emit(EventKind::TelegraphHit { id: t.id, hits: n });
         }
     }
 
+    fn update_hazards(&mut self) {
+        for i in 0..self.hazards.len() {
+            let enc = self.hazards[i].encounter;
+            let cleared = self.encounters[enc].cleared;
+            let h = &mut self.hazards[i];
+            let period = h.cfg.on + h.cfg.off;
+            let phase = (self.time + h.cfg.offset) % period.max(1e-3);
+            let was = h.active;
+            h.active = !cleared && phase < h.cfg.on;
+            if !h.active {
+                continue;
+            }
+            if !was {
+                h.tick_timer = 0.0;
+            }
+            h.tick_timer -= DT;
+            if h.tick_timer > 0.0 {
+                continue;
+            }
+            h.tick_timer += 1.0;
+            let (pos, radius, damage, school, label) = (
+                h.cfg.pos,
+                h.cfg.radius,
+                h.cfg.damage,
+                h.cfg.school.unwrap_or(School::Fire),
+                h.label.clone(),
+            );
+            // Hazards are attributed to the first mob of their encounter (for logs).
+            let src = self.encounters[enc].mobs[0];
+            let hits: Vec<ActorId> = self
+                .alive_party()
+                .filter(|&p| self.actors[p].pos.dist(pos) <= radius + self.actors[p].radius)
+                .collect();
+            for p in hits {
+                let mut spec = DamageSpec::new(damage, school, HitKind::Unavoidable, label.clone());
+                spec.avoidable = true;
+                // Hazard damage does not scale with the source's phase / enrage.
+                spec.base = damage / self.actors[src].power_mult.max(1e-6)
+                    * self.content.dungeon.damage_multiplier
+                    * self.difficulty.damage;
+                self.deal(src, p, spec);
+            }
+        }
+    }
+
     fn regen(&mut self) {
-        for p in self.party.clone() {
+        for k in 0..self.party.len() {
+            let p = self.party[k];
             let in_combat = self.in_combat(p);
+            let now = self.time;
             let a = &mut self.actors[p];
             if !a.alive {
                 continue;
             }
-            let mana_rate = if in_combat { a.combat_mana_regen } else { 0.10 };
-            a.mana = (a.mana + a.max_mana * mana_rate * DT).min(a.max_mana);
+            match a.resource_kind {
+                ResourceKind::Mana => {
+                    let rate = if !in_combat {
+                        OOC_MANA_REGEN
+                    } else if now - a.last_mana_spend >= FIVE_SECOND_RULE {
+                        a.mana_regen
+                    } else {
+                        a.mana_regen * CASTING_REGEN_FRACTION
+                    };
+                    a.resource = (a.resource + a.max_resource * rate * DT).min(a.max_resource);
+                }
+                ResourceKind::Energy => {
+                    a.resource = (a.resource + ENERGY_PER_SECOND * DT).min(a.max_resource);
+                }
+                ResourceKind::Rage => {
+                    if !in_combat {
+                        a.resource = (a.resource - RAGE_DECAY_PER_SECOND * DT).max(0.0);
+                    }
+                }
+            }
             if !in_combat {
-                a.hp = (a.hp + a.max_hp * 0.08 * DT).min(a.max_hp);
+                a.hp = (a.hp + a.max_hp * OOC_HP_REGEN * DT).min(a.max_hp);
             }
         }
     }
@@ -1534,7 +2482,8 @@ impl Sim {
     fn check_resets(&mut self) {
         let leash = self.content.dungeon.leash_radius;
         let mut to_reset = Vec::new();
-        for e in self.enemies.clone() {
+        for i in 0..self.enemies.len() {
+            let e = self.enemies[i];
             let a = &self.actors[e];
             if !a.alive {
                 continue;
@@ -1566,15 +2515,19 @@ impl Sim {
         }
     }
 
-    /// Living mobs drop combat, heal to full and walk home. Dead mobs stay dead.
+    /// Living mobs drop combat, heal to full and walk home. Dead mobs stay dead;
+    /// summoned adds vanish.
     pub fn reset_encounter(&mut self, enc: usize) {
-        let cfg_bolt = self.content.boss.bolt_interval;
-        let cfg_ring = self.content.boss.ring_interval;
-        for m in self.encounters[enc].mobs.clone() {
-            let a = &mut self.actors[m];
-            if !a.alive {
+        for k in 0..self.encounters[enc].mobs.len() {
+            let m = self.encounters[enc].mobs[k];
+            if !self.actors[m].alive {
                 continue;
             }
+            if self.actors[m].enemy.as_ref().is_some_and(|e| e.summoned) {
+                self.despawn(m);
+                continue;
+            }
+            let a = &mut self.actors[m];
             a.hp = a.max_hp;
             a.cast = None;
             a.target = None;
@@ -1582,58 +2535,14 @@ impl Sim {
             let es = a.enemy.as_mut().expect("enemy");
             es.mode = EnemyMode::Resetting;
             es.threat.clear();
+            es.phase = 1;
+            es.enraged = false;
+            Self::reset_ability_timers(es);
             a.power_mult = es.base_power_mult;
-            if let Some(b) = es.boss.as_mut() {
-                b.phase = 1;
-                b.enraged = false;
-                b.bolt_timer = cfg_bolt;
-                b.ring_timer = cfg_ring;
-            }
             a.move_goal = Some(es.home);
             self.telegraphs.retain(|t| t.source != m);
         }
         self.emit(EventKind::EncounterReset { encounter: enc });
-    }
-
-    /// Design shortcut instead of resurrection spells: once nobody living has been
-    /// in combat for `RALLY_DELAY` seconds and no enemy is engaged, fallen party
-    /// members get back up next to a living ally at `RALLY_FRACTION` HP and mana.
-    fn rally_fallen(&mut self) {
-        if self.outcome != RunOutcome::InProgress {
-            return;
-        }
-        let living: Vec<ActorId> = self.alive_party().collect();
-        let Some(&anchor) = living
-            .iter()
-            .find(|&&p| p == self.leader)
-            .or(living.first())
-        else {
-            return;
-        };
-        let calm = living
-            .iter()
-            .all(|&p| self.time - self.actors[p].last_combat >= RALLY_DELAY)
-            && self.engaged_enemies().is_empty();
-        if !calm {
-            return;
-        }
-        let anchor_pos = self.actors[anchor].pos;
-        for p in self.party.clone() {
-            if self.actors[p].alive {
-                continue;
-            }
-            let offset = V2::from_heading(p as f32 * 1.3) * 1.5;
-            let pos = self.nav.project(anchor_pos + offset);
-            let a = &mut self.actors[p];
-            a.alive = true;
-            a.hp = (a.max_hp * RALLY_FRACTION).round();
-            a.mana = a.max_mana * RALLY_FRACTION;
-            a.pos = pos;
-            a.cooldowns.iter_mut().for_each(|c| *c = 0.0);
-            a.gcd = 0.0;
-            a.swing_timer = 0.0;
-            self.emit(EventKind::Revive { actor: p });
-        }
     }
 
     fn check_progress(&mut self) {
@@ -1641,13 +2550,20 @@ impl Sim {
             if self.encounters[i].cleared {
                 continue;
             }
-            if self.encounters[i]
-                .mobs
-                .iter()
-                .all(|&m| !self.actors[m].alive)
-            {
+            let done = self.encounters[i].mobs.iter().all(|&m| {
+                let a = &self.actors[m];
+                !a.alive || a.enemy.as_ref().is_some_and(|e| e.summoned)
+            });
+            if done {
                 self.encounters[i].cleared = true;
                 self.encounters[i].cleared_at = Some(self.time);
+                // Leftover adds collapse with their master.
+                for k in 0..self.encounters[i].mobs.len() {
+                    let m = self.encounters[i].mobs[k];
+                    if self.actors[m].alive {
+                        self.despawn(m);
+                    }
+                }
                 self.emit(EventKind::EncounterCleared { encounter: i });
             }
         }
@@ -1660,12 +2576,61 @@ impl Sim {
             self.emit(EventKind::Outcome {
                 outcome: RunOutcome::Wipe,
             });
-        } else if self.encounters[self.content.boss_encounter()].cleared {
+        } else if self.encounters.iter().all(|e| e.cleared || e.optional) {
             self.outcome = RunOutcome::Victory;
             self.ended_at = Some(self.time);
             self.emit(EventKind::Outcome {
                 outcome: RunOutcome::Victory,
             });
+        }
+    }
+
+    /// Design shortcut instead of resurrection spells: once nobody living has been
+    /// in combat for `RALLY_DELAY` seconds and no enemy is engaged, fallen party
+    /// members get back up next to a living ally at `RALLY_FRACTION` HP and resource.
+    fn rally_fallen(&mut self) {
+        if self.outcome != RunOutcome::InProgress || !self.tick.is_multiple_of(10) {
+            return;
+        }
+        let living: Vec<ActorId> = self.alive_party().collect();
+        let Some(&anchor) = living
+            .iter()
+            .find(|&&p| p == self.leader)
+            .or(living.first())
+        else {
+            return;
+        };
+        if living.len() == self.party.len() {
+            return;
+        }
+        let calm = living
+            .iter()
+            .all(|&p| self.time - self.actors[p].last_combat >= RALLY_DELAY)
+            && self.engaged_enemies().is_empty();
+        if !calm {
+            return;
+        }
+        let anchor_pos = self.actors[anchor].pos;
+        for k in 0..self.party.len() {
+            let p = self.party[k];
+            if self.actors[p].alive {
+                continue;
+            }
+            let offset = V2::from_heading(p as f32 * 1.3) * 1.5;
+            let pos = self.nav.project(anchor_pos + offset);
+            let a = &mut self.actors[p];
+            a.alive = true;
+            a.hp = (a.max_hp * RALLY_FRACTION).round();
+            a.resource = if a.resource_kind == ResourceKind::Rage {
+                0.0
+            } else {
+                a.max_resource * RALLY_FRACTION
+            };
+            a.pos = pos;
+            a.cooldowns.iter_mut().for_each(|c| *c = 0.0);
+            a.gcd = 0.0;
+            a.swing_timer = 0.0;
+            self.emit(EventKind::Revive { actor: p });
         }
     }
 
@@ -1679,22 +2644,17 @@ impl Sim {
             return Some(by);
         }
         let es = a.enemy.as_ref()?;
-        let valid: Vec<ThreatEntry> = es
-            .threat
-            .iter()
-            .copied()
-            .filter(|t| self.actors[t.actor].alive)
-            .collect();
         let mut top: Option<ThreatEntry> = None;
-        for t in &valid {
+        let mut current: Option<ThreatEntry> = None;
+        for t in es.threat.iter().filter(|t| self.actors[t.actor].alive) {
             if top.is_none_or(|b| t.value > b.value) {
                 top = Some(*t);
             }
+            if a.target == Some(t.actor) {
+                current = Some(*t);
+            }
         }
         let top = top?;
-        let current = a
-            .target
-            .and_then(|c| valid.iter().find(|t| t.actor == c).copied());
         match current {
             None => Some(top.actor),
             Some(cur) if cur.actor == top.actor => Some(cur.actor),

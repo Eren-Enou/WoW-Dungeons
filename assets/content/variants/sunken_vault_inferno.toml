@@ -1,0 +1,207 @@
+# Example variant of The Sunken Vault demonstrating the sandbox knobs.
+#
+# Changes vs. the shipped file:
+#   * dungeon.id/name changed so it can sit next to the original.
+#   * Enemy HP x1.4, damage x1.2.
+#   * Morvane gains a third phase at 25% that summons two skulkers.
+#   * Cinder Ring fires every 5 s with TWO rings and only 1.8 s of warning.
+#   * Phase 1 adds a frontal "Hollow Sweep" cleave.
+#   * The throne room gets two flame vents (environmental hazard).
+#
+# Try it:
+#   cargo run --release -p dungeon_sim --bin dungeon-headless -- --content assets/content/variants/sunken_vault_inferno.toml --runs 20
+# or copy it into assets/content/dungeons/ and press F5 in the hub.
+
+[dungeon]
+id = "sunken_vault_inferno"
+name = "The Sunken Vault (Inferno)"
+description = "Variant: faster, double Cinder Rings, a third phase with adds and flame vents."
+recommended_level = 2
+hp_multiplier = 1.4
+damage_multiplier = 1.2
+entrance = [0.0, 0.0]
+leash_radius = 45.0
+theme = { floor = [0.26, 0.18, 0.16], wall = [0.36, 0.22, 0.20], light = [1.0, 0.55, 0.3] }
+
+[[dungeon.areas]]
+name = "Flooded Antechamber"
+min = [-8.0, -6.0]
+max = [8.0, 10.0]
+
+[[dungeon.areas]]
+name = "Drowned Stair"
+min = [-3.0, 8.0]
+max = [3.0, 30.0]
+
+[[dungeon.areas]]
+name = "Hall of Sluices"
+min = [-12.0, 28.0]
+max = [12.0, 48.0]
+
+[[dungeon.areas]]
+name = "East Culvert"
+min = [10.0, 35.0]
+max = [36.0, 41.0]
+
+[[dungeon.areas]]
+name = "Brute's Cistern"
+min = [34.0, 26.0]
+max = [56.0, 50.0]
+
+[[dungeon.areas]]
+name = "North Culvert"
+min = [42.0, 48.0]
+max = [48.0, 72.0]
+
+[[dungeon.areas]]
+name = "Reliquary"
+min = [34.0, 70.0]
+max = [56.0, 88.0]
+
+[[dungeon.areas]]
+name = "Throne Approach"
+min = [42.0, 86.0]
+max = [48.0, 100.0]
+
+[[dungeon.areas]]
+name = "Hollow Throne"
+min = [28.0, 98.0]
+max = [62.0, 128.0]
+
+[templates.skulker]
+name = "Gloomfang Skulker"
+rank = "trash"
+level = 1
+hp = 600.0
+melee_damage = 26.0
+attack_interval = 2.0
+aggro_radius = 10.0
+speed = 6.5
+radius = 0.6
+armor = 60.0
+
+[templates.brute]
+name = "Cragbound Brute"
+rank = "elite"
+level = 2
+hp = 3000.0
+melee_damage = 64.0
+attack_interval = 2.4
+aggro_radius = 12.0
+speed = 6.0
+radius = 1.1
+armor = 120.0
+parry = 0.05
+
+[[templates.brute.abilities]]
+name = "Rockfall Cleave"
+kind = "cleave"
+interval = 8.0
+damage = 55.0
+radius = 5.0
+
+[templates.hollow_king]
+name = "Morvane, the Hollow King"
+rank = "boss"
+level = 3
+hp = 14000.0
+melee_damage = 150.0
+attack_interval = 2.0
+attack_range = 2.5
+aggro_radius = 14.0
+speed = 6.5
+radius = 1.6
+armor = 150.0
+parry = 0.08
+enrage_seconds = 300.0
+
+[[templates.hollow_king.phases]]
+hp_below = 0.5
+damage_multiplier = 1.25
+announce = "Morvane erupts in cinders!"
+
+[[templates.hollow_king.phases]]
+hp_below = 0.25
+announce = "Morvane calls the drowned skulkers!"
+summon = [{ template = "skulker", count = 2 }]
+
+[[templates.hollow_king.abilities]]
+name = "Hollow Bolt"
+kind = "bolt"
+interval = 8.0
+cast_time = 1.5
+interruptible = true
+target = "random_non_tank"
+damage = 190.0
+school = "shadow"
+phases = [1]
+
+[[templates.hollow_king.abilities]]
+name = "Hollow Sweep"
+kind = "cleave"
+interval = 10.0
+damage = 160.0
+radius = 6.0
+frontal = true
+phases = [1]
+
+[[templates.hollow_king.abilities]]
+name = "Cinder Ring"
+kind = "ring"
+interval = 5.0
+initial = 1.5
+delay = 1.8
+radius = 5.0
+damage = 400.0
+school = "fire"
+target = "random"
+count = 2
+phases = [2, 3]
+
+[[encounters]]
+id = "sluice_pack"
+mobs = [
+  { template = "skulker", pos = [-4.0, 40.0] },
+  { template = "skulker", pos = [0.0, 42.0] },
+  { template = "skulker", pos = [4.0, 40.0] },
+]
+
+[[encounters]]
+id = "cistern_brute"
+mobs = [
+  { template = "brute", pos = [45.0, 40.0] },
+  { template = "skulker", pos = [41.0, 43.0] },
+  { template = "skulker", pos = [49.0, 43.0] },
+]
+
+[[encounters]]
+id = "reliquary_pack"
+mobs = [
+  { template = "skulker", pos = [40.0, 80.0] },
+  { template = "skulker", pos = [44.0, 82.0] },
+  { template = "skulker", pos = [48.0, 82.0] },
+  { template = "skulker", pos = [52.0, 80.0] },
+]
+
+[[encounters]]
+id = "hollow_king"
+mobs = [
+  { template = "hollow_king", pos = [45.0, 116.0] },
+]
+hazards = [
+  { name = "Flame Vent", pos = [36.0, 108.0], radius = 3.0, damage = 70.0, school = "fire", on = 3.0, off = 4.0 },
+  { name = "Flame Vent", pos = [54.0, 108.0], radius = 3.0, damage = 70.0, school = "fire", on = 3.0, off = 4.0, offset = 3.5 },
+]
+
+[[loot]]
+id = "inferno_cinder"
+name = "Ember of the Inferno"
+slot = "trinket"
+rarity = "rare"
+stats = { power = 10 }
+weight = 1
+
+[rewards]
+marks_per_clear = 15
+marks_per_wipe = 1
+xp_per_clear = 600

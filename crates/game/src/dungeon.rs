@@ -1,13 +1,17 @@
 //! Dungeon state: owns the running `Sim`, maps input to sim commands at a fixed
-//! timestep, and renders actors, walls, telegraphs and health bars.
+//! timestep, and renders actors, walls, hazards and telegraphs.
 
 use crate::camera::{CameraBlockers, CameraFocus, MainCamera, OrbitCamera};
-use crate::common::{AppState, GameData, LastResult, to_vec3};
+use crate::common::{AppState, GameData, LastResult, rgb, to_vec3};
 use crate::demo::DemoConfig;
 use crate::hub::class_color;
 use bevy::prelude::*;
 use dungeon_sim::content::EnemyRank;
-use dungeon_sim::{ActorId, DT, EnemyMode, Event, EventKind, RunOutcome, RunSummary, Sim, V2};
+use dungeon_sim::profile::RunReport;
+use dungeon_sim::sim::{Actor, Controller};
+use dungeon_sim::{
+    ActorId, DT, EnemyMode, Event, EventKind, RunOptions, RunOutcome, RunSummary, Sim, V2,
+};
 use std::collections::{HashMap, VecDeque};
 use std::f32::consts::FRAC_PI_2;
 
@@ -20,9 +24,8 @@ impl Plugin for DungeonPlugin {
             (
                 start_run,
                 spawn_world,
-                spawn_actors,
+                spawn_new_actors,
                 crate::hud::spawn_hud,
-                crate::overlay::spawn_nameplates,
             )
                 .chain(),
         )
@@ -39,9 +42,11 @@ impl Plugin for DungeonPlugin {
                 player_input,
                 step_sim,
                 process_events,
+                spawn_new_actors,
                 sync_actors,
                 fade_occluders,
                 sync_telegraphs,
+                sync_hazards,
                 draw_gizmos,
                 finish_run,
             )
@@ -52,11 +57,10 @@ impl Plugin for DungeonPlugin {
     }
 }
 
-const WALL_HEIGHT: f32 = 3.2;
-const WALL_COLOR: Color = Color::srgb(0.32, 0.3, 0.34);
 /// Seconds between the run ending and the results screen.
 const END_DELAY: f32 = 3.0;
 const LOG_LINES: usize = 14;
+const WALL_HEIGHT: f32 = 3.2;
 
 #[derive(Resource)]
 pub struct ActiveRun {
@@ -71,6 +75,9 @@ pub struct ActiveRun {
     pub banner: Option<(String, f32, Color)>,
     pub error: Option<(String, f32)>,
     pub end_timer: Option<f32>,
+    /// Number of actors that already have visuals (summons appear later).
+    pub visuals_spawned: usize,
+    pub wall_color: Color,
 }
 
 impl ActiveRun {
@@ -79,8 +86,8 @@ impl ActiveRun {
     }
 
     pub fn interp_pos(&self, id: ActorId) -> V2 {
-        let a = self.prev_pos[id];
         let b = self.sim.actors[id].pos;
+        let a = self.prev_pos.get(id).copied().unwrap_or(b);
         a + (b - a) * self.alpha()
     }
 
@@ -112,6 +119,12 @@ struct TelegraphVisual {
     inner: bool,
 }
 
+#[derive(Component)]
+struct HazardVisual {
+    index: usize,
+    material: Handle<StandardMaterial>,
+}
+
 fn start_run(
     mut commands: Commands,
     mut data: ResMut<GameData>,
@@ -119,8 +132,8 @@ fn start_run(
     demo: Option<Res<DemoConfig>>,
 ) {
     let content = data
-        .content
-        .clone()
+        .selected_content()
+        .cloned()
         .expect("hub only enters with valid content");
     let seed = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -128,24 +141,30 @@ fn start_run(
         .unwrap_or(1)
         % 1_000_000;
     let party = data.profile.party_specs(true);
-    let mut sim = Sim::new(&content, &party, seed);
-    if demo.as_ref().is_some_and(|d| d.autoplay)
-        && let Some(p) = sim.player
-    {
+    let autoplay = demo.as_ref().is_some_and(|d| d.autoplay);
+    let options = RunOptions {
+        difficulty: data.profile.selected_difficulty.clone(),
+        autopilot: autoplay,
+        skip_optional: false,
+    };
+    let mut sim = Sim::with_options(&content, &party, seed, options);
+    if autoplay && let Some(p) = sim.player {
         // Demo: the AI drives the player's slot and the tank leads the way.
-        sim.actors[p].controller = dungeon_sim::sim::Controller::Ai;
-        sim.autopilot = true;
+        sim.actors[p].controller = Controller::Ai;
         if let Some(t) = sim.tank() {
             sim.leader = t;
         }
     }
     info!(
-        "Entering '{}' with seed {seed} and {} party members",
+        "Entering '{}' [{}] with seed {seed} and {} party members",
         content.dungeon.name,
+        sim.difficulty.name,
         party.len()
     );
     orbit.yaw = 0.0;
     let prev_pos = sim.actors.iter().map(|a| a.pos).collect();
+    let required = sim.encounters.iter().filter(|e| !e.optional).count();
+    let boss_name = sim.actors[sim.boss].name.clone();
     let mut run = ActiveRun {
         sim,
         acc: 0.0,
@@ -157,11 +176,13 @@ fn start_run(
         banner: None,
         error: None,
         end_timer: None,
+        visuals_spawned: 0,
+        wall_color: rgb(content.dungeon.theme.wall),
     };
     run.set_banner(
         format!(
-            "{} - clear 3 packs, then defeat the Hollow King",
-            content.dungeon.name
+            "{} - {} encounters, final boss: {boss_name}",
+            content.dungeon.name, required
         ),
         5.0,
         Color::srgb(0.9, 0.85, 0.6),
@@ -178,6 +199,7 @@ fn spawn_world(
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     let scoped = DespawnOnExit(AppState::Dungeon);
+    let theme = run.sim.content.dungeon.theme;
     commands.insert_resource(GlobalAmbientLight {
         color: Color::srgb(0.6, 0.65, 0.8),
         brightness: 220.0,
@@ -197,15 +219,16 @@ fn spawn_world(
         let size = r.max - r.min;
         let c = r.center();
         let tint = if i % 2 == 0 { 0.0 } else { 0.03 };
+        let [fr, fg, fb] = theme.floor;
         commands.spawn((
             Mesh3d(meshes.add(Cuboid::new(size.x, 0.2, size.z))),
-            MeshMaterial3d(materials.add(Color::srgb(0.22 + tint, 0.24 + tint, 0.27))),
+            MeshMaterial3d(materials.add(Color::srgb(fr + tint, fg + tint, fb))),
             Transform::from_xyz(c.x, -0.1 - i as f32 * 0.001, c.z),
             scoped.clone(),
         ));
         commands.spawn((
             PointLight {
-                color: Color::srgb(1.0, 0.75, 0.45),
+                color: rgb(theme.light),
                 intensity: 600_000.0,
                 range: 35.0,
                 shadow_maps_enabled: false,
@@ -229,7 +252,7 @@ fn spawn_world(
         let center = Vec3::new(mid.x, WALL_HEIGHT * 0.5, mid.z);
         blockers.0.push((center - half, center + half));
         let material = materials.add(StandardMaterial {
-            base_color: WALL_COLOR,
+            base_color: run.wall_color,
             alpha_mode: AlphaMode::Blend,
             ..default()
         });
@@ -245,7 +268,7 @@ fn spawn_world(
             scoped.clone(),
         ));
     }
-    // Exit portal at the entrance, and a throne behind the boss.
+    // Exit portal at the entrance.
     let entrance = run.sim.content.dungeon.entrance;
     commands.spawn((
         Mesh3d(meshes.add(Torus::new(1.2, 1.6))),
@@ -258,62 +281,99 @@ fn spawn_world(
             .with_rotation(Quat::from_rotation_x(FRAC_PI_2)),
         scoped.clone(),
     ));
-    let boss_home = run.sim.actors[run.sim.boss].pos;
-    commands.spawn((
-        Mesh3d(meshes.add(Cuboid::new(5.0, 6.0, 2.0))),
-        MeshMaterial3d(materials.add(Color::srgb(0.18, 0.1, 0.22))),
-        Transform::from_translation(to_vec3(boss_home, 3.0) + Vec3::new(0.0, 0.0, 6.0)),
-        scoped,
-    ));
+    // A dais under every boss.
+    for &e in &run.sim.enemies {
+        let a = &run.sim.actors[e];
+        if a.rank() == Some(EnemyRank::Boss) {
+            commands.spawn((
+                Mesh3d(meshes.add(Cylinder::new(a.radius + 3.0, 0.15))),
+                MeshMaterial3d(materials.add(Color::srgb(0.2, 0.12, 0.25))),
+                Transform::from_translation(to_vec3(a.pos, 0.02)),
+                scoped.clone(),
+            ));
+        }
+    }
+    // Hazards: discs whose colour shows whether they are active.
+    let disc = meshes.add(Circle::new(1.0));
+    for (i, h) in run.sim.hazards.iter().enumerate() {
+        let material = materials.add(StandardMaterial {
+            base_color: Color::srgba(1.0, 0.4, 0.1, 0.15),
+            emissive: LinearRgba::rgb(0.3, 0.1, 0.0),
+            alpha_mode: AlphaMode::Blend,
+            unlit: true,
+            ..default()
+        });
+        commands.spawn((
+            Mesh3d(disc.clone()),
+            MeshMaterial3d(material.clone()),
+            Transform::from_translation(to_vec3(h.cfg.pos, 0.035))
+                .with_rotation(Quat::from_rotation_x(-FRAC_PI_2))
+                .with_scale(Vec3::new(h.cfg.radius, h.cfg.radius, 1.0)),
+            HazardVisual { index: i, material },
+            scoped.clone(),
+        ));
+    }
 }
 
-fn spawn_actors(
+fn actor_shape(a: &Actor, meshes: &mut Assets<Mesh>) -> Option<(Mesh3d, Color, f32, f32)> {
+    match (&a.enemy, a.class) {
+        (None, Some(class)) => Some((
+            Mesh3d(meshes.add(Capsule3d::new(0.5, 1.0))),
+            class_color(class),
+            1.0,
+            0.5,
+        )),
+        (Some(e), _) => {
+            let r = a.radius;
+            Some(match e.rank {
+                EnemyRank::Trash => (
+                    Mesh3d(meshes.add(Capsule3d::new(r, r * 1.2))),
+                    if e.summoned {
+                        Color::srgb(0.35, 0.3, 0.15)
+                    } else {
+                        Color::srgb(0.2, 0.35, 0.25)
+                    },
+                    r * 1.6,
+                    r,
+                ),
+                EnemyRank::Elite => (
+                    Mesh3d(meshes.add(Cuboid::new(r * 2.0, r * 2.4, r * 1.6))),
+                    Color::srgb(0.45, 0.35, 0.25),
+                    r * 1.2,
+                    r * 0.8,
+                ),
+                EnemyRank::Boss => (
+                    Mesh3d(meshes.add(Capsule3d::new(r, r * 1.8))),
+                    Color::srgb(0.3, 0.15, 0.4),
+                    r * 1.9,
+                    r,
+                ),
+            })
+        }
+        _ => None,
+    }
+}
+
+/// Spawn visuals and nameplates for actors that don't have them yet (all actors
+/// on entering; summoned adds later).
+fn spawn_new_actors(
     mut commands: Commands,
-    run: Res<ActiveRun>,
+    mut run: ResMut<ActiveRun>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
+    let total = run.sim.actors.len();
+    if run.visuals_spawned >= total {
+        return;
+    }
     let scoped = DespawnOnExit(AppState::Dungeon);
     let nose = meshes.add(Cuboid::new(0.3, 0.3, 0.5));
     let nose_mat = materials.add(Color::srgb(0.9, 0.8, 0.3));
-    for a in &run.sim.actors {
-        let (mesh, color, center_y, lie_y, _height): (Mesh3d, Color, f32, f32, f32) =
-            match (&a.enemy, a.class) {
-                (None, Some(class)) => (
-                    Mesh3d(meshes.add(Capsule3d::new(0.5, 1.0))),
-                    class_color(class),
-                    1.0,
-                    0.5,
-                    2.0,
-                ),
-                (Some(e), _) => {
-                    let r = a.radius;
-                    match e.rank {
-                        EnemyRank::Trash => (
-                            Mesh3d(meshes.add(Capsule3d::new(r, r * 1.2))),
-                            Color::srgb(0.2, 0.35, 0.25),
-                            r * 1.6,
-                            r,
-                            r * 3.2,
-                        ),
-                        EnemyRank::Elite => (
-                            Mesh3d(meshes.add(Cuboid::new(r * 2.0, r * 2.4, r * 1.6))),
-                            Color::srgb(0.45, 0.35, 0.25),
-                            r * 1.2,
-                            r * 0.8,
-                            r * 2.4,
-                        ),
-                        EnemyRank::Boss => (
-                            Mesh3d(meshes.add(Capsule3d::new(r, r * 1.8))),
-                            Color::srgb(0.3, 0.15, 0.4),
-                            r * 1.9,
-                            r,
-                            r * 3.8,
-                        ),
-                    }
-                }
-                _ => continue,
-            };
+    for id in run.visuals_spawned..total {
+        let a = &run.sim.actors[id];
+        let Some((mesh, color, center_y, lie_y)) = actor_shape(a, &mut meshes) else {
+            continue;
+        };
         let material = materials.add(StandardMaterial {
             base_color: color,
             emissive: if Some(a.id) == run.sim.player {
@@ -345,7 +405,7 @@ fn spawn_actors(
         if Some(a.id) == run.sim.player {
             e.insert(CameraFocus);
         }
-        if a.enemy.as_ref().is_some_and(|e| e.rank == EnemyRank::Boss) {
+        if a.rank() == Some(EnemyRank::Boss) {
             e.with_child((
                 Mesh3d(meshes.add(Torus::new(0.6, 0.9))),
                 MeshMaterial3d(materials.add(StandardMaterial {
@@ -356,7 +416,11 @@ fn spawn_actors(
                 Transform::from_xyz(0.0, center_y + 0.4, 0.0),
             ));
         }
+        if Some(a.id) != run.sim.player {
+            crate::overlay::spawn_nameplate(&mut commands, a);
+        }
     }
+    run.visuals_spawned = total;
 }
 
 pub fn player_input(
@@ -371,16 +435,18 @@ pub fn player_input(
         return;
     };
     let mut dir = Vec3::ZERO;
-    if keys.pressed(KeyCode::KeyW) {
+    // Both mouse buttons held = run forward (classic MMO control).
+    let both = mouse.pressed(MouseButton::Left) && mouse.pressed(MouseButton::Right);
+    if keys.pressed(KeyCode::KeyW) || both {
         dir += orbit.forward();
     }
     if keys.pressed(KeyCode::KeyS) {
         dir -= orbit.forward();
     }
-    if keys.pressed(KeyCode::KeyD) {
+    if keys.pressed(KeyCode::KeyD) || keys.pressed(KeyCode::KeyE) {
         dir += orbit.right();
     }
-    if keys.pressed(KeyCode::KeyA) {
+    if keys.pressed(KeyCode::KeyA) || keys.pressed(KeyCode::KeyQ) {
         dir -= orbit.right();
     }
     let alive = run.sim.actors[player].alive;
@@ -403,6 +469,8 @@ pub fn player_input(
         (KeyCode::Digit1, 0),
         (KeyCode::Digit2, 1),
         (KeyCode::Digit3, 2),
+        (KeyCode::Digit4, 3),
+        (KeyCode::Digit5, 4),
     ] {
         if keys.just_pressed(key) {
             run.sim.queue_player_cast(slot);
@@ -420,7 +488,6 @@ pub fn player_input(
     if keys.just_pressed(KeyCode::Backspace) && run.end_timer.is_none() {
         run.sim.abandon(RunOutcome::Abandoned);
     }
-    // F1-F5: target party members.
     for (i, key) in [
         KeyCode::F1,
         KeyCode::F2,
@@ -479,6 +546,12 @@ pub fn player_input(
     {
         run.sim.set_player_target(Some(tt));
     }
+    // G: target the party's current kill target.
+    if keys.just_pressed(KeyCode::KeyG)
+        && let Some(k) = run.sim.board.kill_target
+    {
+        run.sim.set_player_target(Some(k));
+    }
     if mouse.just_pressed(MouseButton::Left)
         && let Some(cursor) = window.cursor_position()
         && let Ok(ray) = camera.0.viewport_to_world(camera.1, cursor)
@@ -520,6 +593,14 @@ fn step_sim(time: Res<Time>, mut run: ResMut<ActiveRun>, demo: Option<Res<DemoCo
     if steps == max_steps {
         run.acc = 0.0;
     }
+    let n = run.sim.actors.len();
+    if run.prev_pos.len() < n {
+        let extra: Vec<V2> = run.sim.actors[run.prev_pos.len()..]
+            .iter()
+            .map(|a| a.pos)
+            .collect();
+        run.prev_pos.extend(extra);
+    }
     let dt = time.delta_secs();
     if let Some((_, t, _)) = run.banner.as_mut() {
         *t -= dt;
@@ -558,12 +639,33 @@ pub fn process_events(mut run: ResMut<ActiveRun>) {
             EventKind::CastFailed { src, reason, .. } if Some(*src) == player => {
                 run.error = Some((reason.to_string(), 1.5));
             }
-            EventKind::PhaseChange { boss, phase } => {
-                let name = run.sim.actors[*boss].name.clone();
+            EventKind::Interrupt { src, dst, what } if Some(*src) == player => {
+                let name = run.sim.actors[*dst].name.clone();
                 run.set_banner(
-                    format!("PHASE {phase}: {name} erupts in cinders! Watch the ground!"),
-                    5.0,
-                    Color::srgb(1.0, 0.45, 0.1),
+                    format!("You interrupted {name}'s {what}!"),
+                    2.0,
+                    Color::srgb(0.5, 0.8, 1.0),
+                );
+            }
+            EventKind::PhaseChange {
+                boss,
+                phase,
+                announce,
+            } => {
+                let name = run.sim.actors[*boss].name.clone();
+                let text = if announce.is_empty() {
+                    format!("PHASE {phase}: {name}")
+                } else {
+                    format!("PHASE {phase}: {announce}")
+                };
+                run.set_banner(text, 5.0, Color::srgb(1.0, 0.45, 0.1));
+            }
+            EventKind::Summon { src, what, count } => {
+                let name = run.sim.actors[*src].name.clone();
+                run.set_banner(
+                    format!("{name}: {what}! ({count} adds) - switch targets"),
+                    3.0,
+                    Color::srgb(1.0, 0.7, 0.3),
                 );
             }
             EventKind::Enrage { boss } => {
@@ -574,12 +676,37 @@ pub fn process_events(mut run: ResMut<ActiveRun>) {
                     Color::srgb(1.0, 0.1, 0.1),
                 );
             }
-            EventKind::TelegraphStart { center, radius, .. } => {
+            EventKind::CastStart { src, what, .. } => {
+                // Warn about party-wide pulses.
+                let a = &run.sim.actors[*src];
+                if let (Some(es), Some(c)) = (&a.enemy, &a.cast)
+                    && let dungeon_sim::sim::CastKind::Enemy(idx) = c.kind
+                    && es.abilities[idx].cfg.kind == dungeon_sim::content::AbilityKind::Pulse
+                {
+                    let name = a.name.clone();
+                    let interrupt = if c.interruptible {
+                        " - INTERRUPT IT"
+                    } else {
+                        " - brace!"
+                    };
+                    run.set_banner(
+                        format!("{name} is casting {what}{interrupt}"),
+                        2.5,
+                        Color::srgb(0.8, 0.5, 1.0),
+                    );
+                }
+            }
+            EventKind::TelegraphStart {
+                center,
+                radius,
+                what,
+                ..
+            } => {
                 if let Some(p) = player
                     && run.sim.actors[p].pos.dist(*center) <= radius + 0.5
                 {
                     run.set_banner(
-                        "CINDER RING UNDER YOU - MOVE!",
+                        format!("{} UNDER YOU - MOVE!", what.to_uppercase()),
                         2.0,
                         Color::srgb(1.0, 0.2, 0.1),
                     );
@@ -593,9 +720,9 @@ pub fn process_events(mut run: ResMut<ActiveRun>) {
                 );
             }
             EventKind::EncounterCleared { encounter } => {
-                let id = run.sim.encounters[*encounter].id.clone();
+                let name = run.sim.encounters[*encounter].name.clone();
                 run.set_banner(
-                    format!("Encounter cleared: {id}"),
+                    format!("Encounter cleared: {name}"),
                     3.0,
                     Color::srgb(0.6, 1.0, 0.6),
                 );
@@ -603,13 +730,17 @@ pub fn process_events(mut run: ResMut<ActiveRun>) {
             EventKind::Outcome { outcome } => {
                 let (text, color) = match outcome {
                     RunOutcome::Victory => (
-                        "VICTORY! The Hollow King falls.",
+                        format!("VICTORY! {} falls.", run.sim.actors[run.sim.boss].name),
                         Color::srgb(1.0, 0.85, 0.3),
                     ),
-                    RunOutcome::Wipe => {
-                        ("WIPE - the party has fallen.", Color::srgb(0.9, 0.2, 0.2))
-                    }
-                    _ => ("You leave the dungeon.", Color::srgb(0.8, 0.8, 0.8)),
+                    RunOutcome::Wipe => (
+                        "WIPE - the party has fallen.".to_string(),
+                        Color::srgb(0.9, 0.2, 0.2),
+                    ),
+                    _ => (
+                        "You leave the dungeon.".to_string(),
+                        Color::srgb(0.8, 0.8, 0.8),
+                    ),
                 };
                 run.set_banner(text, END_DELAY + 1.0, color);
                 run.end_timer = Some(END_DELAY);
@@ -622,12 +753,17 @@ pub fn process_events(mut run: ResMut<ActiveRun>) {
 
 fn sync_actors(
     run: Res<ActiveRun>,
-    mut q: Query<(&ActorVisual, &mut Transform)>,
+    mut q: Query<(&ActorVisual, &mut Transform, &mut Visibility)>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let phase2 = run.sim.boss_phase() == 2;
-    for (vis, mut t) in &mut q {
+    for (vis, mut t, mut visibility) in &mut q {
         let a = &run.sim.actors[vis.id];
+        let despawned = a.enemy.as_ref().is_some_and(|e| e.despawned);
+        *visibility = if despawned {
+            Visibility::Hidden
+        } else {
+            Visibility::Inherited
+        };
         let pos = run.interp_pos(vis.id);
         if a.alive {
             t.translation = to_vec3(pos, vis.center_y);
@@ -636,9 +772,10 @@ fn sync_actors(
             t.translation = to_vec3(pos, vis.lie_y);
             t.rotation = Quat::from_rotation_y(a.facing) * Quat::from_rotation_x(FRAC_PI_2);
         }
-        let is_boss = vis.id == run.sim.boss;
-        t.scale = Vec3::splat(if is_boss && phase2 && a.alive {
-            1.2
+        let is_boss = a.rank() == Some(EnemyRank::Boss);
+        let phase = a.phase();
+        t.scale = Vec3::splat(if is_boss && a.alive {
+            1.0 + 0.1 * (phase - 1) as f32
         } else {
             1.0
         });
@@ -647,6 +784,8 @@ fn sync_actors(
         };
         let want = if !a.alive {
             Color::srgb(0.15, 0.15, 0.15)
+        } else if a.is_incapacitated() {
+            Color::srgb(0.6, 0.4, 0.9)
         } else if a.mode() == Some(EnemyMode::Resetting) {
             vis.base_color.mix(&Color::WHITE, 0.5)
         } else {
@@ -656,10 +795,10 @@ fn sync_actors(
             m.base_color = want;
         }
         if is_boss {
-            let e = if phase2 && a.alive {
-                LinearRgba::rgb(2.5, 0.6, 0.05)
-            } else {
-                LinearRgba::BLACK
+            let e = match (a.alive, phase) {
+                (true, 2) => LinearRgba::rgb(2.5, 0.6, 0.05),
+                (true, p) if p >= 3 => LinearRgba::rgb(2.5, 0.1, 0.4),
+                _ => LinearRgba::BLACK,
             };
             if m.emissive != e {
                 m.emissive = e;
@@ -702,8 +841,8 @@ fn sync_telegraphs(
         known.insert(tg.id, ());
         let disc = meshes.add(Circle::new(1.0));
         for (inner, color, y) in [
-            (false, Color::srgba(1.0, 0.3, 0.05, 0.25), 0.03),
-            (true, Color::srgba(1.0, 0.15, 0.0, 0.55), 0.04),
+            (false, Color::srgba(1.0, 0.3, 0.05, 0.25), 0.05),
+            (true, Color::srgba(1.0, 0.15, 0.0, 0.55), 0.06),
         ] {
             commands.spawn((
                 Mesh3d(disc.clone()),
@@ -724,6 +863,37 @@ fn sync_telegraphs(
     }
 }
 
+/// Hazards glow bright when active and flicker shortly before turning on.
+fn sync_hazards(
+    time: Res<Time>,
+    run: Res<ActiveRun>,
+    q: Query<&HazardVisual>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    for v in &q {
+        let h = &run.sim.hazards[v.index];
+        let cleared = run.sim.encounters[h.encounter].cleared;
+        let soon = h.time_to_active(run.sim.time);
+        let alpha = if cleared {
+            0.0
+        } else if h.active {
+            0.55
+        } else if soon < 1.0 {
+            0.2 + 0.2 * (time.elapsed_secs() * 20.0).sin().abs()
+        } else {
+            0.12
+        };
+        if let Some(mut m) = materials.get_mut(&v.material) {
+            m.base_color = Color::srgba(1.0, 0.35, 0.05, alpha);
+            m.emissive = if h.active {
+                LinearRgba::rgb(2.0, 0.5, 0.0)
+            } else {
+                LinearRgba::rgb(0.2, 0.05, 0.0)
+            };
+        }
+    }
+}
+
 fn draw_gizmos(run: Res<ActiveRun>, mut gizmos: Gizmos) {
     let flat = Quat::from_rotation_arc(Vec3::Z, Vec3::Y);
     if let Some(p) = run.sim.player {
@@ -740,7 +910,30 @@ fn draw_gizmos(run: Res<ActiveRun>, mut gizmos: Gizmos) {
             Color::srgb(1.0, 0.2, 0.0),
         );
     }
-    // Aggro radius hint for idle enemies near the player.
+    for h in &run.sim.hazards {
+        if !run.sim.encounters[h.encounter].cleared {
+            gizmos.circle(
+                Isometry3d::new(to_vec3(h.cfg.pos, 0.07), flat),
+                h.cfg.radius,
+                if h.active {
+                    Color::srgb(1.0, 0.4, 0.0)
+                } else {
+                    Color::srgba(1.0, 0.5, 0.2, 0.35)
+                },
+            );
+        }
+    }
+    // Frontal cleave cones on engaged enemies that have one.
+    for &e in &run.sim.board.frontal {
+        let a = &run.sim.actors[e];
+        let pos = to_vec3(run.interp_pos(e), 0.1);
+        let r = a.radius + 6.0;
+        for k in -4..=4 {
+            let ang = a.facing + k as f32 * std::f32::consts::FRAC_PI_8;
+            let dir = Vec3::new(ang.sin(), 0.0, ang.cos());
+            gizmos.line(pos, pos + dir * r, Color::srgba(1.0, 0.3, 0.2, 0.35));
+        }
+    }
     if let Some(p) = run.sim.player {
         let me = run.sim.actors[p].pos;
         for &e in &run.sim.enemies {
@@ -777,9 +970,9 @@ fn finish_run(
     let sim = &run.sim;
     let summary = RunSummary::from_sim(sim);
     let content = sim.content.clone();
-    let rewards = data.profile.grant_rewards(&content, sim.outcome, sim.seed);
+    let report = RunReport::from_sim(sim);
+    let rewards = data.profile.grant_rewards(&content, &report);
     data.save();
-    // Persist the full combat log for inspection.
     let log_path = std::path::Path::new("logs").join("last_run.log");
     let text: String = sim.events.iter().map(|e| sim.describe(e) + "\n").collect();
     let log_path = std::fs::create_dir_all("logs")
@@ -789,17 +982,18 @@ fn finish_run(
     let highlights: Vec<String> = sim
         .events
         .iter()
-        .filter(|e| {
-            matches!(
-                e.kind,
-                EventKind::Death { .. }
-                    | EventKind::PhaseChange { .. }
-                    | EventKind::EncounterCleared { .. }
-                    | EventKind::EncounterReset { .. }
-                    | EventKind::Enrage { .. }
-                    | EventKind::TelegraphHit { .. }
-                    | EventKind::Outcome { .. }
-            )
+        .filter(|e| match &e.kind {
+            EventKind::Death { actor } => {
+                !sim.actors[*actor].is_enemy()
+                    || sim.actors[*actor].rank() != Some(EnemyRank::Trash)
+            }
+            EventKind::PhaseChange { .. }
+            | EventKind::EncounterCleared { .. }
+            | EventKind::EncounterReset { .. }
+            | EventKind::Enrage { .. }
+            | EventKind::Revive { .. }
+            | EventKind::Outcome { .. } => true,
+            _ => false,
         })
         .map(|e| sim.describe(e))
         .collect();
@@ -811,6 +1005,7 @@ fn finish_run(
         summary,
         rewards,
         dungeon_name: content.dungeon.name.clone(),
+        difficulty_name: sim.difficulty.name.clone(),
         highlights,
         log_path,
     });
@@ -840,7 +1035,7 @@ fn fade_occluders(
             && (m.base_color.alpha() - alpha).abs() > 0.01
             && let Some(mut m) = materials.get_mut(&w.material)
         {
-            m.base_color = WALL_COLOR.with_alpha(alpha);
+            m.base_color = run.wall_color.with_alpha(alpha);
         }
     }
 }

@@ -32,11 +32,11 @@ fn spawn_results(mut commands: Commands, result: Option<Res<LastResult>>) {
         children![(
             Node {
                 padding: UiRect::all(px(20)),
-                max_width: px(1100),
+                max_width: px(1200),
                 ..default()
             },
             BackgroundColor(Color::srgba(0.08, 0.08, 0.12, 1.0)),
-            children![(Text::new(text), text_font(15.0))],
+            children![(Text::new(text), text_font(14.0))],
         )],
     ));
 }
@@ -50,52 +50,89 @@ fn format_results(r: &LastResult) -> String {
         RunOutcome::Abandoned => "ABANDONED",
         RunOutcome::InProgress => "IN PROGRESS",
     };
-    let mut out = format!(
-        "{title} - {}\n\nDuration {:.0}s | encounters cleared {}/{} | party deaths {} | encounter resets {} | seed {}\n",
-        r.dungeon_name,
-        s.duration,
-        s.encounters_cleared,
-        s.encounters_total,
-        s.party_deaths,
-        s.encounter_resets,
-        s.seed
-    );
+    let mut lines = vec![
+        format!("{title} - {} [{}]", r.dungeon_name, r.difficulty_name),
+        String::new(),
+        format!(
+            "Duration {:.0}s | encounters cleared {}/{} | enemies killed {} | party deaths {} | resets {} | seed {}",
+            s.duration,
+            s.encounters_cleared,
+            s.encounters_total,
+            s.enemies_killed,
+            s.party_deaths,
+            s.encounter_resets,
+            s.seed
+        ),
+        format!(
+            "Interrupts {}/{} | threat failures {} | avoidable damage taken {:.0} | crowd control {} (broken {}) | dispels {} | overheal {:.0}%",
+            s.interrupted_casts,
+            s.interruptible_casts,
+            s.threat_failures,
+            s.avoidable_damage,
+            s.cc_applied,
+            s.cc_broken,
+            s.dispels,
+            s.overheal_pct
+        ),
+    ];
     if let Some(t) = s.phase2_at {
-        out.push_str(&format!(
-            "Boss phase 2 reached at {t:.0}s | Cinder Rings cast {} (party members hit: {})\n",
+        lines.push(format!(
+            "Final boss phase 2 at {t:.0}s | ground effects cast {} (party hits {})",
             s.ring_casts, s.ring_hits
         ));
     }
-    out.push_str("\nREWARDS\n");
-    out.push_str(&format!("  +{} Vault Marks\n", r.rewards.marks));
-    match &r.rewards.item {
-        Some(item) => out.push_str(&format!(
-            "  Loot: {} - added to your stash (equip it in the hub)\n",
-            item.describe()
-        )),
-        None => out.push_str("  No loot (the boss must be defeated)\n"),
+    lines.push(String::new());
+    lines.push("REWARDS".into());
+    lines.push(format!(
+        "  +{} Vault Marks   +{} experience",
+        r.rewards.marks, r.rewards.xp
+    ));
+    for (name, level) in &r.rewards.level_ups {
+        lines.push(format!("  LEVEL UP: {name} reaches level {level}!"));
     }
-    out.push_str("  Progress saved.\n\nPARTY\n");
-    out.push_str(&format!(
-        "  {:<10} {:<9} {:>8} {:>7} {:>8} {:>7} {:>8} {:>6}\n",
-        "name", "class", "damage", "dps", "healing", "hps", "taken", "deaths"
+    if r.rewards.items.is_empty() {
+        lines.push(
+            "  No loot (bosses and elites drop items when their encounter is cleared)".into(),
+        );
+    }
+    for item in &r.rewards.items {
+        lines.push(format!("  Loot: {}", item.describe()));
+    }
+    lines.push("  Progress saved. Equip new items in the hub (Character tab).".into());
+    lines.push(String::new());
+    lines.push("PARTY".into());
+    lines.push(format!(
+        "  {:<10} {:<9} {:>8} {:>7} {:>8} {:>7} {:>8} {:>9} {:>5} {:>6}",
+        "name", "class", "damage", "dps", "healing", "hps", "taken", "avoidable", "kicks", "deaths"
     ));
     for m in &s.members {
-        out.push_str(&format!(
-            "  {:<10} {:<9} {:>8.0} {:>7.1} {:>8.0} {:>7.1} {:>8.0} {:>6}\n",
-            m.name, m.class, m.damage_done, m.dps, m.healing_done, m.hps, m.damage_taken, m.deaths
+        lines.push(format!(
+            "  {:<10} {:<9} {:>8.0} {:>7.1} {:>8.0} {:>7.1} {:>8.0} {:>9.0} {:>5} {:>6}",
+            m.name,
+            m.class,
+            m.damage_done,
+            m.dps,
+            m.healing_done + m.absorb_done,
+            m.hps,
+            m.damage_taken,
+            m.avoidable_taken,
+            m.interrupts,
+            m.deaths
         ));
     }
-    out.push_str("\nKEY MOMENTS\n");
+    lines.push(String::new());
+    lines.push("KEY MOMENTS".into());
     let n = r.highlights.len();
-    for h in r.highlights.iter().skip(n.saturating_sub(14)) {
-        out.push_str(&format!("  {h}\n"));
+    for h in r.highlights.iter().skip(n.saturating_sub(12)) {
+        lines.push(format!("  {h}"));
     }
     if let Some(p) = &r.log_path {
-        out.push_str(&format!("\nFull combat log written to {p}\n"));
+        lines.push(String::new());
+        lines.push(format!("Full combat log written to {p}"));
     }
-    out.push_str("\nPress Enter to return to the hub");
-    out
+    lines.push(String::new());
+    lines.push("Press Enter to return to the hub".into());
+    lines.join("\n")
 }
 
 fn results_input(keys: Res<ButtonInput<KeyCode>>, mut next: ResMut<NextState<AppState>>) {

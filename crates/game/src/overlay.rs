@@ -5,6 +5,7 @@ use crate::camera::MainCamera;
 use crate::common::{AppState, text_font, to_vec3};
 use crate::dungeon::ActiveRun;
 use bevy::prelude::*;
+use dungeon_sim::stats::HitOutcome;
 use dungeon_sim::{ActorId, EnemyMode, EventKind};
 
 pub struct OverlayPlugin;
@@ -47,55 +48,50 @@ struct FloatingText {
     drift: f32,
 }
 
-/// Spawn one nameplate per actor except the player (called on dungeon enter).
-pub fn spawn_nameplates(mut commands: Commands, run: Res<ActiveRun>) {
-    for a in &run.sim.actors {
-        if Some(a.id) == run.sim.player {
-            continue;
-        }
-        let id = a.id;
-        commands.spawn((
-            Node {
-                position_type: PositionType::Absolute,
-                width: px(PLATE_WIDTH),
-                flex_direction: FlexDirection::Column,
-                align_items: AlignItems::Center,
-                ..default()
-            },
-            Nameplate { id },
-            DespawnOnExit(AppState::Dungeon),
-            children![
-                (Text::new(a.name.clone()), text_font(11.0), PlateName(id)),
-                (
+/// Spawn a nameplate (name, health bar, cast bar) for one actor.
+pub fn spawn_nameplate(commands: &mut Commands, a: &dungeon_sim::sim::Actor) {
+    let id = a.id;
+    commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            width: px(PLATE_WIDTH),
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Center,
+            ..default()
+        },
+        Nameplate { id },
+        DespawnOnExit(AppState::Dungeon),
+        children![
+            (Text::new(a.name.clone()), text_font(11.0), PlateName(id)),
+            (
+                Node {
+                    width: px(PLATE_WIDTH - 20.0),
+                    height: px(6),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.8)),
+                children![(
                     Node {
-                        width: px(PLATE_WIDTH - 20.0),
-                        height: px(6),
+                        width: percent(100),
+                        height: percent(100),
                         ..default()
                     },
-                    BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.8)),
-                    children![(
-                        Node {
-                            width: percent(100),
-                            height: percent(100),
-                            ..default()
-                        },
-                        BackgroundColor(if a.is_enemy() {
-                            Color::srgb(0.85, 0.2, 0.15)
-                        } else {
-                            Color::srgb(0.2, 0.8, 0.3)
-                        }),
-                        PlateHp(id),
-                    )],
-                ),
-                (
-                    Text::new(""),
-                    text_font(10.0),
-                    TextColor(Color::srgb(1.0, 0.8, 0.3)),
-                    PlateCast(id)
-                ),
-            ],
-        ));
-    }
+                    BackgroundColor(if a.is_enemy() {
+                        Color::srgb(0.85, 0.2, 0.15)
+                    } else {
+                        Color::srgb(0.2, 0.8, 0.3)
+                    }),
+                    PlateHp(id),
+                )],
+            ),
+            (
+                Text::new(""),
+                text_font(10.0),
+                TextColor(Color::srgb(1.0, 0.8, 0.3)),
+                PlateCast(id)
+            ),
+        ],
+    ));
 }
 
 fn project(camera: &Camera, cam_gt: &GlobalTransform, world: Vec3) -> Option<Vec2> {
@@ -165,10 +161,34 @@ fn update_nameplates(
     }
     for (c, mut text) in &mut casts {
         let a = &sim.actors[c.0];
-        let want = match a.cast {
-            Some(cast) => format!("{} {:.1}s", cast.name, cast.remaining.max(0.0)),
+        let mut want = match &a.cast {
+            Some(cast) => format!(
+                "{} {:.1}s{}",
+                cast.name,
+                cast.remaining.max(0.0),
+                if cast.interruptible { " (kick!)" } else { "" }
+            ),
             None => String::new(),
         };
+        // Show notable auras (debuffs on allies, control on enemies).
+        let auras: Vec<String> = a
+            .auras
+            .iter()
+            .filter(|x| x.harmful && &*x.name != "Taunted" && &*x.name != "Weakened Soul")
+            .map(|x| {
+                if x.stacks > 1 {
+                    format!("{} x{}", x.name, x.stacks)
+                } else {
+                    x.name.to_string()
+                }
+            })
+            .collect();
+        if !auras.is_empty() {
+            if !want.is_empty() {
+                want.push('\n');
+            }
+            want.push_str(&auras.join(", "));
+        }
         if text.0 != want {
             text.0 = want;
         }
@@ -185,33 +205,68 @@ fn spawn_floating_text(mut commands: Commands, run: Res<ActiveRun>) {
                 src,
                 dst,
                 amount,
-                crit,
+                outcome,
+                absorbed,
                 ..
             } => {
-                let involves_player = Some(*src) == player || Some(*dst) == player;
-                let color = if sim.actors[*dst].is_enemy() {
-                    if Some(*src) == player {
-                        Color::srgb(1.0, 0.95, 0.4)
-                    } else {
-                        Color::srgb(0.85, 0.85, 0.85)
+                let crit = &(*outcome == HitOutcome::Crit);
+                if outcome.avoided() || *outcome == HitOutcome::Absorb {
+                    let involves_player = Some(*src) == player || Some(*dst) == player;
+                    if !involves_player && !sim.actors[*dst].is_enemy() {
+                        continue;
                     }
+                    let word = match outcome {
+                        HitOutcome::Absorb => format!("Absorbed {absorbed:.0}"),
+                        o => {
+                            let l = o.label();
+                            let mut c = l.chars();
+                            c.next()
+                                .map(|f| f.to_uppercase().collect::<String>() + c.as_str())
+                                .unwrap_or_default()
+                        }
+                    };
+                    (*dst, word, Color::srgb(0.75, 0.75, 1.0), 13.0)
                 } else {
-                    Color::srgb(1.0, 0.3, 0.25)
-                };
-                let size = if *crit {
-                    22.0
-                } else if involves_player {
-                    16.0
-                } else {
-                    12.0
-                };
-                let s = if *crit {
-                    format!("{amount:.0}!")
-                } else {
-                    format!("{amount:.0}")
-                };
-                (*dst, s, color, size)
+                    let involves_player = Some(*src) == player || Some(*dst) == player;
+                    let color = if sim.actors[*dst].is_enemy() {
+                        if Some(*src) == player {
+                            Color::srgb(1.0, 0.95, 0.4)
+                        } else {
+                            Color::srgb(0.85, 0.85, 0.85)
+                        }
+                    } else {
+                        Color::srgb(1.0, 0.3, 0.25)
+                    };
+                    let size = if *crit {
+                        22.0
+                    } else if involves_player {
+                        16.0
+                    } else {
+                        12.0
+                    };
+                    let s = if *crit {
+                        format!("{amount:.0}!")
+                    } else {
+                        format!("{amount:.0}")
+                    };
+                    (*dst, s, color, size)
+                }
             }
+            EventKind::Interrupt { dst, .. } => (
+                *dst,
+                "Interrupted!".to_string(),
+                Color::srgb(0.5, 0.85, 1.0),
+                16.0,
+            ),
+            EventKind::Dispel { dst, what, .. } => {
+                (*dst, format!("-{what}"), Color::srgb(0.9, 0.9, 0.5), 13.0)
+            }
+            EventKind::CcBroken { dst, .. } => (
+                *dst,
+                "CC broken".to_string(),
+                Color::srgb(1.0, 0.6, 0.2),
+                13.0,
+            ),
             EventKind::Heal { dst, amount, .. } if *amount >= 1.0 => (
                 *dst,
                 format!("+{amount:.0}"),
