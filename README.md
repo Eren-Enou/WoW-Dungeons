@@ -1,10 +1,13 @@
 # Dungeon Sandbox
 
-An original Rust + Bevy 0.20 third-person dungeon prototype inspired by the
+An original Rust + Bevy 0.20 third-person dungeon RPG inspired by the
 *mechanical feel* of classic tab-target MMORPG dungeons: one player, four
-autonomous companions (tank / healer / DPS), threat, a two-phase boss with a
-telegraphed ground attack, loot, and persistent progression. All assets are
-primitive meshes; all names, maps and numbers are original.
+autonomous companions (tank / healer / DPS) with selectable AI personalities,
+a WoW-Classic-style combat model (armor, hit tables, rage/energy/mana,
+interrupts, crowd control), two data-driven dungeons with multi-phase bosses,
+levels, loot with rarities, and a sandbox for editing encounters without
+recompiling. All assets are primitive meshes; all names, maps and numbers are
+original.
 
 ## Quick start
 
@@ -17,102 +20,105 @@ profile) also works; dependencies are optimised even in debug.
 
 ### Controls
 
-| Where   | Key | Action |
-|---------|-----|--------|
+| Where   | Input | Action |
+|---------|-------|--------|
 | Hub     | WASD | move (relative to camera) |
-| Hub     | E (at portal) | enter the dungeon (re-reads the content file) |
-| Hub     | P | show / hide party panel |
-| Hub     | C | change your class (party is re-balanced) |
-| Hub     | 1-8 | recruit / dismiss companion |
-| Hub     | R | auto-fill a balanced party for your role |
-| Hub     | [ ] or Tab | select stash item |
-| Hub     | G / Shift+1-8 | equip selected item on yourself / companion N |
-| Hub     | F5 | reload content file |
-| Dungeon | WASD | move (moving cancels casts) |
-| Dungeon | Tab / left click | target nearest enemy / click any actor |
-| Dungeon | F1-F5 | target party member (healers) |
-| Dungeon | 1, 2, 3 | class abilities |
-| Dungeon | F | start auto-attack |
-| Dungeon | Esc | clear target |
+| Hub     | mouse | click the panel buttons (recruit, AI profile, equip, dungeon, difficulty...) |
+| Hub     | 1-5 / P | switch panel tab / hide panel |
+| Hub     | E (at portal) | enter the selected dungeon (re-reads all content files) |
+| Hub     | F5 | reload content files |
+| Dungeon | WASD, Q/E | move / strafe (moving cancels casts); both mouse buttons run |
+| Dungeon | Tab / Shift+Tab / click | cycle enemies (engaged first) / reverse / pick any actor |
+| Dungeon | T / G | assist (target of target) / target the party's kill target |
+| Dungeon | F1-F5 | target party members (healers) |
+| Dungeon | 1-5 | class abilities |
+| Dungeon | F / Esc | start auto-attack / clear target |
 | Dungeon | L | toggle verbose combat log |
 | Dungeon | Backspace | leave the dungeon (counts as a failed run) |
-| Both    | Right mouse drag / arrow keys | rotate camera; wheel zooms |
+| Both    | right-drag / arrow keys, wheel | rotate camera, zoom |
 | Results | Enter | back to the hub |
 
 ### Classes
 
-| Class | Role | 1 | 2 | 3 |
-|-------|------|---|---|---|
-| Warden | Tank | Shield Slam (4x threat) | Challenge (taunt) | Bulwark (-40% damage) |
-| Mender | Healer | Mend (1.5s big heal) | Renew (HoT) | Smite (1.5s damage) |
-| Striker | Melee DPS | Rend Strike | Whirl (AoE) | Evade (drop 50% threat) |
-| Arcanist | Ranged DPS | Arc Bolt (2s cast) | Flare (instant) | Veil (drop 50% threat) |
+| Class | Role | Resource | 1 | 2 | 3 | 4 | 5 |
+|---|---|---|---|---|---|---|---|
+| Warden | Tank | rage | Shield Slam | Challenge (taunt) | Bulwark | Shield Bash (interrupt) | Quake Stomp (AoE threat) |
+| Mender | Healer | mana | Mend | Renew | Smite | Ward (absorb) | Purify (dispel) |
+| Striker | Melee | energy | Rend Strike | Whirl | Evade | Kick (interrupt) | Lacerate (bleed) |
+| Arcanist | Ranged | mana | Arc Bolt | Flare | Veil | Hex (CC) | Silence Pulse (interrupt) |
 
-Friendly spells (Mend, Renew) target your selected ally, or yourself if none.
+The hub's **Classes** tab lists every ability with cast times and cooldowns.
+RULES.md documents every formula.
 
-## The dungeon: The Sunken Vault
+## Dungeons
 
-Three trash encounters (a skulker pack, an elite Cragbound Brute with a cleave
-and two adds, a four-skulker pack) and **Morvane, the Hollow King**:
+* **The Sunken Vault** (level 1+): skulker packs, a cleaving brute, and Morvane,
+  the Hollow King — interruptible Hollow Bolts, then Cinder Rings at 50% HP.
+* **The Gloomroot Warrens** (level 4+): healer-casters to interrupt, an optional
+  spore grotto, Mother Brakkis (adds, stacking dispellable poison, frontal
+  cleave), lava vents, and three-phase Vhorlag (party-wide pulses, adds, double
+  rings, a stacking tank debuff).
 
-* **Phase 1:** heavy melee on the tank, *Hollow Bolt* (cast) on a random non-tank.
-* **Phase 2 (at 50% HP, once per pull):** the boss glows and grows, a banner
-  appears, damage rises, and every `ring_interval` seconds a **Cinder Ring**
-  is drawn on the ground under a random party member. It detonates after
-  `ring_telegraph` seconds for heavy damage to everyone inside — step out.
-* Hard enrage after `enrage_seconds`.
-
-Victory grants Vault Marks and one rolled item, saved to `saves/profile.json`.
+Each has Normal and Heroic difficulties. Bosses and elites drop loot; kills and
+clears give XP (levels 1–10). Your companions level and gear up with you.
 
 ## Editing encounters (no recompile)
 
-Everything about the dungeon is in [`assets/content/dungeon.toml`](assets/content/dungeon.toml):
-enemy HP multiplier, damage multiplier, enemy templates, encounter layouts,
-the boss timers, loot table and rewards. The game re-reads it every time you
-enter the portal (or press F5 in the hub). Invalid files are rejected with a
-list of problems naming each field, e.g.:
+Every dungeon is a TOML file in [`assets/content/dungeons/`](assets/content/dungeons/):
+layout, enemy templates (stats, abilities, phases, enrage), encounters (mobs,
+hazards, optional), difficulties, loot and rewards. Change a boss timer, add a
+phase, swap a mob, then press **F5** in the hub or just enter the portal.
+Example variants live in [`assets/content/variants/`](assets/content/variants/)
+(copy one into `dungeons/` to play it). Invalid files are rejected with every
+problem listed by field, for example:
 
 ```
-content file 'assets/content/dungeon.toml' has 2 problem(s):
+content file 'assets/content/dungeons/01_sunken_vault.toml' has 2 problem(s):
   - dungeon.hp_multiplier = -3 is out of range; use a value between 0.05 and 20.0 (1.0 = normal)
   - encounters[0].mobs[0].template 'skulkr' is not defined; known templates: brute, hollow_king, skulker
 ```
 
-Environment overrides: `DUNGEON_CONTENT=<path>` (content file),
-`DUNGEON_SAVE_DIR=<dir>` (save location, default `./saves`).
+Enemy ability kinds: `bolt`, `cleave` (optionally `frontal`), `ring`, `pulse`,
+`summon`, `debuff` (dot / damage_taken / healing_taken), `heal_ally`. See
+RULES.md for every field.
 
-## Headless simulation
+Environment overrides: `DUNGEON_CONTENT=<dir or file>`,
+`DUNGEON_SAVE_DIR=<dir>` (default `./saves`).
 
-The rules live in the renderer-agnostic `dungeon_sim` crate. A seeded batch
-runner plays the whole dungeon with an all-AI party:
+## Headless simulation and AI evaluation
 
 ```bash
-cargo run --release -p dungeon_sim --bin dungeon-headless -- --runs 20 --seed 1
+cargo run --release -p dungeon_sim --bin dungeon-headless -- --runs 20
+cargo run --release -p dungeon_sim --bin dungeon-headless -- --dungeon gloomroot_warrens --level 4 --runs 100 --compare-profiles
+cargo run --release -p dungeon_sim --bin dungeon-headless -- --dungeon gloomroot_warrens --level 4 --runs 50 --breakdown --quiet
+cargo run --release -p dungeon_sim --bin dungeon-headless -- --party-size 25 --level 6 --dungeon gloomroot_warrens --runs 5 --bench --quiet
 ```
 
-Options: `--class warden|mender|striker|arcanist` (the "player" slot's class),
-`--content PATH`, `--max-seconds S`, `--log FILE` (full combat log of the first
-run), `--json` (one JSON summary per run). It prints per-run outcome, duration,
-encounters cleared, resets, deaths, boss phase-2 time, ring casts/hits, per-member
-DPS/HPS, a hash of the event log, and a summary — and re-runs the first seed to
-check the result is bit-for-bit reproducible (exit code 3 if not).
+Options: `--dungeon ID`, `--content PATH`, `--difficulty ID`, `--class`,
+`--level N` (default: the dungeon's recommended level), `--profile
+conservative|balanced|aggressive|support|mechanic`, `--compare-profiles`,
+`--breakdown` (damage by source, enemies turning on non-tanks, killing blows),
+`--party-size N`, `--bench`, `--log FILE`, `--json`, `--quiet`. Summaries
+include win rate, clear time, deaths, DPS, avoidable damage, interrupt rate,
+threat failures, overheal and healing per mana; the first seed is replayed to
+check determinism (exit code 3 on mismatch).
 
 ## Developer flags (graphical build)
 
 ```bash
-cargo run -- --demo --speed 4 --screenshots 2.5 --smoke-test 60
+cargo run -- --demo --dungeon gloomroot_warrens --level 6 --speed 4 --screenshots 3 --smoke-test 110
 ```
 
-* `--demo` enters the portal automatically and lets the AI play your slot.
-* `--speed X` speeds up the simulation (demo only).
-* `--screenshots S` saves `screenshots/shot_NNN.png` every S seconds.
-* `--smoke-test N` exits after N seconds.
-* `--input-test` enters the dungeon and feeds a scripted key sequence (A, W,
-  Tab, 1/2/3) through the real input systems, then writes `logs/input_test.txt`
-  and exits.
+* `--demo` enters the portal and lets the AI play your slot (`--dungeon`,
+  `--difficulty`, `--level` override the selection).
+* `--speed X`, `--screenshots S` (to `screenshots/`), `--smoke-test N` (exit after N s).
+* `--input-test` scripted keyboard sequence through the real input systems →
+  `logs/input_test.txt`.
+* `--hub-tour` screenshots every hub tab; `--click-test` clicks a hub button with
+  synthetic mouse events → `logs/click_test.txt`.
 
-Tip: set `DUNGEON_SAVE_DIR` to a temp folder for demo runs so they don't touch
-your real profile.
+Set `DUNGEON_SAVE_DIR` to a temp folder for these runs so they don't touch your
+real profile.
 
 ## Development checks
 
@@ -121,15 +127,21 @@ cargo fmt --all -- --check
 cargo check --workspace
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
+cargo build --release --workspace
 ```
 
 ## Layout
 
 ```
-crates/sim    dungeon_sim: combat rules, AI, nav, content schema, profile, headless runner
-crates/game   dungeon_game: Bevy app (hub, dungeon renderer, HUD, results, camera)
-assets/content/dungeon.toml   the editable dungeon
-RULES.md      combat and AI rules in prose
-RESEARCH.md   what was consulted and what was invented
-PROGRESS.md   verified status per milestone
+crates/sim    dungeon_sim: stats & formulas, combat, auras, AI + blackboard, nav,
+              content schema, items, profile/progression, headless runner
+crates/game   dungeon_game: Bevy app (hub, dungeon renderer, HUD, overlays, effects,
+              results, camera, demo/test automation)
+assets/content/dungeons/   the playable dungeons (TOML)
+assets/content/variants/   example encounter variations
+RULES.md      authoritative rules and formulas ([WoW] / [orig] tagged)
+RESEARCH.md   references and design provenance
+PROGRESS.md   verified status, benchmarks, known problems
+TASKS.md      prioritized next work
+CHANGELOG.md  meaningful changes
 ```

@@ -19,6 +19,10 @@ use dungeon_sim::EventKind;
 pub struct DemoConfig {
     pub autoplay: bool,
     pub input_test: bool,
+    /// Cycle through every hub tab taking screenshots, then exit.
+    pub hub_tour: bool,
+    /// Click the History tab with synthetic pointer events and report the result.
+    pub click_test: bool,
     pub speed: f32,
     pub screenshot_every: Option<f32>,
     /// Demo overrides for the selected dungeon / difficulty / party level.
@@ -52,6 +56,8 @@ pub fn parse_args() -> DemoConfig {
     DemoConfig {
         autoplay: args.iter().any(|a| a == "--demo"),
         input_test: args.iter().any(|a| a == "--input-test"),
+        hub_tour: args.iter().any(|a| a == "--hub-tour"),
+        click_test: args.iter().any(|a| a == "--click-test"),
         speed: value("--speed").unwrap_or(1.0).clamp(0.1, 10.0),
         screenshot_every: value("--screenshots"),
         dungeon: text("--dungeon"),
@@ -66,7 +72,10 @@ impl Plugin for DemoPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(self.0.clone())
             .init_resource::<DemoState>()
-            .add_systems(Update, (demo_driver, screenshots, demo_camera))
+            .add_systems(
+                Update,
+                (demo_driver, screenshots, demo_camera, hub_tour, click_test),
+            )
             .add_systems(
                 Update,
                 scripted_input
@@ -267,4 +276,133 @@ fn demo_camera(
         diff += std::f32::consts::TAU;
     }
     orbit.yaw += diff * (1.5 * time.delta_secs()).min(1.0);
+}
+
+/// `--hub-tour`: show each hub tab for 1.5 s (screenshot each), inspecting a
+/// companion on the Character tab, then exit.
+fn hub_tour(
+    mut commands: Commands,
+    time: Res<Time>,
+    cfg: Res<DemoConfig>,
+    state: Res<State<AppState>>,
+    mut data: ResMut<GameData>,
+    mut ui: ResMut<crate::hub::HubUi>,
+    mut t: Local<f32>,
+    mut step: Local<usize>,
+    mut exit: MessageWriter<AppExit>,
+) {
+    if !cfg.hub_tour || *state.get() != AppState::Hub {
+        return;
+    }
+    *t += time.delta_secs();
+    if *t < 1.5 {
+        return;
+    }
+    *t = 0.0;
+    use crate::hub::Tab;
+    let plan = [
+        Tab::Party,
+        Tab::Character,
+        Tab::Character,
+        Tab::Dungeons,
+        Tab::Classes,
+        Tab::History,
+    ];
+    if *step >= plan.len() {
+        exit.write(AppExit::Success);
+        return;
+    }
+    if *step == 2 {
+        // Second Character shot: inspect the first recruited companion.
+        let first = data.profile.party.first().cloned();
+        if let Some(i) = first.and_then(|id| data.profile.roster.iter().position(|c| c.id == id)) {
+            ui.wearer = dungeon_sim::profile::Wearer::Companion(i);
+        }
+    }
+    if *step == 3 {
+        // Exercise the same action path a button click uses.
+        let other = data
+            .library
+            .dungeons
+            .iter()
+            .map(|d| d.dungeon.id.clone())
+            .find(|id| *id != data.profile.selected_dungeon);
+        if let Some(id) = other {
+            crate::hub::apply_action(crate::hub::HubAction::SelectDungeon(id), &mut data, &mut ui);
+        }
+    }
+    ui.tab = plan[*step];
+    ui.dirty = true;
+    let path = format!("screenshots/tour_{}.png", *step);
+    let _ = std::fs::create_dir_all("screenshots");
+    commands
+        .spawn(Screenshot::primary_window())
+        .observe(save_to_disk(path));
+    *step += 1;
+}
+
+/// `--click-test`: drive Bevy's picking pipeline with synthetic mouse events
+/// (move, press, release) over the hub's "History" tab button, then check that
+/// the button's `Activate` observer switched the tab.
+#[allow(clippy::too_many_arguments)]
+fn click_test(
+    time: Res<Time>,
+    cfg: Res<DemoConfig>,
+    state: Res<State<AppState>>,
+    ui: Res<crate::hub::HubUi>,
+    buttons: Query<(&crate::hub::HubAction, &bevy::ui::UiGlobalTransform)>,
+    window: Single<(Entity, &Window)>,
+    mut pointer: MessageWriter<bevy::picking::pointer::PointerInput>,
+    mut t: Local<f32>,
+    mut step: Local<u32>,
+    mut exit: MessageWriter<AppExit>,
+) {
+    use bevy::camera::RenderTarget;
+    use bevy::picking::pointer::{Location, PointerAction, PointerButton, PointerId, PointerInput};
+    use bevy::window::WindowRef;
+    if !cfg.click_test || *state.get() != AppState::Hub {
+        return;
+    }
+    *t += time.delta_secs();
+    if *t < 2.0 {
+        return;
+    }
+    let (win_entity, win) = *window;
+    let Some((_, gt)) = buttons
+        .iter()
+        .find(|(a, _)| matches!(a, crate::hub::HubAction::Tab(crate::hub::Tab::History)))
+    else {
+        return;
+    };
+    let position = gt.translation / win.scale_factor();
+    let Some(target) =
+        RenderTarget::Window(WindowRef::Entity(win_entity)).normalize(Some(win_entity))
+    else {
+        return;
+    };
+    let location = Location { target, position };
+    let action = match *step {
+        0 => Some(PointerAction::Move { delta: Vec2::ZERO }),
+        1 => Some(PointerAction::Press(PointerButton::Primary)),
+        2 => Some(PointerAction::Release(PointerButton::Primary)),
+        _ => None,
+    };
+    if let Some(action) = action {
+        pointer.write(PointerInput::new(PointerId::Mouse, location, action));
+        *step += 1;
+        return;
+    }
+    *step += 1;
+    if *step > 30 {
+        let ok = ui.tab == crate::hub::Tab::History;
+        let msg = format!(
+            "CLICK TEST {}: clicked History tab at {position:?}, current tab {:?}",
+            if ok { "OK" } else { "FAILED" },
+            ui.tab
+        );
+        info!("{msg}");
+        let _ = std::fs::create_dir_all("logs");
+        let _ = std::fs::write("logs/click_test.txt", msg);
+        exit.write(AppExit::Success);
+    }
 }

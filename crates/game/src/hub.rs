@@ -96,7 +96,7 @@ impl Default for HubUi {
 }
 
 #[derive(Component, Clone, Debug)]
-enum HubAction {
+pub enum HubAction {
     Tab(Tab),
     ToggleRecruit(usize),
     CycleProfile(usize),
@@ -385,7 +385,7 @@ fn on_hub_activate(
     apply_action(action.clone(), &mut data, &mut ui);
 }
 
-fn apply_action(action: HubAction, data: &mut GameData, ui: &mut HubUi) {
+pub fn apply_action(action: HubAction, data: &mut GameData, ui: &mut HubUi) {
     let mut save = true;
     match action {
         HubAction::Tab(t) => {

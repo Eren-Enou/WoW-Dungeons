@@ -31,6 +31,33 @@ of classic tab-target MMO dungeons (general genre knowledge, not any codebase):
   overheal-cancel rule; the rewards (Vault Marks + one weighted loot roll);
   equipment power/stamina scaling.
 
+## 0.2 combat model: WoW-derived vs original
+
+All formulas were written from general, publicly documented knowledge of WoW
+Classic mechanics (community wikis and theorycrafting folklore), not from any
+source code. RULES.md tags each rule **[WoW]**, **[WoW-approx]** or **[orig]**.
+
+* **WoW-derived:** armor DR `armor/(armor+400+85·L)` capped at 75%; the
+  single-roll melee attack table (miss → dodge → parry → block → crit → hit);
+  parry/block only from the front; 5% base melee miss growing with the level gap;
+  spell miss 4/5/6/17% by level gap; crit multipliers (melee ×2, spells ×1.5);
+  the five-second mana rule; rage from damage dealt/taken with the level-based
+  conversion constant; energy at 10/s; taunt matching top threat; healing threat
+  at half of effective healing split across enemies; interrupt lockouts;
+  incapacitate broken by damage; Weakened-Soul-style shield lockout.
+* **Original / simplified:** the resistance curve (WoW's level-relative formula
+  is too steep at levels 1–6); +0.2% dodge per level gap; level scaling of
+  stats; item stats, rarity multipliers and role affinity; XP curve; loot per
+  encounter; the rally rule; the blackboard, profiles and every AI heuristic;
+  all numbers, names, enemies and dungeons.
+
+## AI evaluation notes (0.2)
+
+Headless breakdowns (`dungeon-headless --breakdown`) drove two AI fixes:
+frontal-cleave positioning (non-tank cleave hits in the Warrens fell from 12.5
+to 3.9 per run) and healer pull discipline (bosses briefly turning on the healer
+after parried opening attacks). See PROGRESS.md for numbers.
+
 If AzerothCore/Playerbots are studied later, record here which files were read,
 their exact license (these projects are copyleft, GPL/AGPL family — verify the
 specific version in each repository first), and keep

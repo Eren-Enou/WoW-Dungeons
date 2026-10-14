@@ -1,34 +1,40 @@
-# Milestones and verification
+# Tasks
 
-## M0 — Bootstrap and architecture
-- Create Rust workspace and Bevy 0.20 app with pinned dependencies.
-- Add basic 3D camera, lighting, floor and controllable actor.
-- Add developer README, commands and small smoke tests.
-- Verify project builds before adding combat.
+Prioritized, actionable work. Completed milestones are summarized at the bottom;
+details and evidence live in PROGRESS.md.
 
-## M1 — Combat core
-- Implement entity attributes, abilities, targeting, damage, healing, cooldowns and threat.
-- Add unit tests for threat shifts, health bounds, targeting, cooldown and death.
-- Expose combat metrics and event log.
+## Next up (0.3)
 
-## M2 — AI party
-- Spawn four role-based autonomous companions.
-- Implement follow, engage, tank threat maintenance, healing, and DPS strategies.
-- Validate 5-character combat against an enemy pack in headless mode.
+1. **Human playtest pass** (needs a person): play both dungeons with each class,
+   note control/camera friction, readability of telegraphs, difficulty for a human
+   player slot. Adjust numbers in the TOML files accordingly.
+2. **In-game encounter editor (Phase F, optional)**: a hub tab with sliders for HP /
+   damage multipliers and boss ability intervals, writing a variant TOML file.
+   Today the TOML workflow + F5 reload is the supported path.
+3. **Raid UI**: let the hub assemble 10-player groups (two parties) and render
+   group frames compactly; the simulation already supports it (headless).
+4. **AI: add pickup** — summoned adds still turn on the healer (~10 times per
+   Warrens run). Ideas: tank pre-positions on summon cast, DPS peel with threat-free
+   damage, healers delay heals when an add is unassigned.
+5. **AI learning/adaptation**: per-encounter memory (e.g. after a wipe to a ring,
+   the next pull uses the Mechanics margins).
+6. **Content**: a third dungeon (levels 7–10) using hazards + healing-taken debuffs;
+   a 10-player raid encounter.
+7. **Performance**: cache `engaged_enemies()` per tick and avoid per-call Vec
+   allocations in the AI (current cost ~0.012 ms/tick at 25 characters — fine, but
+   the obvious next win).
+8. **Hub polish**: stash scrolling instead of pages, sell/salvage items for marks,
+   a marks vendor.
 
-## M3 — Instance and boss
-- Build small original dungeon with three trash encounters and one two-phase boss.
-- Implement death/wipe, victory, spawn/reset, encounter configuration, and boss tell.
-- Test boss threshold and encounter resets.
+## Done
 
-## M4 — Hub and progression
-- Add hub-to-dungeon transitions, party setup, rewards and local save/load.
-- Verify at least one reward survives restart.
-
-## M5 — Sandbox adjustments and QA
-- Add editable dungeon config (HP multiplier + boss timer).
-- Seeded batch simulation runner, summary statistics, validation for bad config.
-- Run all checks; user-facing smoke test; screenshot if environment allows.
-- Make a final progress report with verified vs unverified functionality.
-
-At the end of each milestone: check build, run tests, update PROGRESS.md, and commit if repo is configured and safe to do so. Do not mark milestones complete on inference.
+- 0.1: M0–M5 prototype (hub → dungeon → boss → rewards loop, headless runner).
+- 0.2 Phase A: camera collision/fade, targeting, nameplates, floating text, VFX,
+  danger warnings, clickable tabbed hub, results screen.
+- 0.2 Phase B: stats, mitigation, hit tables, resources, auras, interrupts, CC,
+  dispels, five abilities per class.
+- 0.2 Phase C: blackboard, five profiles, evaluation tooling, two evidence-driven
+  AI fixes.
+- 0.2 Phase D/F: content schema 2.0, second dungeon, difficulties, variants.
+- 0.2 Phase E: levels/XP, 7-slot gear with rarity and roles, auto-equip, history.
+- 0.2 Phase G: configurable party sizes, multiple tanks/healers, benchmarks.

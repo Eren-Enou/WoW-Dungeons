@@ -1,93 +1,144 @@
 # Progress
 
-Status: **M0–M5 implemented.** The full hub → recruit → dungeon → boss → rewards →
-hub loop runs in the graphical build and in the headless runner. Remaining items
-need human playtesting (see bottom).
+Status: **0.2 in development — Phases A–G implemented and verified headlessly
+and through automated graphical runs.** No human has played 0.2 yet.
 
-Environment used for verification: Windows 11 Pro, Rust 1.99.0, Bevy 0.20.0
-(pinned `=0.20.0`, Cargo.lock committed), NVIDIA RTX 2070 SUPER (Vulkan).
+Environment: Windows 11 Pro, Rust 1.99.0, Bevy 0.20.0 (pinned `=0.20.0`,
+Cargo.lock committed), NVIDIA RTX 2070 SUPER (Vulkan).
+
+## Starting condition of 0.2 (recorded 2026-10-14, commit b8e3fc2)
+
+fmt/clippy clean, 50/50 tests. Prototype limits: 3 abilities per class, one
+dungeon with a hard-coded boss script, flat damage (no mitigation/avoidance),
+mana only, simple auras, no levels, 2 item slots, keyboard-only text hub, 3D
+health bars, no camera collision, AI without coordination.
 
 ## Verified (commands actually run, results observed)
 
-### Checks (latest run, 2026-10-14)
+### Checks (latest)
 - `cargo fmt --all -- --check` — clean.
-- `cargo check --workspace` — clean.
-- `cargo test --workspace` — **50 passed, 0 failed** (all in `dungeon_sim`).
-- `cargo build --release --workspace` — succeeds; `cargo run --release -- --demo --speed 4 --smoke-test 50` played a full run to Victory and exited cleanly.
 - `cargo clippy --workspace --all-targets -- -D warnings` — clean.
+- `cargo test --workspace --release` — **99 passed** in `dungeon_sim` + 2 in
+  `dungeon_game` (camera ray tests), 0 failed.
+- `cargo build --release --workspace` — see the end-of-session entry below.
 
-### M0 — Bootstrap
-- Workspace with `crates/sim` (rules, no Bevy dependency) and `crates/game` (Bevy 0.20 app); `cargo run` launches the game.
-- Graphical launch verified: `cargo run -p dungeon_game -- --smoke-test 8` opened the window and ran 465 frames in the hub with no errors.
-- README with commands, controls and layout.
+### Phase A — playable experience
+- Graphical runs via `--demo` (AI drives the player slot) on both dungeons with
+  screenshots: nameplates with cast bars and debuffs, floating combat text,
+  school-coloured effects, target ring, translucent occluding walls, hazard
+  discs, frontal-cleave cones, phase tints, summon/phase/ring banners, five-slot
+  action bar with resource costs, resource-coloured party bars, victory banner,
+  results screen with loot/XP/level-ups.
+- `--hub-tour`: screenshots of every hub tab (Party, Character for the player and
+  a companion with upgrade comparisons, Dungeons with difficulty, Classes,
+  History); switched the selected dungeon through the button action function.
+- `--click-test`: synthetic mouse move/press/release through Bevy's picking
+  backend on the "History" tab button → `Activate` observer → tab switched
+  ("CLICK TEST OK").
+- `--input-test`: scripted `ButtonInput` key presses through the game's own input
+  systems: moved 33.7 m, Tab-targeted, 3 abilities landed, pack engaged.
+- Unit tests for camera ray/box collision.
 
-### M1 — Combat core (unit tests in `crates/sim/src/tests.rs`)
-- Health bounds (damage capped, death at 0, no damage to the dead), heal cap + overheal.
-- Threat: class multiplier, 110% melee / 130% ranged switch rule, taunt, threat drop, healing threat split across engaged enemies, no threat for out-of-combat heals, dead actors removed from tables.
-- Targeting: no target / hostile-vs-friendly / out of range / dead target; friendly spells fall back to self.
-- Cooldowns and 1 s GCD; cast times complete on time; moving interrupts the player's cast; mana gating.
-- Event log (`EventKind`) with readable formatting; per-actor metrics (damage, healing, overheal, taken, deaths, casts).
+### Phase B — combat (unit tests in `stats.rs`, `items.rs`, `tests.rs`)
+Armor formula and cap; resist curve; melee miss vs level gap and hit; spell miss
+table; single-roll table order; parry/block only from the front (statistical
+test); spells resisted but never dodged; physical vs bleed vs magic mitigation;
+rage from dealt/taken and decay; energy regen; five-second rule; cooldowns and
+GCD; cast completion timing; player movement cancels casts; interrupts and
+silence (only interruptible casts); silence blocks spells; Hex incapacitates,
+stops movement, breaks on damage, bosses immune; Lacerate ticks 12× ignoring
+armor; Ward absorbs and Weakened Soul blocks re-casting; Purify removes only
+dispellable debuffs; stacking cap and damage-taken multiplier; threat rules
+(class multiplier, 110/130%, taunt, healing threat split, OOC healing, threat
+drop, dead actors removed).
 
-### M2 — AI party
-- Tank taunts an enemy attacking the healer; healer Mends the lowest ally; AI dodges noticed telegraphs and respects 0.5 s reaction time; followers keep up with a moving leader (tests).
-- Headless 5-character runs: default content, every player class, seeds 1–3 → all **Victory** (test `default_content_is_clearable_by_ai_party`).
-- Batch: `dungeon-headless --runs 10 --class {striker,warden,mender,arcanist}` → 10/10 victories each, deterministic replay OK.
+### Phase C — AI (tests + 100-run evaluations)
+- Tests: tank taunts enemy on healer; healer mends lowest; dispel priority by
+  profile; telegraph dodge with reaction time (Mechanics profile faster);
+  blackboard assigns one interrupter and prioritizes healer-casters; Arcanist
+  hexes in 4-mob pulls; AI interrupts most Hollow Bolts; followers follow;
+  non-tanks leave frontal cones; healers hold top-up heals for 4 s after a pull;
+  Aggressive vs Conservative profiles differ in threat failures and clear time.
+- Profile comparison (`--compare-profiles`, 50 runs, Warrens, level 4):
 
-### M3 — Instance and boss
-- Dungeon with 3 trash encounters (incl. an elite with cleave) + two-phase boss, defined in `assets/content/dungeon.toml`.
-- Phase 2 fires exactly once per pull at the 50% threshold, telegraph appears 2 s later (test); ring damages only those inside (test); `ring_interval` from config controls spacing to ±0.1 s (test).
-- Wipe → boss resets to full HP, phase 1, idle at home, threat cleared, telegraphs removed; re-pull triggers phase 2 again once (test). Leash reset when dragged beyond `leash_radius` (test). Proximity aggro pulls the whole pack only (test).
-- Visible tell verified in screenshot: boss glows orange and grows in phase 2, ring telegraph drawn on the floor, phase banner.
+  | profile | wins | mean time | deaths | avoidable dmg | interrupts | threat fails |
+  |---|---|---|---|---|---|---|
+  | Conservative | 100% | 388 s | 0.12 | 621 | 90% | 14.7 |
+  | Balanced | 96% | 363 s | 0.26 | 815 | 85% | 19.1 |
+  | Aggressive | 58% | 332 s | 2.36 | 1627 | 55% | 12.6 |
+  | Support | 100% | 367 s | 0.10 | 656 | 93% | 18.5 |
+  | Mechanics | 98% | 365 s | 0.16 | 845 | 95% | 20.6 |
 
-### M4 — Hub and progression
-- Hub scene (plaza, portal, board, companions), party panel: class change, recruit/dismiss (1–8), auto-fill, equip from stash.
-- Graphical full loop verified with `--demo --speed 4 --screenshots 2.5 --smoke-test 60` (save dir redirected to a temp folder): hub → portal → dungeon → **Victory** (151 s sim) → results screen (rewards, per-member table, key moments, log path) → hub.
-- **Reward survives restart:** relaunched the game against the same save dir; hub showed Vault Marks 10, Runs won 1, companions' run counts 1, and *Silted Chainmail* in the stash (screenshot). Also covered by test `reward_survives_save_and_reload`. Corrupt saves are moved aside, not deleted (test).
+- Evidence-driven fixes (`--breakdown`): non-tank frontal-cleave hits fell from
+  12.5 to 3.9 per Warrens run, avoidable damage 2,500 → 770 per run,
+  deaths 0.29 → 0.14 (Balanced, 100 runs).
 
-### M5 — Sandbox adjustments and QA
-- Editable `hp_multiplier`, `damage_multiplier`, boss `ring_interval` (boss timer), `ring_telegraph`, enrage, templates, encounters, loot.
-- Config affects subsequent runs: 20-seed release batches — default: mean 138.2 s, ring hits 0.45; `hp_multiplier 1.5` + `ring_interval 5` → mean 197.0 s, ring hits 0.90. Test: `hp_multiplier = 2.0` doubles boss HP and lengthens the run; `hp_multiplier = 10` ends in a non-victory (no hang).
-- Invalid config: headless exits 1 listing every problem with its field path (bad multiplier, telegraph ≥ interval, unknown template with list of known ones); typo'd field names rejected with line/column and expected names. In-game, the hub shows the same message and the portal refuses entry (screenshot). Unit tests for these cases.
-- Seeded batch runner prints per-run and summary metrics and verifies determinism by replaying the first seed (exit code 3 on mismatch); test `headless_runs_are_reproducible_for_a_seed`.
+### Phase D/F — content
+- Schema 2.0 validation tests (bad multiplier, unknown template with known list,
+  typo'd field, ring delay ≥ interval, phase thresholds); the library loads both
+  shipped dungeons and both example variants.
+- Encounter tests: phase 2 once per pull at 50% and ring 2 s later; ring timing
+  follows `interval`; rings hit only those inside; Brakkis summons adds which
+  despawn on reset; frontal cleave spares those behind; shaman heals injured
+  allies; hazards pulse on/off; optional encounters not required; heroic raises
+  HP and level; boss reset after wipe and phase re-trigger; leash; pack aggro.
+- Difficulty (Balanced AI, headless): Sunken Vault normal L1 100% (100 runs);
+  heroic L3 50% (20 runs, before the AI fixes); Warrens normal L4 96–98%, L5–6
+  100%; tests assert the Vault is mostly clearable at L1 for every class and
+  the Warrens at L6.
+- Graphical: the Warrens played to Victory in `--demo --level 6` (279 s sim).
 
-### Post-M5 additions
-- **Real input path (acceptance B):** `cargo run -- --input-test` injects key presses into Bevy's `ButtonInput<KeyCode>` resource and drives the game's own input systems: strafe (A), walk (W), Tab, then 1/2/3. Observed report: player moved 33.7 m through the corridor into the first room, Tab acquired a Gloomfang Skulker, 3 abilities landed (Rend Strike, Whirl, Evade; 430–458 damage), the pack died; later presses correctly failed with "not ready"/"no target". Screenshot confirmed the scene. Limitation: synthetic presses at the `ButtonInput` level, not OS keyboard events.
-- Unbalanced parties (no healer / no tank) still reach an outcome (test `unbalanced_parties_still_finish`).
-- **Rally rule:** fallen party members get back up (40% HP/mana) after the whole party has been out of combat for 8 s, so a dead player/leader cannot soft-lock the run. A full wipe stays final. Tests `fallen_members_rally_after_combat_but_not_during_it`, `wipe_is_final_no_rally`.
+### Phase E — progression (tests in `profile.rs`)
+Reward survives save/reload; one item per cleared loot source; wipes keep kill
+XP but no clear loot; XP levelling and cap; heroic rarity upgrade and marks
+multiplier; equip/swap and auto-equip respecting role affinity; v1 save
+migration; corrupt save backup. Graphically: after a Warrens run the hub showed
+level 7, 20 marks, loot in the stash with comparisons.
+
+### Phase G — raids (headless)
+`--party-size` builds groups with ~1 tank per 10 and 1 healer per 4. All sizes
+clear the Warrens at level 6. Benchmarks (release, `--bench`):
+
+| party | normal content | stress (enemy HP ×8, sustained combat) |
+|---|---|---|
+| 5 | 0.002 ms/tick (~400k ticks/s) | 0.003 ms/tick |
+| 10 | 0.004 ms/tick | 0.004 ms/tick |
+| 25 | 0.011 ms/tick | 0.012 ms/tick (~4,200× real time) |
+| 40 | — | 0.022 ms/tick (~2,300× real time) |
+
+Bottleneck candidates: per-call `engaged_enemies()` allocations and O(party ×
+enemies) AI scans; not a problem at these sizes.
 
 ## Not verified / requires human playtesting
-- **Manual play feel**: a human has not yet played a run with a real keyboard and mouse. Movement/targeting/abilities were exercised via the sim API (test `player_of_every_class_can_move_target_and_use_three_abilities`), via synthetic `ButtonInput` presses (`--input-test`), and via the AI-driven `--demo`. Dodging rings by hand is untested.
-- Mouse-click picking (ray vs. sphere) is untested in a live session.
-- Difficulty for a human player is untuned; the AI party wins 100% on default content.
-- Healer player experience (F1–F5 targeting) not playtested.
-- Only Windows/Vulkan tested; other OSes not tried.
-- Screenshots are produced only via `--screenshots`; none are committed.
+- Feel of the controls and camera with real keyboard/mouse; readability of the
+  new effects for a human; difficulty when a human controls the player slot.
+- Healer and tank player experience with the new abilities (Ward, Purify,
+  Shield Bash, Quake Stomp) in the graphical game.
+- Hub buttons other than the History tab were exercised through the action
+  function, not real clicks (the click path itself is verified).
+- Raids are headless only; the hub/game still uses 5-member parties.
+- Only Windows/Vulkan tested.
 
-### Manual smoke test (≈5 minutes)
-1. `cargo run --release`. The hub appears; party panel on the right.
-2. Press **C** until you are a Striker (or any class). Walk with **WASD**, rotate the camera with right-drag.
-3. Walk into the purple portal and press **E**.
-4. Walk north. Press **Tab** to target a skulker, press **1**, **2**, **3**; companions engage, the tank taunts.
-5. Clear the three packs, enter the throne room. At 50% the boss glows orange and a banner appears; step out of red rings.
-6. On victory/wipe, read the results screen, press **Enter**. Check Vault Marks and the stash.
-7. Quit, relaunch: the marks and item are still there. Press **G** to equip the item.
-8. Edit `assets/content/dungeon.toml`: set `hp_multiplier = 2.0`, `ring_interval = 5.0`, press **F5** in the hub: the info panel shows the new values; enter and observe the longer fight / more rings. Set `hp_multiplier = -1`, press **F5**: an error lists the field.
+## Known problems
+- Summoned spiderlings still turn on the healer ~10 times per Warrens run
+  (healing threat on fresh adds). Listed in TASKS.md.
+- The Sunken Vault is easy for the AI party at level 1 (100% wins); the human
+  player slot is expected to be the variable. Heroic provides a challenge.
+- Frontal cleaves still clip non-tanks ~4 times per Warrens run (moving through
+  the cone; no path planning around cones).
 
-## Decisions
-- Rust stable 1.99, Bevy pinned `=0.20.0`; classic `commands.spawn` API (BSN macros not used).
-- Simulation is a separate crate with no Bevy dependency, fixed 20 Hz timestep, SplitMix64 RNG; the game interpolates positions for rendering.
-- Original classes: Warden (tank), Mender (healer), Striker (melee), Arcanist (ranged). Formulas and numbers are placeholders (see RULES.md).
-- Content in TOML with `deny_unknown_fields` and a validation pass that collects all issues.
-- Navigation: overlapping rectangles + BFS over the rectangle graph (documented shortcut; no actor collision, no line-of-sight blocking).
-- Persistence: JSON profile written atomically (temp file + rename); `DUNGEON_SAVE_DIR` override.
-- Party: 8-companion roster; recruit 4; auto-fill gives one tank, one healer and DPS around the player's role. Party without tank/healer is allowed but warned.
-- Leaving the dungeon (Backspace) counts as a failed run.
-- UI is keyboard-driven text panels + Bevy UI bars (the old `Button`/`Interaction` widgets are deprecated in 0.20).
+## Decisions (0.2)
+- Formulas are tagged [WoW]/[WoW-approx]/[orig] in RULES.md; the resist formula
+  deviates from WoW on purpose (too steep at levels 1–6).
+- Content is a directory of dungeon TOML files; schema 2.0 replaced the hard-coded
+  boss script (the Vault was ported; old single-file content is not loaded).
+- Labels are `Arc<str>` because enemy ability names come from data.
+- The blackboard is recomputed every tick from state (no hidden memory), keeping
+  AI deterministic and testable; companions still decide individually.
+- Hub buttons use `bevy::ui_widgets::Button` + `Activate` observers (the old
+  `Interaction` API is deprecated in 0.20).
+- Save format v2 with automatic v1 migration.
 
-## Next actions (beyond M5)
-- Human playtest pass; tune boss numbers for a human-controlled slot.
-- Camera collision with walls; name plates; floating combat text.
-- Optional: study AzerothCore/Playerbots behaviour and log it in RESEARCH.md.
-
-## Blockers
-- None.
+## Next actions
+See TASKS.md (human playtest, add pickup AI, raid UI, third dungeon, optional
+in-game encounter editor).
