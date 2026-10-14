@@ -37,6 +37,8 @@ pub struct DemoConfig {
     pub difficulty: Option<String>,
     pub level: Option<u32>,
     pub group: Option<u32>,
+    /// Player class for demo runs (`--class warden`).
+    pub class: Option<String>,
 }
 
 #[derive(Resource, Default)]
@@ -74,6 +76,7 @@ pub fn parse_args() -> DemoConfig {
         difficulty: text("--difficulty"),
         level: value("--level").map(|l| l as u32),
         group: value("--group").map(|g| g as u32),
+        class: text("--class"),
     }
 }
 
@@ -139,6 +142,14 @@ fn demo_driver(
             }
             if let Some(g) = cfg.group {
                 data.profile.set_group_size(g);
+            }
+            if let Some(name) = &cfg.class
+                && let Some(c) = dungeon_sim::class::ClassId::ALL
+                    .into_iter()
+                    .find(|c| c.label().eq_ignore_ascii_case(name))
+            {
+                data.profile.player_class = c;
+                data.profile.auto_fill_party();
             }
             if cfg.frame_test {
                 data.profile.player_class = dungeon_sim::class::ClassId::Mender;

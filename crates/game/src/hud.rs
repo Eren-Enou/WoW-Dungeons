@@ -75,6 +75,7 @@ enum HudText {
     Log,
     Info,
     Banner,
+    Alert,
     Error,
 }
 
@@ -363,6 +364,13 @@ pub fn spawn_hud(mut commands: Commands, run: Res<ActiveRun>) {
             ),
             (
                 Text::new(""),
+                text_font(17.0),
+                TextShadow::default(),
+                HudText::Alert,
+                Pickable::IGNORE,
+            ),
+            (
+                Text::new(""),
                 text_font(18.0),
                 TextColor(RED_TEXT),
                 HudText::Error,
@@ -486,7 +494,7 @@ pub fn spawn_hud(mut commands: Commands, run: Res<ActiveRun>) {
             position_type: PositionType::Absolute,
             left: px(10),
             bottom: px(10),
-            width: px(330),
+            width: px(360),
             padding: UiRect::all(px(6)),
             ..default()
         },
@@ -949,15 +957,24 @@ fn update_texts(run: Res<ActiveRun>, mut q: Query<(&mut Text, &mut TextColor, &H
                     s.push_str(&format!("{mark} {}\n", e.id));
                 }
                 s.push_str(
-                    "\nW/S move | A/D turn | Q/E strafe | RMB steer | LMB look\n\
-                     both buttons run | V camera follow | wheel zoom\n\
-                     click/Tab target | 1-5 abilities (heals use mouseover)\n\
-                     T assist | G kill target | F attack | F1-F5 party\n\
-                     Esc clear | L verbose log | Backspace leave",
+                    "\nW/S move, A/D turn, Q/E strafe\n\
+                     RMB steer, LMB look, both = run\n\
+                     V camera follow, wheel zoom\n\
+                     Click/Tab target, T assist, G kill target\n\
+                     1-5 abilities - heals use mouseover\n\
+                     F attack, F1-F5 party, Esc clear\n\
+                     L verbose log, Backspace leave",
                 );
                 s
             }
             HudText::Banner => match &run.banner {
+                Some((t, _, c)) => {
+                    color.0 = *c;
+                    t.clone()
+                }
+                None => String::new(),
+            },
+            HudText::Alert => match &run.alert {
                 Some((t, _, c)) => {
                     color.0 = *c;
                     t.clone()

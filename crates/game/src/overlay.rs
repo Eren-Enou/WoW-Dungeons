@@ -4,9 +4,11 @@
 use crate::camera::MainCamera;
 use crate::common::{AppState, text_font, to_vec3};
 use crate::dungeon::ActiveRun;
+use bevy::picking::Pickable;
 use bevy::prelude::*;
+use dungeon_sim::sim::{PersonalThreat, TankThreat};
 use dungeon_sim::stats::HitOutcome;
-use dungeon_sim::{ActorId, EnemyMode, EventKind};
+use dungeon_sim::{ActorId, EnemyMode, EventKind, Sim};
 
 pub struct OverlayPlugin;
 
@@ -23,7 +25,7 @@ impl Plugin for OverlayPlugin {
     }
 }
 
-const PLATE_WIDTH: f32 = 110.0;
+const PLATE_WIDTH: f32 = 170.0;
 
 #[derive(Component)]
 pub struct Nameplate {
@@ -38,6 +40,42 @@ struct PlateHp(ActorId);
 
 #[derive(Component)]
 struct PlateCast(ActorId);
+
+/// Health-bar frame of an enemy plate, coloured by threat.
+#[derive(Component)]
+struct PlateThreat(ActorId);
+
+/// Nameplate colour for an enemy, from the player's threat perspective.
+/// Tanks: green = secure, yellow = contested, blue = another tank holds it,
+/// red = attacking a non-tank. Others: grey-red = safe, yellow = close to
+/// pulling, red = attacking you. Idle enemies are yellow-gold, evading grey.
+pub fn threat_color(sim: &Sim, enemy: ActorId) -> Color {
+    let a = &sim.actors[enemy];
+    match a.mode() {
+        Some(EnemyMode::Resetting) => return Color::srgb(0.7, 0.7, 0.7),
+        Some(EnemyMode::Engaged) => {}
+        _ => return Color::srgb(1.0, 0.9, 0.4),
+    }
+    let Some(p) = sim.player else {
+        return Color::srgb(1.0, 0.35, 0.3);
+    };
+    let v = sim.threat_view(enemy, p);
+    if sim.is_tank(p) {
+        match v.tank {
+            TankThreat::Secure => Color::srgb(0.35, 0.95, 0.35),
+            TankThreat::Contested => Color::srgb(1.0, 0.85, 0.15),
+            TankThreat::OtherTank => Color::srgb(0.45, 0.75, 1.0),
+            TankThreat::Lost => Color::srgb(1.0, 0.2, 0.15),
+            TankThreat::Idle => Color::srgb(1.0, 0.9, 0.4),
+        }
+    } else {
+        match v.personal {
+            PersonalThreat::Safe | PersonalThreat::Idle => Color::srgb(0.9, 0.55, 0.5),
+            PersonalThreat::Warning => Color::srgb(1.0, 0.85, 0.15),
+            PersonalThreat::Attacking => Color::srgb(1.0, 0.2, 0.15),
+        }
+    }
+}
 
 #[derive(Component)]
 struct FloatingText {
@@ -60,16 +98,27 @@ pub fn spawn_nameplate(commands: &mut Commands, a: &dungeon_sim::sim::Actor) {
             ..default()
         },
         Nameplate { id },
+        Pickable::IGNORE,
         DespawnOnExit(AppState::Dungeon),
         children![
-            (Text::new(a.name.clone()), text_font(11.0), PlateName(id)),
+            (
+                Text::new(a.name.clone()),
+                text_font(11.0),
+                TextShadow::default(),
+                PlateName(id),
+                Pickable::IGNORE
+            ),
             (
                 Node {
-                    width: px(PLATE_WIDTH - 20.0),
-                    height: px(6),
+                    width: px(100.0),
+                    height: px(if a.is_enemy() { 8.0 } else { 6.0 }),
+                    border: UiRect::all(px(if a.is_enemy() { 1.0 } else { 0.0 })),
                     ..default()
                 },
                 BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.8)),
+                BorderColor::all(Color::NONE),
+                PlateThreat(id),
+                Pickable::IGNORE,
                 children![(
                     Node {
                         width: percent(100),
@@ -82,13 +131,15 @@ pub fn spawn_nameplate(commands: &mut Commands, a: &dungeon_sim::sim::Actor) {
                         Color::srgb(0.2, 0.8, 0.3)
                     }),
                     PlateHp(id),
+                    Pickable::IGNORE,
                 )],
             ),
             (
                 Text::new(""),
                 text_font(10.0),
                 TextColor(Color::srgb(1.0, 0.8, 0.3)),
-                PlateCast(id)
+                PlateCast(id),
+                Pickable::IGNORE
             ),
         ],
     ));
@@ -111,6 +162,7 @@ fn update_nameplates(
     mut names: Query<(&PlateName, &mut TextColor, &mut Text), Without<PlateCast>>,
     mut hps: Query<(&PlateHp, &mut Node), Without<Nameplate>>,
     mut casts: Query<(&PlateCast, &mut Text), Without<PlateName>>,
+    mut frames: Query<(&PlateThreat, &mut BorderColor)>,
 ) {
     let (cam, cam_gt) = *camera;
     let sim = &run.sim;
@@ -138,15 +190,11 @@ fn update_nameplates(
     for (n, mut color, mut text) in &mut names {
         let a = &sim.actors[n.0];
         let selected = target == Some(n.0);
-        color.0 = match (a.is_enemy(), a.mode()) {
-            (true, Some(EnemyMode::Engaged)) => Color::srgb(1.0, 0.35, 0.3),
-            (true, Some(EnemyMode::Resetting)) => Color::srgb(0.7, 0.7, 0.7),
-            (true, _) => Color::srgb(1.0, 0.9, 0.4),
-            _ => Color::srgb(0.5, 1.0, 0.6),
+        color.0 = if a.is_enemy() {
+            threat_color(sim, n.0)
+        } else {
+            Color::srgb(0.5, 1.0, 0.6)
         };
-        if selected {
-            color.0 = Color::WHITE;
-        }
         let want = if selected {
             format!("> {} <", a.name)
         } else {
@@ -156,12 +204,23 @@ fn update_nameplates(
             text.0 = want;
         }
     }
+    for (f, mut border) in &mut frames {
+        let c = if target == Some(f.0) {
+            Color::WHITE
+        } else if sim.actors[f.0].is_engaged_enemy() {
+            threat_color(sim, f.0)
+        } else {
+            Color::NONE
+        };
+        border.set_all(c);
+    }
     for (h, mut node) in &mut hps {
         node.width = percent(100.0 * sim.actors[h.0].hp_frac());
     }
     for (c, mut text) in &mut casts {
         let a = &sim.actors[c.0];
-        let mut want = match &a.cast {
+        // Cast bars only on enemies: that's what you might need to interrupt.
+        let mut want = match a.cast.as_ref().filter(|_| a.is_enemy()) {
             Some(cast) => format!(
                 "{} {:.1}s{}",
                 cast.name,
@@ -307,6 +366,7 @@ fn spawn_floating_text(mut commands: Commands, run: Res<ActiveRun>) {
                 position_type: PositionType::Absolute,
                 ..default()
             },
+            Pickable::IGNORE,
             FloatingText {
                 world: to_vec3(a.pos, height),
                 age: 0.0,

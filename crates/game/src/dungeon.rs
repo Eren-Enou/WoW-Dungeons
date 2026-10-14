@@ -60,7 +60,7 @@ impl Plugin for DungeonPlugin {
 
 /// Seconds between the run ending and the results screen.
 const END_DELAY: f32 = 3.0;
-const LOG_LINES: usize = 14;
+const LOG_LINES: usize = 12;
 /// How long a failed-action message stays on screen.
 const ERROR_SECS: f32 = 1.5;
 const WALL_HEIGHT: f32 = 3.2;
@@ -77,6 +77,10 @@ pub struct ActiveRun {
     pub verbose_log: bool,
     pub banner: Option<(String, f32, Color)>,
     pub error: Option<(String, f32)>,
+    /// Threat alert ("X is attacking Y!") with its remaining time and colour.
+    pub alert: Option<(String, f32, Color)>,
+    /// Seconds before another threat alert may be shown (keeps them restrained).
+    pub alert_cooldown: f32,
     pub end_timer: Option<f32>,
     /// Number of actors that already have visuals (summons appear later).
     pub visuals_spawned: usize,
@@ -182,6 +186,8 @@ fn start_run(
         verbose_log: false,
         banner: None,
         error: None,
+        alert: None,
+        alert_cooldown: 0.0,
         end_timer: None,
         visuals_spawned: 0,
         wall_color: rgb(content.dungeon.theme.wall),
@@ -610,6 +616,13 @@ fn step_sim(time: Res<Time>, mut run: ResMut<ActiveRun>, demo: Option<Res<DemoCo
             run.error = None;
         }
     }
+    if let Some((_, t, _)) = run.alert.as_mut() {
+        *t -= dt;
+        if *t <= 0.0 {
+            run.alert = None;
+        }
+    }
+    run.alert_cooldown = (run.alert_cooldown - dt).max(0.0);
 }
 
 /// Turn new sim events into log lines, banners and error messages.
@@ -624,7 +637,17 @@ pub fn process_events(mut run: ResMut<ActiveRun>) {
     let events: Vec<_> = run.sim.events[start..end].to_vec();
     run.fresh = events.clone();
     for e in &events {
-        if e.is_notable() || run.verbose_log {
+        // The default log skips companions' failed casts and fully overhealed
+        // ticks; `L` (verbose) shows everything.
+        let noise = match &e.kind {
+            EventKind::CastFailed { src, .. } => Some(*src) != player,
+            EventKind::Heal { amount, .. } => *amount < 1.0,
+            EventKind::CastStart { src, .. } => {
+                Some(*src) != player && !run.sim.actors[*src].is_enemy()
+            }
+            _ => false,
+        };
+        if (e.is_notable() && !noise) || run.verbose_log {
             let line = run.sim.describe(e);
             run.log.push_back(line);
             while run.log.len() > LOG_LINES {
@@ -643,6 +666,38 @@ pub fn process_events(mut run: ResMut<ActiveRun>) {
                 if fresh {
                     run.error = Some((msg, ERROR_SECS));
                 }
+            }
+            // Threat alerts, from the player's point of view: a tank hears about
+            // any enemy turning on a non-tank, everyone else only about enemies
+            // turning on themselves. At most one alert every 2.5 s.
+            EventKind::TargetChange { enemy, target } => {
+                if let Some(p) = player
+                    && run.sim.actors[*enemy].is_engaged_enemy()
+                    && run.alert_cooldown <= 0.0
+                {
+                    let tank = run.sim.is_tank(p);
+                    let e = run.sim.actors[*enemy].name.clone();
+                    let msg = if tank && !run.sim.is_tank(*target) {
+                        let who = if *target == p {
+                            "you".to_string()
+                        } else {
+                            run.sim.actors[*target].name.clone()
+                        };
+                        Some(format!("Aggro lost: {e} is attacking {who} - taunt!"))
+                    } else if !tank && *target == p {
+                        Some(format!("{e} is attacking you!"))
+                    } else {
+                        None
+                    };
+                    if let Some(msg) = msg {
+                        run.alert = Some((msg, 2.5, Color::srgb(1.0, 0.55, 0.2)));
+                        run.alert_cooldown = 2.5;
+                    }
+                }
+            }
+            EventKind::Taunt { src, dst } if Some(*src) == player => {
+                let e = run.sim.actors[*dst].name.clone();
+                run.alert = Some((format!("Taunted {e}"), 1.5, Color::srgb(0.5, 1.0, 0.5)));
             }
             EventKind::Interrupt { src, dst, what } if Some(*src) == player => {
                 let name = run.sim.actors[*dst].name.clone();
