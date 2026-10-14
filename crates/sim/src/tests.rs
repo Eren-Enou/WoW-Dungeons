@@ -1166,12 +1166,13 @@ fn blackboard_assigns_one_interrupter_and_prioritises_healer_casters() {
 
 #[test]
 fn arcanist_hexes_an_extra_enemy_in_big_pulls() {
+    // The Weavers' Den: four sturdy enemies, worth controlling one.
     let mut sim = Sim::new(
-        &Content::builtin(),
-        &party_at_level(ClassId::Striker, 3, AiProfile::Balanced),
+        &Content::builtin_warrens(),
+        &party_at_level(ClassId::Striker, 5, AiProfile::Balanced),
         2,
     );
-    let enc = 2; // four skulkers
+    let enc = 0;
     let first = sim.encounters[enc].mobs[0];
     for p in sim.party.clone() {
         place_near(&mut sim, p, first, 6.0);
@@ -1181,6 +1182,21 @@ fn arcanist_hexes_an_extra_enemy_in_big_pulls() {
     steps(&mut sim, 4.0);
     assert!(sim.metrics.cc_applied >= 1);
     assert!(!AiProfile::Aggressive.params().use_cc);
+
+    // Short-lived enemies (600 HP skulkers) are not worth a Hex.
+    let mut sim = Sim::new(
+        &Content::builtin(),
+        &party_at_level(ClassId::Striker, 3, AiProfile::Balanced),
+        2,
+    );
+    let first = sim.encounters[2].mobs[0];
+    for p in sim.party.clone() {
+        place_near(&mut sim, p, first, 6.0);
+        make_immortal(&mut sim, p);
+    }
+    sim.engage(2, TANK);
+    steps(&mut sim, 4.0);
+    assert_eq!(sim.metrics.cc_applied, 0);
 }
 
 #[test]

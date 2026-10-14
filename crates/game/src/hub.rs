@@ -42,6 +42,7 @@ const HUB_RADIUS: f32 = 22.0;
 const PORTAL_POS: Vec3 = Vec3::new(0.0, 0.0, 16.0);
 const BOARD_POS: Vec3 = Vec3::new(-10.0, 0.0, 4.0);
 const STASH_PAGE: usize = 8;
+const VENDOR_PAGE: usize = 8;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Tab {
@@ -51,12 +52,14 @@ pub enum Tab {
     Classes,
     History,
     Sandbox,
+    Vendor,
 }
 
 impl Tab {
-    const ALL: [Tab; 6] = [
+    const ALL: [Tab; 7] = [
         Tab::Party,
         Tab::Character,
+        Tab::Vendor,
         Tab::Dungeons,
         Tab::Classes,
         Tab::History,
@@ -71,6 +74,7 @@ impl Tab {
             Tab::Classes => "Classes",
             Tab::History => "History",
             Tab::Sandbox => "Sandbox",
+            Tab::Vendor => "Vendor",
         }
     }
 }
@@ -81,6 +85,7 @@ pub struct HubUi {
     pub tab: Tab,
     pub wearer: Wearer,
     pub stash_page: usize,
+    pub vendor_page: usize,
     pub dirty: bool,
     pub companions_dirty: bool,
 }
@@ -92,6 +97,7 @@ impl Default for HubUi {
             tab: Tab::Party,
             wearer: Wearer::Player,
             stash_page: 0,
+            vendor_page: 0,
             dirty: true,
             companions_dirty: true,
         }
@@ -113,6 +119,9 @@ pub enum HubAction {
     SelectDungeon(String),
     SelectDifficulty(String),
     GroupSize(u32),
+    Buy(usize),
+    Salvage(usize),
+    VendorPage(i32),
     Reload,
     /// Change a sandbox knob by a factor (or reset with `Knob::Reset`).
     Sandbox(Knob, f32),
@@ -472,6 +481,38 @@ pub fn apply_action(action: HubAction, data: &mut GameData, ui: &mut HubUi) {
             }
         }
         HubAction::SelectDifficulty(id) => data.profile.selected_difficulty = id,
+        HubAction::Buy(i) => {
+            let stock = data.profile.vendor_stock(&data.library.dungeons);
+            match stock.get(i) {
+                Some((src, entry, price)) => match data.profile.buy(src, entry, *price) {
+                    Ok(item) => data.flash(format!(
+                        "Bought {} for {price} marks - equip it in the Character tab",
+                        item.name
+                    )),
+                    Err(e) => {
+                        data.flash(e);
+                        save = false;
+                    }
+                },
+                None => save = false,
+            }
+        }
+        HubAction::Salvage(i) => {
+            let name = data.profile.stash.get(i).map(|it| it.name.clone());
+            match data.profile.salvage(i) {
+                Ok(v) => data.flash(format!(
+                    "Salvaged {} for {v} marks",
+                    name.unwrap_or_default()
+                )),
+                Err(e) => data.flash(e),
+            }
+        }
+        HubAction::VendorPage(d) => {
+            let n = data.profile.vendor_stock(&data.library.dungeons).len();
+            let pages = n.div_ceil(VENDOR_PAGE).max(1) as i32;
+            ui.vendor_page = (ui.vendor_page as i32 + d).rem_euclid(pages) as usize;
+            save = false;
+        }
         HubAction::GroupSize(n) => {
             data.profile.set_group_size(n);
             data.flash(format!("Group size {n}: companions re-balanced"));
@@ -544,6 +585,7 @@ fn rebuild_panel(
             Tab::Classes => classes_tab(p),
             Tab::History => history_tab(p, &data),
             Tab::Sandbox => sandbox_tab(p, &data),
+            Tab::Vendor => vendor_tab(p, &data, ui),
         }
     });
 }
@@ -921,6 +963,89 @@ fn classes_tab(p: &mut ChildSpawnerCommands) {
     }
 }
 
+fn vendor_tab(p: &mut ChildSpawnerCommands, data: &GameData, ui: &HubUi) {
+    let pr = &data.profile;
+    label(
+        p,
+        format!(
+            "Quartermaster - you have {} Vault Marks. Stock grows with your level.",
+            pr.marks
+        ),
+        15.0,
+        Color::srgb(1.0, 0.9, 0.6),
+    );
+    let stock = pr.vendor_stock(&data.library.dungeons);
+    let pages = stock.len().div_ceil(VENDOR_PAGE).max(1);
+    let page = ui.vendor_page.min(pages - 1);
+    let role = pr.player_class.role();
+    row(p, |r| {
+        label(
+            r,
+            format!(
+                "For sale ({} items) page {}/{}",
+                stock.len(),
+                page + 1,
+                pages
+            ),
+            13.0,
+            Color::WHITE,
+        );
+        button(r, "<", HubAction::VendorPage(-1), false);
+        button(r, ">", HubAction::VendorPage(1), false);
+    });
+    for (i, (src, entry, price)) in stock
+        .iter()
+        .enumerate()
+        .skip(page * VENDOR_PAGE)
+        .take(VENDOR_PAGE)
+    {
+        let affordable = pr.marks >= *price;
+        row(p, |r| {
+            button(r, format!("Buy {price}"), HubAction::Buy(i), affordable);
+            label(
+                r,
+                format!(
+                    "[{}] {} ({}, {}) {} - {src}",
+                    entry.rarity.label(),
+                    entry.name,
+                    entry.slot.label(),
+                    entry.role.label(),
+                    entry.stats.describe()
+                ),
+                12.0,
+                if entry.role.suits(role) {
+                    rarity_color(entry.rarity)
+                } else {
+                    rarity_color(entry.rarity).mix(&Color::srgb(0.4, 0.4, 0.4), 0.5)
+                },
+            );
+        });
+    }
+    label(
+        p,
+        "Salvage stash items for marks",
+        14.0,
+        Color::srgb(1.0, 0.9, 0.6),
+    );
+    if pr.stash.is_empty() {
+        label(p, "Stash is empty.", 12.0, Color::srgb(0.6, 0.6, 0.6));
+    }
+    for (i, item) in pr.stash.iter().enumerate().take(8) {
+        row(p, |r| {
+            button(
+                r,
+                format!(
+                    "Salvage +{}",
+                    dungeon_sim::profile::Profile::salvage_value(item)
+                ),
+                HubAction::Salvage(i),
+                false,
+            );
+            label(r, item.describe(), 12.0, rarity_color(item.rarity));
+        });
+    }
+}
+
 fn sandbox_tab(p: &mut ChildSpawnerCommands, data: &GameData) {
     let o = data.profile.sandbox;
     label(
@@ -1093,6 +1218,7 @@ fn hub_keys(keys: Res<ButtonInput<KeyCode>>, mut data: ResMut<GameData>, mut ui:
         KeyCode::Digit4,
         KeyCode::Digit5,
         KeyCode::Digit6,
+        KeyCode::Digit7,
     ]
     .into_iter()
     .enumerate()
@@ -1216,7 +1342,7 @@ fn update_hub_text(
                 }
                 s.push_str(
                     "WASD move | RMB-drag / arrows: camera | wheel: zoom\n\
-                     Panel: click buttons, or 1-6 switch tabs, P hide\n\
+                     Panel: click buttons, or 1-7 switch tabs, P hide\n\
                      F5: reload content files",
                 );
                 if !p.sandbox.is_default() {

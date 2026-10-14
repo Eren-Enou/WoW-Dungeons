@@ -360,10 +360,13 @@ pub fn compute_blackboard(sim: &Sim) -> Blackboard {
             .copied()
             .filter(|&e| {
                 let a = sim.actor(e);
-                !a.enemy.as_ref().is_some_and(|es| es.cc_immune)
+                !a.enemy
+                    .as_ref()
+                    .is_some_and(|es| es.cc_immune || es.summoned)
                     && Some(e) != b.kill_target
                     && Some(e) != tank_target
                     && a.hp_frac() > 0.6
+                    && a.max_hp >= 1000.0
             })
             .collect();
         if b.engaged.len() >= 3 {

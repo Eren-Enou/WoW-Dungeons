@@ -8,20 +8,18 @@ details and evidence live in PROGRESS.md.
 1. **Human playtest pass** (needs a person): play both dungeons with each class,
    note control/camera friction, readability of telegraphs, difficulty for a human
    player slot. Adjust numbers in the TOML files accordingly.
-2. **In-game encounter editor (Phase F, optional)**: a hub tab with sliders for HP /
-   damage multipliers and boss ability intervals, writing a variant TOML file.
-   Today the TOML workflow + F5 reload is the supported path.
+2. **Encounter editor, part 2**: the Sandbox tab covers global knobs; a per-ability
+   editor that writes a variant TOML file would cover the rest. Today: TOML + F5.
 3. **Raid content**: a purpose-built 10-player encounter (today raids reuse the
    dungeons on the "Raid (10)" difficulty); 25-player graphical groups.
 4. **AI**: path planning around frontal cones (members still clip cones ~3–4
    times per Warrens run while moving); smarter CC target choice (don't Hex
    short-lived adds).
-5. **Vendor / economy**: spend Vault Marks on items; salvage duplicates.
-7. **Performance**: cache `engaged_enemies()` per tick and avoid per-call Vec
-   allocations in the AI (current cost ~0.012 ms/tick at 25 characters — fine, but
-   the obvious next win).
-8. **Hub polish**: stash scrolling instead of pages, sell/salvage items for marks,
-   a marks vendor.
+5. **Vendor / economy**: spend Vault Marks on items; salvage unwanted items.
+6. **Performance**: cache `engaged_enemies()` per tick and avoid per-call Vec
+   allocations in the AI (~0.012 ms/tick at 25 characters — fine, but the
+   obvious next win).
+7. **Hub polish**: stash scrolling instead of pages.
 
 ## Done
 

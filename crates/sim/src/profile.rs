@@ -780,6 +780,95 @@ impl Profile {
         })
     }
 
+    /// [orig] Vault Mark price of an item: by rarity, plus its role-neutral stat score.
+    pub fn item_price(rarity: Rarity, stats: &ItemStats) -> u32 {
+        let base = match rarity {
+            Rarity::Common => 6.0,
+            Rarity::Uncommon => 12.0,
+            Rarity::Rare => 25.0,
+            Rarity::Epic => 50.0,
+        };
+        let score = stats.stamina
+            + stats.power * 1.5
+            + stats.armor * 0.02
+            + stats.resist * 0.2
+            + (stats.crit + stats.hit + stats.dodge) * 3.0;
+        (base + score * 0.4).round() as u32
+    }
+
+    /// Marks returned when salvaging an item (a third of its price, at least 1).
+    pub fn salvage_value(item: &Item) -> u32 {
+        (Profile::item_price(item.rarity, &item.stats) / 3).max(1)
+    }
+
+    /// Items the quartermaster sells: Common and Uncommon loot from every dungeon
+    /// whose recommended level is at most one above the player's, plus Rare
+    /// items once the player reaches that dungeon's level + 2.
+    pub fn vendor_stock<'a>(
+        &self,
+        dungeons: impl IntoIterator<Item = &'a Content>,
+    ) -> Vec<(String, crate::content::LootEntry, u32)> {
+        let mut stock = Vec::new();
+        for d in dungeons {
+            let rec = d.dungeon.recommended_level;
+            if rec > self.player_level + 1 {
+                continue;
+            }
+            for l in &d.loot {
+                let allowed = match l.rarity {
+                    Rarity::Common | Rarity::Uncommon => true,
+                    Rarity::Rare => self.player_level >= rec + 2,
+                    Rarity::Epic => false,
+                };
+                if allowed {
+                    let price = Profile::item_price(l.rarity, &l.stats);
+                    stock.push((d.dungeon.name.clone(), l.clone(), price));
+                }
+            }
+        }
+        stock
+    }
+
+    /// Buy a vendor item into the stash.
+    pub fn buy(
+        &mut self,
+        source: &str,
+        entry: &crate::content::LootEntry,
+        price: u32,
+    ) -> Result<Item, String> {
+        if self.marks < price {
+            return Err(format!(
+                "Not enough Vault Marks ({} of {price})",
+                self.marks
+            ));
+        }
+        self.marks -= price;
+        let item = Item {
+            uid: self.next_item_uid,
+            base_id: entry.id.clone(),
+            name: entry.name.clone(),
+            slot: entry.slot,
+            rarity: entry.rarity,
+            role: entry.role,
+            stats: entry.stats,
+            source: format!("{source} (vendor)"),
+        };
+        self.next_item_uid += 1;
+        self.stash.push(item.clone());
+        Ok(item)
+    }
+
+    /// Salvage a stash item for marks.
+    pub fn salvage(&mut self, stash_index: usize) -> Result<u32, String> {
+        if stash_index >= self.stash.len() {
+            return Err("no such item in stash".into());
+        }
+        let item = self.stash.remove(stash_index);
+        let value = Profile::salvage_value(&item);
+        self.marks += value;
+        Ok(value)
+    }
+
     pub fn default_path() -> PathBuf {
         let dir = std::env::var(SAVE_DIR_ENV_VAR).unwrap_or_else(|_| "saves".to_string());
         PathBuf::from(dir).join("profile.json")
@@ -1103,6 +1192,37 @@ mod tests {
         );
         assert_eq!(p.stash[0].slot, ItemSlot::Chest);
         assert_eq!(p.roster[0].level, 1);
+    }
+
+    #[test]
+    fn vendor_sells_unlocked_items_and_salvage_refunds_a_third() {
+        let vault = Content::builtin();
+        let warrens = Content::builtin_warrens();
+        let mut p = Profile::new_default();
+        // Level 1: only the Vault's common/uncommon items are for sale.
+        let stock = p.vendor_stock([&vault, &warrens]);
+        assert!(!stock.is_empty());
+        assert!(stock.iter().all(|(src, l, _)| src == "The Sunken Vault"
+            && matches!(l.rarity, Rarity::Common | Rarity::Uncommon)));
+        p.player_level = 5;
+        let stock = p.vendor_stock([&vault, &warrens]);
+        assert!(
+            stock
+                .iter()
+                .any(|(src, _, _)| src == "The Gloomroot Warrens")
+        );
+        assert!(stock.iter().all(|(_, l, _)| l.rarity != Rarity::Epic));
+        let (src, entry, price) = stock[0].clone();
+        assert!(p.buy(&src, &entry, price).is_err(), "no marks yet");
+        p.marks = price + 5;
+        let item = p.buy(&src, &entry, price).unwrap();
+        assert_eq!(p.marks, 5);
+        assert!(p.stash.contains(&item));
+        let idx = p.stash.iter().position(|i| *i == item).unwrap();
+        let back = p.salvage(idx).unwrap();
+        assert_eq!(back, (price / 3).max(1));
+        assert_eq!(p.marks, 5 + back);
+        assert!(p.stash.is_empty());
     }
 
     #[test]
