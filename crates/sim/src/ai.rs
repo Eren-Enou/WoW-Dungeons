@@ -712,7 +712,7 @@ fn autopilot(sim: &Sim, id: ActorId) -> Decision {
     }) && sim.alive_party().count() == sim.party.len();
     let gathered = sim
         .alive_party()
-        .all(|q| sim.actor(q).pos.dist(me.pos) <= 12.0);
+        .all(|q| sim.actor(q).pos.dist(me.pos) <= 12.0 + 0.6 * sim.party.len() as f32);
     if !ready || !gathered {
         return d;
     }
