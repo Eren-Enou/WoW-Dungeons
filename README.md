@@ -148,8 +148,10 @@ cargo run -- --demo --dungeon gloomroot_warrens --level 6 --speed 4 --screenshot
   enemy selected (mouseover heal), then clicks another frame →
   `logs/frame_test.txt`; `--tooltip-test` hovers a stat and a vendor item →
   `logs/tooltip_test.txt`.
-* `--class warden|mender|striker|arcanist` and `--group 10` pick the player
-  class and group size for `--demo`.
+* `--class warden|mender|striker|arcanist`, `--group 10` and `--profile
+  aggressive|conservative|balanced|support|mechanic` pick the player class, group
+  size and every companion's AI profile for `--demo`. Threat alerts are also
+  written to the log ("threat alert at ...").
 
 Manual playtest scenarios for 0.3: [PLAYTEST_0_3.md](PLAYTEST_0_3.md).
 

@@ -804,7 +804,7 @@ fn threat_lines(sim: &Sim, enemy: ActorId, viewer: ActorId) -> (String, String, 
             ),
             TankThreat::Lost => (
                 format!(
-                    "AGGRO LOST - attacking {}! Taunt it back",
+                    "AGGRO LOST - on {}! Taunt",
                     v.attacking.map(name).unwrap_or_default()
                 ),
                 RED_TEXT,

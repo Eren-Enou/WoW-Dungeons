@@ -12,8 +12,8 @@ details and evidence live in PROGRESS.md.
 2. **UI follow-ups from 0.3**: per-aura icons/chips with their own tooltips;
    more than one debuff on compact raid frames; key rebinding; a settings panel
    for follow speed and mouse sensitivity (stored in `profile.settings`).
-3. **Threat alerts**: capture an aggro-loss alert in an automated run (a demo
-   with an Aggressive party) to prove the path end-to-end.
+3. **Threat alerts**: decide with playtesters whether 2.5 s between alerts is
+   right and whether non-tanks also want "your healer is being attacked".
 4. **Editor, part 3**: add/remove abilities and phases, edit aura values and mob
    placement in-game (today: tuning existing numbers in the Editor tab; structure
    via TOML + F5).

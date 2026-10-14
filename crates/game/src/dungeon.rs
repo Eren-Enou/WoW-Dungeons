@@ -690,6 +690,7 @@ pub fn process_events(mut run: ResMut<ActiveRun>) {
                         None
                     };
                     if let Some(msg) = msg {
+                        info!("threat alert at {:.1}s: {msg}", run.sim.time);
                         run.alert = Some((msg, 2.5, Color::srgb(1.0, 0.55, 0.2)));
                         run.alert_cooldown = 2.5;
                     }
@@ -697,6 +698,7 @@ pub fn process_events(mut run: ResMut<ActiveRun>) {
             }
             EventKind::Taunt { src, dst } if Some(*src) == player => {
                 let e = run.sim.actors[*dst].name.clone();
+                info!("threat alert at {:.1}s: Taunted {e}", run.sim.time);
                 run.alert = Some((format!("Taunted {e}"), 1.5, Color::srgb(0.5, 1.0, 0.5)));
             }
             EventKind::Interrupt { src, dst, what } if Some(*src) == player => {

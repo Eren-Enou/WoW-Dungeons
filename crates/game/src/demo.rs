@@ -43,6 +43,8 @@ pub struct DemoConfig {
     pub group: Option<u32>,
     /// Player class for demo runs (`--class warden`).
     pub class: Option<String>,
+    /// AI profile for every companion in demo runs (`--profile aggressive`).
+    pub profile: Option<String>,
 }
 
 #[derive(Resource, Default)]
@@ -82,6 +84,7 @@ pub fn parse_args() -> DemoConfig {
         level: value("--level").map(|l| l as u32),
         group: value("--group").map(|g| g as u32),
         class: text("--class"),
+        profile: text("--profile"),
     }
 }
 
@@ -156,6 +159,11 @@ fn demo_driver(
             {
                 data.profile.player_class = c;
                 data.profile.auto_fill_party();
+            }
+            if let Some(p) = cfg.profile.as_deref().and_then(dungeon_sim::AiProfile::parse) {
+                for c in data.profile.roster.iter_mut() {
+                    c.profile = p;
+                }
             }
             if cfg.frame_test {
                 data.profile.player_class = dungeon_sim::class::ClassId::Mender;

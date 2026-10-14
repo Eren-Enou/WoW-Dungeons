@@ -62,14 +62,18 @@ mouseover + Phase B action bar + resource readout), f49f356 (Phase C threat),
   energy - X s" in blue during the GCD; this was a bug found in the screenshots
   and fixed in 45efc02), Mender (Smite red "Out of range", Purify "nothing to
   dispel").
+- Threat alerts end-to-end: `--demo --class warden --profile aggressive
+  --dungeon gloomroot_warrens --level 4` logged "Aggro lost: Rootweaver Shaman
+  is attacking Mirelle - taunt!" at 5.9 s, "Taunted Rootweaver Shaman" at
+  11.2 s, and a second loss at 152.6 s (2 aggro-loss alerts in a 173 s run with
+  the Aggressive party); a screenshot shows the orange alert, the red
+  "AGGRO LOST" target-frame line and the red plate.
 
 ### Not verified in 0.3 (needs a human)
 - How the controls and auto-follow *feel* with a real mouse (drag thresholds,
   turn rate, follow speed 3.0, 1.2 s grace).
 - Readability of threat colours in big packs, alert frequency, tooltip delay
   (0.2 s), frame sizes for healers in raids.
-- The aggro-loss alert and taunt confirmation were exercised only through the
-  logic paths (threat_view tests); no screenshot captured an alert.
 - Right-drag started over a HUD panel still steers (only left-drag, clicks and
   zoom are blocked over UI) — intentional, but untested by a person.
 

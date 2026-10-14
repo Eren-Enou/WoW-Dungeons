@@ -84,7 +84,8 @@ classes or balance changes; saves stay compatible (new settings default in).
 
 ### Developer flags
 - `--frame-test` (hover a party frame, press 1 as a Mender with an enemy
-  selected, click another frame), `--tooltip-test`, `--class NAME` for demo runs.
+  selected, click another frame), `--tooltip-test`, and `--class NAME` /
+  `--profile NAME` for demo runs.
 
 ## 0.2
 
