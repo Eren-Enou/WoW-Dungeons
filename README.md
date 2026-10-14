@@ -107,6 +107,9 @@ cargo run -- --demo --speed 4 --screenshots 2.5 --smoke-test 60
 * `--speed X` speeds up the simulation (demo only).
 * `--screenshots S` saves `screenshots/shot_NNN.png` every S seconds.
 * `--smoke-test N` exits after N seconds.
+* `--input-test` enters the dungeon and feeds a scripted key sequence (A, W,
+  Tab, 1/2/3) through the real input systems, then writes `logs/input_test.txt`
+  and exits.
 
 Tip: set `DUNGEON_SAVE_DIR` to a temp folder for demo runs so they don't touch
 your real profile.

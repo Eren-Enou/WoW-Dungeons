@@ -370,7 +370,7 @@ fn spawn_actors(
     }
 }
 
-fn player_input(
+pub fn player_input(
     keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
     orbit: Res<OrbitCamera>,

@@ -68,6 +68,10 @@ everything enemy-side is in `assets/content/dungeon.toml`.
   mobs heal to full, clear threat/auras/casts, become immune (evading) and walk
   home at 1.5× speed, then return to idle. Dead mobs stay dead. The boss also
   resets to phase 1, its timers restart and its telegraphs vanish.
+* **Rally** (design shortcut instead of resurrection): once no living party
+  member has been in combat for 8 s and no enemy is engaged, fallen members get
+  back up next to the leader (or any living member) with 40% HP and mana and
+  cooldowns reset. A full wipe is final.
 * Run outcome: **Victory** when the boss encounter is cleared; **Wipe** when no
   party member is alive; **Timeout** (headless limit) or **Abandoned** (player
   left).

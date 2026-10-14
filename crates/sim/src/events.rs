@@ -91,6 +91,10 @@ pub enum EventKind {
     Death {
         actor: ActorId,
     },
+    /// A fallen party member rallied after combat.
+    Revive {
+        actor: ActorId,
+    },
     PhaseChange {
         boss: ActorId,
         phase: u8,
@@ -199,6 +203,7 @@ pub fn describe(sim: &Sim, e: &Event) -> String {
         }
         EventKind::Evade { enemy } => format!("{} evades (resetting)", n(*enemy)),
         EventKind::Death { actor } => format!("{} dies", n(*actor)),
+        EventKind::Revive { actor } => format!("{} rallies and rejoins the party", n(*actor)),
         EventKind::PhaseChange { boss, phase } => format!(
             "{} enters phase {phase}! The ground begins to smoulder...",
             n(*boss)

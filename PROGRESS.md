@@ -12,7 +12,7 @@ Environment used for verification: Windows 11 Pro, Rust 1.99.0, Bevy 0.20.0
 ### Checks (latest run, 2026-10-14)
 - `cargo fmt --all -- --check` — clean.
 - `cargo check --workspace` — clean.
-- `cargo test --workspace` — **47 passed, 0 failed** (all in `dungeon_sim`).
+- `cargo test --workspace` — **49 passed, 0 failed** (all in `dungeon_sim`).
 - `cargo clippy --workspace --all-targets -- -D warnings` — clean.
 
 ### M0 — Bootstrap
@@ -49,8 +49,12 @@ Environment used for verification: Windows 11 Pro, Rust 1.99.0, Bevy 0.20.0
 - Invalid config: headless exits 1 listing every problem with its field path (bad multiplier, telegraph ≥ interval, unknown template with list of known ones); typo'd field names rejected with line/column and expected names. In-game, the hub shows the same message and the portal refuses entry (screenshot). Unit tests for these cases.
 - Seeded batch runner prints per-run and summary metrics and verifies determinism by replaying the first seed (exit code 3 on mismatch); test `headless_runs_are_reproducible_for_a_seed`.
 
+### Post-M5 additions
+- **Real input path (acceptance B):** `cargo run -- --input-test` injects key presses into Bevy's `ButtonInput<KeyCode>` resource and drives the game's own input systems: strafe (A), walk (W), Tab, then 1/2/3. Observed report: player moved 33.7 m through the corridor into the first room, Tab acquired a Gloomfang Skulker, 3 abilities landed (Rend Strike, Whirl, Evade; 430–458 damage), the pack died; later presses correctly failed with "not ready"/"no target". Screenshot confirmed the scene. Limitation: synthetic presses at the `ButtonInput` level, not OS keyboard events.
+- **Rally rule:** fallen party members get back up (40% HP/mana) after the whole party has been out of combat for 8 s, so a dead player/leader cannot soft-lock the run. A full wipe stays final. Tests `fallen_members_rally_after_combat_but_not_during_it`, `wipe_is_final_no_rally`.
+
 ## Not verified / requires human playtesting
-- **Manual play feel**: WASD + camera, Tab/click targeting, ability use and dodging rings were exercised only through the sim's player-input API (test `player_of_every_class_can_move_target_and_use_three_abilities`) and the AI-driven `--demo`. A human has not yet played a run with keyboard and mouse.
+- **Manual play feel**: a human has not yet played a run with a real keyboard and mouse. Movement/targeting/abilities were exercised via the sim API (test `player_of_every_class_can_move_target_and_use_three_abilities`), via synthetic `ButtonInput` presses (`--input-test`), and via the AI-driven `--demo`. Dodging rings by hand is untested.
 - Mouse-click picking (ray vs. sphere) is untested in a live session.
 - Difficulty for a human player is untuned; the AI party wins 100% on default content.
 - Healer player experience (F1–F5 targeting) not playtested.
@@ -81,7 +85,6 @@ Environment used for verification: Windows 11 Pro, Rust 1.99.0, Bevy 0.20.0
 ## Next actions (beyond M5)
 - Human playtest pass; tune boss numbers for a human-controlled slot.
 - Camera collision with walls; name plates; floating combat text.
-- Out-of-combat resurrection so a single death doesn't persist for the whole run.
 - Optional: study AzerothCore/Playerbots behaviour and log it in RESEARCH.md.
 
 ## Blockers

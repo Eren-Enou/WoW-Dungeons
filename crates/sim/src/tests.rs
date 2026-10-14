@@ -692,7 +692,10 @@ fn player_of_every_class_can_move_target_and_use_three_abilities() {
         sim.set_player_move(V2::new(0.0, 1.0));
         steps(&mut sim, 2.0);
         sim.set_player_move(V2::ZERO);
-        assert!(sim.actors[p].pos.z > start.z + 6.0, "{class:?} did not move");
+        assert!(
+            sim.actors[p].pos.z > start.z + 6.0,
+            "{class:?} did not move"
+        );
 
         // Target a skulker, stand next to it and press 1, 2, 3 with time in between.
         let mob = first_skulker(&sim);
@@ -714,4 +717,44 @@ fn player_of_every_class_can_move_target_and_use_three_abilities() {
         assert!(failures.is_empty(), "{class:?}: {failures:?}");
         assert_eq!(sim.metrics.actors[p].casts - before, 3, "{class:?} casts");
     }
+}
+
+#[test]
+fn fallen_members_rally_after_combat_but_not_during_it() {
+    let mut sim = passive_sim();
+    sim.kill(MELEE);
+    // During combat: no rally.
+    let mob = first_skulker(&sim);
+    place_near(&mut sim, TANK, mob, 1.0);
+    sim.engage(0, TANK);
+    sim.actors[TANK].max_hp = 1e9;
+    sim.actors[TANK].hp = 1e9;
+    steps(&mut sim, 12.0);
+    assert!(
+        !sim.actors[MELEE].alive,
+        "no rally while enemies are engaged"
+    );
+    // Finish the pack; after the calm period the member gets back up.
+    for m in sim.encounters[0].mobs.clone() {
+        sim.kill(m);
+    }
+    steps(&mut sim, crate::sim::RALLY_DELAY + 1.0);
+    let a = &sim.actors[MELEE];
+    assert!(a.alive);
+    assert!(
+        a.hp > 0.0,
+        "rallied with health (then regenerates out of combat)"
+    );
+    assert_eq!(count(&sim, |k| matches!(k, EventKind::Revive { .. })), 1);
+}
+
+#[test]
+fn wipe_is_final_no_rally() {
+    let mut sim = passive_sim();
+    for p in sim.party.clone() {
+        sim.kill(p);
+    }
+    steps(&mut sim, 20.0);
+    assert_eq!(sim.outcome, RunOutcome::Wipe);
+    assert!(sim.alive_party().next().is_none());
 }

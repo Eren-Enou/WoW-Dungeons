@@ -26,6 +26,10 @@ pub const SWITCH_RANGED: f32 = 1.3;
 pub const CRIT_CHANCE: f32 = 0.05;
 pub const CRIT_MULT: f32 = 1.5;
 pub const PARTY_RADIUS: f32 = 0.5;
+/// Seconds the whole party must be out of combat before fallen members rally.
+pub const RALLY_DELAY: f32 = 8.0;
+/// Fraction of HP and mana fallen members rally with.
+pub const RALLY_FRACTION: f32 = 0.4;
 
 pub type ActorId = usize;
 
@@ -608,6 +612,7 @@ impl Sim {
         self.regen();
         self.check_resets();
         self.check_progress();
+        self.rally_fallen();
     }
 
     /// Step until the outcome is decided or `max_seconds` of sim time pass.
@@ -1588,6 +1593,47 @@ impl Sim {
             self.telegraphs.retain(|t| t.source != m);
         }
         self.emit(EventKind::EncounterReset { encounter: enc });
+    }
+
+    /// Design shortcut instead of resurrection spells: once nobody living has been
+    /// in combat for `RALLY_DELAY` seconds and no enemy is engaged, fallen party
+    /// members get back up next to a living ally at `RALLY_FRACTION` HP and mana.
+    fn rally_fallen(&mut self) {
+        if self.outcome != RunOutcome::InProgress {
+            return;
+        }
+        let living: Vec<ActorId> = self.alive_party().collect();
+        let Some(&anchor) = living
+            .iter()
+            .find(|&&p| p == self.leader)
+            .or(living.first())
+        else {
+            return;
+        };
+        let calm = living
+            .iter()
+            .all(|&p| self.time - self.actors[p].last_combat >= RALLY_DELAY)
+            && self.engaged_enemies().is_empty();
+        if !calm {
+            return;
+        }
+        let anchor_pos = self.actors[anchor].pos;
+        for p in self.party.clone() {
+            if self.actors[p].alive {
+                continue;
+            }
+            let offset = V2::from_heading(p as f32 * 1.3) * 1.5;
+            let pos = self.nav.project(anchor_pos + offset);
+            let a = &mut self.actors[p];
+            a.alive = true;
+            a.hp = (a.max_hp * RALLY_FRACTION).round();
+            a.mana = a.max_mana * RALLY_FRACTION;
+            a.pos = pos;
+            a.cooldowns.iter_mut().for_each(|c| *c = 0.0);
+            a.gcd = 0.0;
+            a.swing_timer = 0.0;
+            self.emit(EventKind::Revive { actor: p });
+        }
     }
 
     fn check_progress(&mut self) {
