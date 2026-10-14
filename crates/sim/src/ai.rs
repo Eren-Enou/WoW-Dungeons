@@ -24,6 +24,8 @@ const FORMATION: [(f32, f32); 8] = [
     (5.0, -4.5),
     (0.0, -8.0),
 ];
+/// Seconds after a pull during which healers avoid non-urgent heals.
+const PULL_GRACE: f32 = 4.0;
 /// Ranged members stand roughly this far from their enemy.
 const RANGED_DISTANCE: f32 = 18.0;
 
@@ -201,6 +203,8 @@ pub struct Blackboard {
     pub dangers: Vec<Danger>,
     /// Engaged enemies with a frontal cleave.
     pub frontal: Vec<ActorId>,
+    /// Seconds since the most recent pull (large when out of combat).
+    pub since_pull: f32,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -245,6 +249,16 @@ pub fn compute_blackboard(sim: &Sim) -> Blackboard {
         }
     }
     b.healer_needs_mana = b.healers.iter().any(|&h| sim.actor(h).mana_frac() < 0.5);
+    b.since_pull = b
+        .engaged
+        .iter()
+        .filter_map(|&e| {
+            sim.actor(e)
+                .enemy
+                .as_ref()
+                .map(|es| sim.time - es.pull_time)
+        })
+        .fold(f32::INFINITY, f32::min);
     let tank = b.tanks.first().copied();
     let tank_target = tank.and_then(|t| sim.actor(t).target);
 
@@ -483,10 +497,56 @@ pub fn escape_point(sim: &Sim, id: ActorId) -> Option<V2> {
     best
 }
 
+/// Reach of an enemy's frontal cleave (0 if it has none).
+fn frontal_reach(sim: &Sim, e: ActorId) -> f32 {
+    sim.actor(e)
+        .enemy
+        .as_ref()
+        .map(|es| {
+            es.abilities
+                .iter()
+                .filter(|a| a.cfg.kind == AbilityKind::Cleave && a.cfg.frontal)
+                .map(|a| a.cfg.radius)
+                .fold(0.0, f32::max)
+        })
+        .unwrap_or(0.0)
+}
+
+/// Whether point `p` is inside the frontal cleave cone of any engaged enemy.
+fn in_frontal_cone(sim: &Sim, id: ActorId, p: V2, margin: f32) -> bool {
+    let me = sim.actor(id);
+    sim.board.frontal.iter().any(|&e| {
+        let a = sim.actor(e);
+        let reach = frontal_reach(sim, e) + a.radius + me.radius + margin;
+        p.dist(a.pos) <= reach && crate::stats::is_in_front(a.pos, a.facing, p)
+    })
+}
+
 /// Keep a desired position out of danger zones by nudging it outward.
 fn safe_spot(sim: &Sim, id: ActorId, want: V2) -> V2 {
     let me = sim.actor(id);
     let margin = me.profile.params().danger_margin;
+    let want = if !sim.is_tank(id) && in_frontal_cone(sim, id, want, margin) {
+        // Swing the spot around to the back of the cleaving enemy.
+        let e = sim
+            .board
+            .frontal
+            .iter()
+            .copied()
+            .min_by(|&a, &b| {
+                sim.actor(a)
+                    .pos
+                    .dist(want)
+                    .total_cmp(&sim.actor(b).pos.dist(want))
+            })
+            .expect("in a cone implies a frontal enemy");
+        let a = sim.actor(e);
+        let back = V2::from_heading(a.facing + std::f32::consts::PI);
+        let dist = want.dist(a.pos).max(a.radius + me.radius + 1.0);
+        sim.nav.project(a.pos + back * dist)
+    } else {
+        want
+    };
     if point_safe(sim, want, me.radius, margin) {
         return want;
     }
@@ -520,6 +580,18 @@ pub fn party_decision(sim: &Sim, id: ActorId) -> Decision {
     if sim.board.engaged.is_empty() {
         return out_of_combat(sim, id);
     }
+    let params = me.profile.params();
+    if !sim.is_tank(id) && in_frontal_cone(sim, id, me.pos, params.danger_margin * 0.5) {
+        let goal = safe_spot(sim, id, me.pos);
+        if goal.dist(me.pos) > 0.2 {
+            return Decision {
+                move_goal: Some(goal),
+                auto_attack: me.auto_attack,
+                target: None,
+                ..Default::default()
+            };
+        }
+    }
     // Assigned interrupt takes priority over everything but dodging.
     if let Some(&(enemy, _)) = sim.board.interrupts.iter().find(|(_, p)| *p == id)
         && let Some(ab) = interrupt_ability(sim, id)
@@ -538,7 +610,7 @@ pub fn party_decision(sim: &Sim, id: ActorId) -> Decision {
         } else if me.cast.is_none() && !sim.reach(id, enemy, ab.def().range) {
             let mut d = Decision {
                 target: Some(Some(enemy)),
-                move_goal: Some(sim.actor(enemy).pos),
+                move_goal: Some(safe_spot(sim, id, sim.actor(enemy).pos)),
                 auto_attack: true,
                 ..Default::default()
             };
@@ -681,16 +753,7 @@ fn rank_weight(sim: &Sim, e: ActorId) -> f32 {
 fn behind_spot(sim: &Sim, id: ActorId, target: ActorId) -> V2 {
     let t = sim.actor(target);
     let me = sim.actor(id);
-    let anchor = sim
-        .board
-        .tanks
-        .first()
-        .map(|&k| sim.actor(k).pos)
-        .unwrap_or(me.pos);
-    let mut behind = (t.pos - anchor).normalize_or_zero();
-    if behind.len_sq() == 0.0 {
-        behind = V2::from_heading(t.facing + std::f32::consts::PI);
-    }
+    let behind = V2::from_heading(t.facing + std::f32::consts::PI);
     let side = if id.is_multiple_of(2) { 0.35 } else { -0.35 };
     sim.nav
         .project(t.pos + behind.rotate(side) * (t.radius + me.radius + 1.0))
@@ -782,11 +845,25 @@ fn tank(sim: &Sim, id: ActorId) -> Decision {
             .count();
         let wants_defensive =
             me.hp_frac() < p.defensive_hp || sim.board.pulse_incoming || stacks >= 4;
+        let loose_near = loose
+            .iter()
+            .filter(|&&e| sim.actor(e).pos.dist(me.pos) <= 8.0 + sim.actor(e).radius)
+            .count();
+        let cc_near_now = sim
+            .board
+            .engaged
+            .iter()
+            .any(|&e| sim.actor(e).is_incapacitated() && sim.actor(e).pos.dist(me.pos) <= 9.0);
         d.cast = if wants_defensive {
             usable(sim, id, AbilityId::Bulwark, id)
         } else {
             None
         }
+        .or_else(|| {
+            (loose_near >= 1 && near >= 2 && !cc_near_now)
+                .then(|| usable(sim, id, AbilityId::QuakeStomp, id))
+                .flatten()
+        })
         .or_else(|| {
             // Quake on packs, but never next to a crowd-controlled enemy.
             let cc_near =
@@ -884,6 +961,8 @@ fn healer(sim: &Sim, id: ActorId) -> Decision {
         }
     }
     let mend_threshold = if mana < 0.2 { 0.35 } else { p.mend_threshold };
+    // Let the tank build threat before generating healing threat with top-ups.
+    let fresh_pull = sim.board.since_pull < PULL_GRACE;
     let mut out_of_range_patient = None;
     if d.cast.is_none() {
         for &q in &allies {
@@ -904,8 +983,12 @@ fn healer(sim: &Sim, id: ActorId) -> Decision {
     if d.cast.is_none() && mana > 0.25 {
         for &q in &allies {
             let a = sim.actor(q);
-            let wants_hot = a.hp_frac() < p.hot_threshold
-                || (Some(q) == tank && a.hp_frac() < 0.97 && mana > 0.5);
+            let wants_hot = if fresh_pull {
+                a.hp_frac() < 0.6
+            } else {
+                a.hp_frac() < p.hot_threshold
+                    || (Some(q) == tank && a.hp_frac() < 0.97 && mana > 0.5)
+            };
             if wants_hot
                 && !a.has_hot_from(id)
                 && let Some(c) = usable(sim, id, AbilityId::Renew, q)
@@ -916,6 +999,7 @@ fn healer(sim: &Sim, id: ActorId) -> Decision {
         }
     }
     if d.cast.is_none()
+        && !fresh_pull
         && mana > p.smite_mana
         && let Some(t) = sim.board.kill_target
         && tank.is_none_or(|k| sim.threat(t, k) > 300.0)
@@ -946,14 +1030,24 @@ fn ranged_spot(sim: &Sim, id: ActorId, dist: f32) -> Option<V2> {
         .and_then(|t| sim.actor(t).target)
         .filter(|e| sim.board.engaged.contains(e))
         .or_else(|| sim.board.engaged.first().copied())?;
-    let epos = sim.actor(enemy).pos;
+    let e = sim.actor(enemy);
+    let epos = e.pos;
+    // Spread ranged members around an arc so one ring can't catch everyone.
+    let side = ((id % 5) as f32 - 2.0) * 0.3;
+    if sim.board.frontal.contains(&enemy) {
+        // Frontal cleavers: stand behind-and-to-the-side, never in front.
+        let back = V2::from_heading(e.facing + std::f32::consts::PI);
+        let flank = if id.is_multiple_of(2) { 0.9 } else { -0.9 };
+        return Some(
+            sim.nav
+                .project(epos + back.rotate(flank + side * 0.3) * dist),
+        );
+    }
     let anchor = tank.map(|t| sim.actor(t).pos).unwrap_or(sim.actor(id).pos);
     let mut dir = (anchor - epos).normalize_or_zero();
     if dir.len_sq() == 0.0 {
         dir = (sim.actor(id).pos - epos).normalize_or_zero();
     }
-    // Spread ranged members around the arc so one ring can't catch everyone.
-    let side = ((id % 5) as f32 - 2.0) * 0.3;
     Some(sim.nav.project(epos + dir.rotate(side) * dist))
 }
 

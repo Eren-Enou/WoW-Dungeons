@@ -12,13 +12,14 @@ use dungeon_sim::content::{Content, ContentLibrary};
 use dungeon_sim::metrics::RunSummary;
 use dungeon_sim::runner::{DEFAULT_MAX_SECONDS, batch_stats, party_at_level, raid_party, run_with};
 use dungeon_sim::sim::PartyMemberSpec;
+use std::collections::BTreeMap;
 use std::process::ExitCode;
 use std::time::Instant;
 
 const USAGE: &str = "usage: dungeon-headless [--seed N] [--runs N] [--dungeon ID] [--content PATH] \
 [--difficulty ID] [--class warden|mender|striker|arcanist] [--level N] \
 [--profile conservative|balanced|aggressive|support|mechanic] [--party-size N] \
-[--compare-profiles] [--bench] [--max-seconds S] [--log FILE] [--json] [--quiet]";
+[--compare-profiles] [--bench] [--breakdown] [--max-seconds S] [--log FILE] [--json] [--quiet]";
 
 struct Args {
     seed: u64,
@@ -36,6 +37,7 @@ struct Args {
     log: Option<String>,
     json: bool,
     quiet: bool,
+    breakdown: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -55,6 +57,7 @@ fn parse_args() -> Result<Args, String> {
         log: None,
         json: false,
         quiet: false,
+        breakdown: false,
     };
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
@@ -99,6 +102,7 @@ fn parse_args() -> Result<Args, String> {
             "--log" => args.log = Some(val("--log")?),
             "--json" => args.json = true,
             "--quiet" => args.quiet = true,
+            "--breakdown" => args.breakdown = true,
             "--compare-profiles" => args.compare_profiles = true,
             "--bench" => args.bench = true,
             "-h" | "--help" => return Err(USAGE.into()),
@@ -123,12 +127,74 @@ fn build_party(args: &Args, content: &Content, profile: AiProfile) -> Vec<PartyM
     }
 }
 
+#[derive(Default)]
+struct Breakdown {
+    /// Damage taken by the party, by ability name: (total, hits on non-tanks).
+    taken: BTreeMap<String, (f32, u32)>,
+    /// Threat failures by enemy name.
+    pulled_by: BTreeMap<String, u32>,
+    deaths_by: BTreeMap<String, u32>,
+}
+
+impl Breakdown {
+    fn add(&mut self, sim: &dungeon_sim::Sim) {
+        use dungeon_sim::EventKind;
+        let mut last_hit: Vec<Option<String>> = vec![None; sim.actors.len()];
+        for e in &sim.events {
+            match &e.kind {
+                EventKind::Damage {
+                    dst, what, amount, ..
+                } if !sim.actors[*dst].is_enemy() => {
+                    let entry = self.taken.entry(what.to_string()).or_default();
+                    entry.0 += amount;
+                    if !sim.is_tank(*dst) {
+                        entry.1 += 1;
+                    }
+                    last_hit[*dst] = Some(what.to_string());
+                }
+                EventKind::TargetChange { enemy, target } if !sim.is_tank(*target) => {
+                    *self
+                        .pulled_by
+                        .entry(sim.actors[*enemy].name.clone())
+                        .or_default() += 1;
+                }
+                EventKind::Death { actor } if !sim.actors[*actor].is_enemy() => {
+                    let k = last_hit[*actor].clone().unwrap_or_else(|| "?".into());
+                    *self.deaths_by.entry(k).or_default() += 1;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn print(&self, runs: usize) {
+        let n = runs.max(1) as f32;
+        let mut taken: Vec<_> = self.taken.iter().collect();
+        taken.sort_by(|a, b| b.1.0.total_cmp(&a.1.0));
+        println!("  damage taken per run by source (non-tank hits per run):");
+        for (k, (v, hits)) in taken.iter().take(12) {
+            println!("    {:<22} {:>8.0}  ({:.1})", k, v / n, *hits as f32 / n);
+        }
+        println!("  enemies turning on non-tanks per run:");
+        let mut pulled: Vec<_> = self.pulled_by.iter().collect();
+        pulled.sort_by(|a, b| b.1.cmp(a.1));
+        for (k, v) in pulled.iter().take(8) {
+            println!("    {:<28} {:>6.2}", k, **v as f32 / n);
+        }
+        println!("  party deaths by killing blow (total):");
+        for (k, v) in &self.deaths_by {
+            println!("    {:<22} {:>4}", k, v);
+        }
+    }
+}
+
 fn run_batch(
     args: &Args,
     content: &Content,
     party: &[PartyMemberSpec],
     print: bool,
 ) -> (Vec<RunSummary>, f64, u64) {
+    let mut breakdown = Breakdown::default();
     let mut summaries = Vec::new();
     let start = Instant::now();
     let mut ticks = 0u64;
@@ -136,6 +202,9 @@ fn run_batch(
         let seed = args.seed + i as u64;
         let (sim, summary) = run_with(content, party, seed, args.max_seconds, &args.difficulty);
         ticks += sim.tick;
+        if args.breakdown {
+            breakdown.add(&sim);
+        }
         if i == 0
             && let Some(path) = &args.log
         {
@@ -152,6 +221,9 @@ fn run_batch(
             }
         }
         summaries.push(summary);
+    }
+    if args.breakdown {
+        breakdown.print(args.runs);
     }
     (summaries, start.elapsed().as_secs_f64(), ticks)
 }

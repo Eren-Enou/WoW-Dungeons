@@ -1431,3 +1431,51 @@ fn large_parties_simulate_without_panics() {
         assert_eq!(s.members.len(), size);
     }
 }
+
+#[test]
+fn non_tanks_step_out_of_frontal_cleave_cones() {
+    let mut sim = Sim::new(
+        &Content::builtin_warrens(),
+        &party_at_level(ClassId::Striker, 6, AiProfile::Balanced),
+        3,
+    );
+    let enc = encounter_index(&sim, "brood_chamber");
+    let boss = sim.encounters[enc].mobs[0];
+    let bp = sim.actors[boss].pos;
+    sim.actors[TANK].pos = bp + V2::new(0.0, -2.5);
+    sim.actors[boss].facing = std::f32::consts::PI; // facing the tank (-Z)
+    sim.actors[HEALER].pos = bp + V2::new(0.5, -5.0); // in the cone
+    sim.engage(enc, TANK);
+    sim.add_threat(boss, TANK, 1e6);
+    sim.actors[boss].target = Some(TANK);
+    sim.board = ai::compute_blackboard(&sim);
+    assert!(sim.board.frontal.contains(&boss));
+    let d = ai::party_decision(&sim, HEALER);
+    let goal = d.move_goal.expect("moves out of the cone");
+    assert!(
+        !crate::stats::is_in_front(bp, sim.actors[boss].facing, goal),
+        "goal {goal:?} is still in front of the boss"
+    );
+}
+
+#[test]
+fn healers_hold_pre_emptive_heals_right_after_a_pull() {
+    let mut sim = new_sim();
+    let mob = first_skulker(&sim);
+    for p in sim.party.clone() {
+        place_near(&mut sim, p, mob, 6.0 + p as f32);
+    }
+    sim.engage(0, TANK);
+    sim.actors[TANK].hp = sim.actors[TANK].max_hp * 0.8; // would normally get a Renew
+    sim.board = ai::compute_blackboard(&sim);
+    assert!(sim.board.since_pull < 1.0);
+    let d = ai::party_decision(&sim, HEALER);
+    assert!(
+        d.cast.is_none(),
+        "no top-up heals in the first seconds: {d:?}"
+    );
+    sim.time += 5.0;
+    sim.board = ai::compute_blackboard(&sim);
+    let renew = slot(&sim, HEALER, AbilityId::Renew);
+    assert_eq!(ai::party_decision(&sim, HEALER).cast, Some((renew, TANK)));
+}
