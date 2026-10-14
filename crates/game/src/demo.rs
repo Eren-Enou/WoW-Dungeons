@@ -280,6 +280,7 @@ fn demo_camera(
 
 /// `--hub-tour`: show each hub tab for 1.5 s (screenshot each), inspecting a
 /// companion on the Character tab, then exit.
+#[allow(clippy::too_many_arguments)]
 fn hub_tour(
     mut commands: Commands,
     time: Res<Time>,
