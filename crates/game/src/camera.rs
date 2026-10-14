@@ -184,7 +184,7 @@ mod tests {
         // A wall 6 m behind the focus.
         let wall = (Vec3::new(-5.0, -5.0, -6.5), Vec3::new(5.0, 5.0, -6.0));
         let d = collision_distance(Vec3::ZERO, -Vec3::Z, 14.0, &[wall]);
-        assert!(d < 6.0 && d >= 1.5, "{d}");
+        assert!((1.5..6.0).contains(&d), "{d}");
         // A wall just beside the ray is still respected thanks to the side probes.
         let beside = (Vec3::new(0.2, -5.0, -9.0), Vec3::new(3.0, 5.0, -8.0));
         assert!(collision_distance(Vec3::ZERO, -Vec3::Z, 14.0, &[beside]) < 9.0);

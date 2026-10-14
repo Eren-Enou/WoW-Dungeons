@@ -179,6 +179,7 @@ pub fn class_color(class: ClassId) -> Color {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn setup_hub(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,

@@ -172,6 +172,7 @@ struct ScriptState {
 }
 
 /// Scripted keyboard sequence for `--input-test`, keyed on seconds since entering.
+#[allow(clippy::too_many_arguments)]
 fn scripted_input(
     time: Res<Time>,
     cfg: Res<DemoConfig>,
