@@ -1479,3 +1479,27 @@ fn healers_hold_pre_emptive_heals_right_after_a_pull() {
     let renew = slot(&sim, HEALER, AbilityId::Renew);
     assert_eq!(ai::party_decision(&sim, HEALER).cast, Some((renew, TANK)));
 }
+
+#[test]
+fn summoned_adds_inherit_half_the_summoners_threat() {
+    let mut sim = warrens_passive();
+    let enc = encounter_index(&sim, "brood_chamber");
+    let boss = sim.encounters[enc].mobs[0];
+    place_near(&mut sim, TANK, boss, 2.0);
+    make_immortal(&mut sim, TANK);
+    sim.engage(enc, TANK);
+    sim.add_threat(boss, TANK, 1000.0);
+    sim.actors[boss].target = Some(TANK);
+    steps(&mut sim, 8.1);
+    let adds: Vec<ActorId> = sim.encounters[enc].mobs[1..].to_vec();
+    assert_eq!(adds.len(), 2);
+    for &a in &adds {
+        let t = sim.threat(a, TANK);
+        assert!(
+            (t - 0.5 * sim.threat(boss, TANK)).abs() < 60.0,
+            "add threat {t} vs boss {}",
+            sim.threat(boss, TANK)
+        );
+        assert_eq!(sim.actors[a].target, Some(TANK));
+    }
+}

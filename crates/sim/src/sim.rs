@@ -44,6 +44,8 @@ pub const OOC_HP_REGEN: f32 = 0.08;
 pub const ENERGY_PER_SECOND: f32 = 10.0;
 pub const RAGE_DECAY_PER_SECOND: f32 = 2.0;
 pub const ENRAGE_MULT: f32 = 5.0;
+/// [orig] Summoned adds inherit this fraction of their summoner's threat table.
+pub const SUMMON_THREAT_INHERIT: f32 = 0.5;
 
 pub type ActorId = usize;
 
@@ -2345,7 +2347,7 @@ impl Sim {
                     .iter()
                     .map(|t| ThreatEntry {
                         actor: t.actor,
-                        value: 0.0,
+                        value: t.value * SUMMON_THREAT_INHERIT,
                     })
                     .collect()
             })
@@ -2365,7 +2367,7 @@ impl Sim {
             if let Some(t) = current
                 && let Some(entry) = es.threat.iter_mut().find(|x| x.actor == t)
             {
-                entry.value = 1.0;
+                entry.value = entry.value.max(1.0);
             }
             a.target = current;
             a.swing_timer = 1.0;
