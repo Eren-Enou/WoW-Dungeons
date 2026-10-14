@@ -583,6 +583,54 @@ fn safe_spot(sim: &Sim, id: ActorId, want: V2) -> V2 {
 }
 
 pub fn party_decision(sim: &Sim, id: ActorId) -> Decision {
+    let mut d = party_decision_inner(sim, id);
+    // Escaping a ground effect always wins; otherwise walk around cleave cones.
+    if !sim.is_tank(id)
+        && escape_point(sim, id).is_none()
+        && let Some(goal) = d.move_goal
+    {
+        d.move_goal = Some(route_around_cones(sim, id, goal));
+    }
+    d
+}
+
+/// If the straight path to `goal` crosses a frontal cleave cone, steer to a point
+/// beside the cleaving enemy first (on our side), so we walk around the front.
+fn route_around_cones(sim: &Sim, id: ActorId, goal: V2) -> V2 {
+    let me = sim.actor(id);
+    let margin = params_of(me).danger_margin * 0.5;
+    for k in 1..=8 {
+        let p = me.pos + (goal - me.pos) * (k as f32 / 8.0);
+        if !in_frontal_cone(sim, id, p, margin) {
+            continue;
+        }
+        // Find the cone we would cross and go around its side.
+        let Some(&e) = sim.board.frontal.iter().find(|&&e| {
+            let a = sim.actor(e);
+            let reach = frontal_reach(sim, e) + a.radius + me.radius + margin;
+            p.dist(a.pos) <= reach && crate::stats::is_in_front(a.pos, a.facing, p)
+        }) else {
+            return goal;
+        };
+        let a = sim.actor(e);
+        let fwd = V2::from_heading(a.facing);
+        let right = V2::new(fwd.z, -fwd.x);
+        let reach = frontal_reach(sim, e) + a.radius + me.radius + margin + 1.0;
+        // Try both flanks (slightly behind them); keep those outside every cone.
+        let best = [right, -right]
+            .into_iter()
+            .map(|side| safe_spot(sim, id, sim.nav.project(a.pos + side * reach - fwd * 1.5)))
+            .filter(|c| !in_frontal_cone(sim, id, *c, margin))
+            .min_by(|x, y| x.dist(me.pos).total_cmp(&y.dist(me.pos)));
+        return match best {
+            Some(detour) if detour.dist(me.pos) >= 0.5 => detour,
+            _ => goal,
+        };
+    }
+    goal
+}
+
+fn party_decision_inner(sim: &Sim, id: ActorId) -> Decision {
     let me = sim.actor(id);
     if let Some(escape) = escape_point(sim, id) {
         // Instant abilities are still allowed while running out.
