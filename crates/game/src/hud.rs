@@ -72,6 +72,8 @@ enum HudText {
     TotName,
     BossName,
     Resource,
+    PlayerBuffs,
+    PlayerDebuffs,
     CastLabel,
     Log,
     Info,
@@ -417,6 +419,29 @@ pub fn spawn_hud(mut commands: Commands, run: Res<ActiveRun>) {
                     bar(260.0, 10.0, Color::srgb(1.0, 0.8, 0.2), HudBar::Cast),
                 ],
             ));
+            // Your own buffs (green) and debuffs (red, orange if dispellable);
+            // hover for details.
+            let me = run
+                .sim
+                .player
+                .and_then(|pl| run.sim.party.iter().position(|&m| m == pl))
+                .unwrap_or(0);
+            p.spawn((
+                Node {
+                    column_gap: px(14),
+                    ..default()
+                },
+                Tooltip::PartyMember(me),
+                children![
+                    (
+                        Text::new(""),
+                        text_font(12.0),
+                        TextColor(Color::srgb(0.55, 0.95, 0.55)),
+                        HudText::PlayerBuffs
+                    ),
+                    (Text::new(""), text_font(12.0), HudText::PlayerDebuffs),
+                ],
+            ));
             p.spawn((
                 Node {
                     flex_direction: FlexDirection::Column,
@@ -502,7 +527,7 @@ pub fn spawn_hud(mut commands: Commands, run: Res<ActiveRun>) {
             position_type: PositionType::Absolute,
             left: px(10),
             bottom: px(10),
-            width: px(360),
+            width: px(320),
             padding: UiRect::all(px(6)),
             ..default()
         },
@@ -511,7 +536,7 @@ pub fn spawn_hud(mut commands: Commands, run: Res<ActiveRun>) {
         scoped.clone(),
         children![(
             Text::new(""),
-            text_font(10.5),
+            text_font(10.0),
             TextColor(Color::srgb(0.85, 0.85, 0.8)),
             HudText::Log
         )],
@@ -535,8 +560,16 @@ pub fn spawn_hud(mut commands: Commands, run: Res<ActiveRun>) {
 }
 
 fn class_tag(a: &Actor) -> String {
+    use dungeon_sim::Role;
     match a.class {
-        Some(c) => format!("{} {}", c.label(), c.role().label()),
+        Some(c) => {
+            let role = match c.role() {
+                Role::Tank => "Tank",
+                Role::Healer => "Healer",
+                Role::MeleeDps | Role::RangedDps => "DPS",
+            };
+            format!("{} {role}", c.label())
+        }
         None => String::new(),
     }
 }
@@ -654,6 +687,9 @@ fn party_status(a: &Actor, compact: bool) -> (String, Color) {
         return ("DEAD".into(), RED_TEXT);
     }
     let mut parts: Vec<String> = Vec::new();
+    if !compact {
+        parts.push(format!("{:.0}/{:.0}", a.hp.max(0.0), a.max_hp));
+    }
     let cc = a.is_incapacitated() || a.is_silenced();
     let color = if cc {
         Color::srgb(0.85, 0.6, 1.0)
@@ -661,8 +697,10 @@ fn party_status(a: &Actor, compact: bool) -> (String, Color) {
         Color::srgb(1.0, 0.6, 0.2)
     } else if a.auras.iter().any(|x| x.harmful) {
         Color::srgb(1.0, 0.5, 0.45)
-    } else {
+    } else if !a.auras.is_empty() {
         Color::srgb(0.6, 0.95, 0.6)
+    } else {
+        Color::srgb(0.8, 0.8, 0.8)
     };
     if a.is_incapacitated() {
         parts.push("STUNNED".into());
@@ -818,14 +856,7 @@ fn update_texts(run: Res<ActiveRun>, mut q: Query<(&mut Text, &mut TextColor, &H
                         a.class.map(|c| c.label()).unwrap_or("")
                     )
                 } else {
-                    format!(
-                        "F{} {}{you} - {}  {:.0}/{:.0}",
-                        i + 1,
-                        a.name,
-                        class_tag(a),
-                        a.hp.max(0.0),
-                        a.max_hp
-                    )
+                    format!("F{} {}{you} - {}", i + 1, a.name, class_tag(a))
                 }
             }
             HudText::PartyStatus(i) => {
@@ -931,6 +962,32 @@ fn update_texts(run: Res<ActiveRun>, mut q: Query<(&mut Text, &mut TextColor, &H
                 }
                 s
             }
+            HudText::PlayerBuffs | HudText::PlayerDebuffs => match player {
+                Some(p) => {
+                    let harmful = matches!(kind, HudText::PlayerDebuffs);
+                    let a = &sim.actors[p];
+                    if harmful {
+                        color.0 = if a.has_dispellable_debuff() {
+                            Color::srgb(1.0, 0.6, 0.2)
+                        } else {
+                            RED_TEXT
+                        };
+                    }
+                    let mut s = String::new();
+                    for x in a.auras.iter().filter(|x| x.harmful == harmful) {
+                        if !s.is_empty() {
+                            s.push_str("  ");
+                        }
+                        s.push_str(&x.name);
+                        if x.stacks > 1 {
+                            s.push_str(&format!(" x{}", x.stacks));
+                        }
+                        s.push_str(&format!(" {:.0}s", x.remaining.max(0.0)));
+                    }
+                    s
+                }
+                None => String::new(),
+            },
             HudText::Resource => match player {
                 Some(p) if sim.actors[p].alive => resource_line(sim, p),
                 _ => String::new(),
@@ -1085,11 +1142,17 @@ fn update_bars(
 
 /// Short status for one action slot plus its colour. The order matches what a
 /// player most needs to know: cooldown, resource, range, then other blockers.
+/// Not enough resource right now. Checked separately from `result`, because
+/// validation reports the GCD first and the bar should still show the shortfall.
+fn short_of_resource(st: &AbilityState) -> bool {
+    st.resource_in != Some(0.0)
+}
+
 fn slot_status(st: &AbilityState, resource: &str) -> (String, Color) {
     if st.cooldown_left > 0.0 {
         return (format!("cooldown {:.1}s", st.cooldown_left), DIM);
     }
-    if st.result == Err(CastError::NotEnoughResource) {
+    if short_of_resource(st) {
         let wait = match st.resource_in {
             Some(t) => format!(" - {t:.1}s"),
             None => String::new(),
@@ -1155,7 +1218,7 @@ fn update_action_bar(
                 Color::srgba(0.42, 0.06, 0.06, 0.9),
                 Color::srgb(0.9, 0.25, 0.2),
             ),
-            Some(st) if st.result == Err(CastError::NotEnoughResource) => (
+            Some(st) if short_of_resource(st) => (
                 Color::srgba(0.07, 0.09, 0.25, 0.9),
                 Color::srgb(0.35, 0.45, 0.85),
             ),
@@ -1190,7 +1253,7 @@ fn update_action_bar(
                     String::new()
                 };
                 let usable = states[slot].is_some_and(|st| {
-                    st.result.is_ok()
+                    !short_of_resource(&st) && st.result.is_ok()
                         || matches!(
                             st.result,
                             Err(CastError::OnGlobalCooldown) | Err(CastError::Busy)

@@ -60,7 +60,7 @@ impl Plugin for DungeonPlugin {
 
 /// Seconds between the run ending and the results screen.
 const END_DELAY: f32 = 3.0;
-const LOG_LINES: usize = 12;
+const LOG_LINES: usize = 11;
 /// How long a failed-action message stays on screen.
 const ERROR_SECS: f32 = 1.5;
 const WALL_HEIGHT: f32 = 3.2;
@@ -954,8 +954,17 @@ fn sync_hazards(
     }
 }
 
-fn draw_gizmos(run: Res<ActiveRun>, mut gizmos: Gizmos) {
+fn draw_gizmos(run: Res<ActiveRun>, mouseover: Res<crate::hud::Mouseover>, mut gizmos: Gizmos) {
     let flat = Quat::from_rotation_arc(Vec3::Z, Vec3::Y);
+    // Who a friendly spell would land on right now (mouseover ally).
+    if let Some(m) = mouseover.0 {
+        let a = &run.sim.actors[m];
+        gizmos.circle(
+            Isometry3d::new(to_vec3(run.interp_pos(m), 0.06), flat),
+            a.radius + 0.55,
+            Color::srgb(0.45, 0.8, 1.0),
+        );
+    }
     if let Some(p) = run.sim.player {
         gizmos.circle(
             Isometry3d::new(to_vec3(run.interp_pos(p), 0.05), flat),
