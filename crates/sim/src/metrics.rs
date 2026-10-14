@@ -87,7 +87,7 @@ pub fn fnv1a(hash: u64, bytes: &[u8]) -> u64 {
 impl RunSummary {
     pub fn from_sim(sim: &Sim) -> Self {
         use crate::events::EventKind;
-        let duration = sim.time.max(crate::sim::DT);
+        let duration = sim.ended_at.unwrap_or(sim.time).max(crate::sim::DT);
         let mut log_hash = 0xCBF2_9CE4_8422_2325;
         let mut resets = 0;
         let mut rings = 0;
@@ -124,7 +124,7 @@ impl RunSummary {
         RunSummary {
             seed: sim.seed,
             outcome: sim.outcome,
-            duration: sim.time,
+            duration,
             encounters_cleared: sim.encounters.iter().filter(|e| e.cleared).count(),
             encounters_total: sim.encounters.len(),
             encounter_resets: resets,

@@ -99,6 +99,40 @@ impl Nav {
         seen.into_iter().all(|s| s)
     }
 
+    /// Wall segments (start, end) along the outline of the union of the authored
+    /// rectangles: each rectangle edge minus the parts lying inside another rectangle.
+    pub fn wall_segments(&self) -> Vec<(V2, V2)> {
+        let mut out = Vec::new();
+        for (i, r) in self.areas.iter().enumerate() {
+            // Horizontal edges (constant z) and vertical edges (constant x).
+            for &z in &[r.min.z, r.max.z] {
+                let cuts: Vec<(f32, f32)> = self
+                    .areas
+                    .iter()
+                    .enumerate()
+                    .filter(|(j, o)| *j != i && o.min.z < z && z < o.max.z)
+                    .map(|(_, o)| (o.min.x, o.max.x))
+                    .collect();
+                for (a, b) in subtract_intervals((r.min.x, r.max.x), &cuts) {
+                    out.push((V2::new(a, z), V2::new(b, z)));
+                }
+            }
+            for &x in &[r.min.x, r.max.x] {
+                let cuts: Vec<(f32, f32)> = self
+                    .areas
+                    .iter()
+                    .enumerate()
+                    .filter(|(j, o)| *j != i && o.min.x < x && x < o.max.x)
+                    .map(|(_, o)| (o.min.z, o.max.z))
+                    .collect();
+                for (a, b) in subtract_intervals((r.min.z, r.max.z), &cuts) {
+                    out.push((V2::new(x, a), V2::new(x, b)));
+                }
+            }
+        }
+        out
+    }
+
     /// Nearest walkable point to `p`.
     pub fn project(&self, p: V2) -> V2 {
         if self.contains(p) {
@@ -194,6 +228,29 @@ impl Nav {
     }
 }
 
+/// `span` minus the union of `cuts`, dropping slivers shorter than 1cm.
+fn subtract_intervals(span: (f32, f32), cuts: &[(f32, f32)]) -> Vec<(f32, f32)> {
+    let mut pieces = vec![span];
+    for &(c0, c1) in cuts {
+        let mut next = Vec::new();
+        for (a, b) in pieces {
+            if c1 <= a || c0 >= b {
+                next.push((a, b));
+                continue;
+            }
+            if c0 > a {
+                next.push((a, c0));
+            }
+            if c1 < b {
+                next.push((c1, b));
+            }
+        }
+        pieces = next;
+    }
+    pieces.retain(|(a, b)| b - a > 0.01);
+    pieces
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -219,6 +276,30 @@ mod tests {
         let w = nav.next_waypoint(V2::new(2.0, 1.0), V2::new(28.0, 18.0));
         // Overlap of the two shrunk rects is around x in [0.4,3.6], z in [16.4,19.6].
         assert!(w.z > 16.0 && w.x < 4.0, "{w:?}");
+    }
+
+    #[test]
+    fn walls_leave_openings_where_rects_overlap() {
+        let nav = l_shape();
+        let walls = nav.wall_segments();
+        // The top edge of the vertical corridor (z = 20) is shared with the horizontal
+        // corridor's top edge, but the vertical corridor's top edge lies on the boundary
+        // so it stays; no wall may cross the interior of the junction.
+        for (a, b) in &walls {
+            let mid = (*a + *b) * 0.5;
+            let inside_other = nav
+                .areas
+                .iter()
+                .filter(|r| {
+                    mid.x > r.min.x + 1e-3
+                        && mid.x < r.max.x - 1e-3
+                        && mid.z > r.min.z + 1e-3
+                        && mid.z < r.max.z - 1e-3
+                })
+                .count();
+            assert_eq!(inside_other, 0, "wall {a:?}-{b:?} cuts through floor");
+        }
+        assert!(!walls.is_empty());
     }
 
     #[test]

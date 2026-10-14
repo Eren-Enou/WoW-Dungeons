@@ -676,3 +676,42 @@ fn absurd_hp_multiplier_leads_to_enrage_wipe_not_a_hang() {
     assert_ne!(s.outcome, RunOutcome::Victory);
     assert_ne!(s.outcome, RunOutcome::InProgress);
 }
+
+// ------------------------------------------------- player input path ---
+
+#[test]
+fn player_of_every_class_can_move_target_and_use_three_abilities() {
+    for class in ClassId::ALL {
+        let mut profile = crate::profile::Profile::new_default();
+        profile.player_class = class;
+        profile.auto_fill_party();
+        let mut sim = Sim::new(&Content::builtin(), &profile.party_specs(true), 5);
+        let p = sim.player.expect("player slot");
+        // Walk north toward the first pack (as the game does with WASD).
+        let start = sim.actors[p].pos;
+        sim.set_player_move(V2::new(0.0, 1.0));
+        steps(&mut sim, 2.0);
+        sim.set_player_move(V2::ZERO);
+        assert!(sim.actors[p].pos.z > start.z + 6.0, "{class:?} did not move");
+
+        // Target a skulker, stand next to it and press 1, 2, 3 with time in between.
+        let mob = first_skulker(&sim);
+        place_near(&mut sim, p, mob, 1.0);
+        sim.set_player_target(Some(mob));
+        assert_eq!(sim.actors[p].target, Some(mob));
+        let before = sim.metrics.actors[p].casts;
+        for slot in 0..3 {
+            sim.actors[p].hp = sim.actors[p].max_hp * 0.8; // give heals something to do
+            sim.queue_player_cast(slot);
+            steps(&mut sim, 2.6);
+        }
+        let failures: Vec<String> = sim
+            .events
+            .iter()
+            .filter(|e| matches!(e.kind, EventKind::CastFailed { src, .. } if src == p))
+            .map(|e| sim.describe(e))
+            .collect();
+        assert!(failures.is_empty(), "{class:?}: {failures:?}");
+        assert_eq!(sim.metrics.actors[p].casts - before, 3, "{class:?} casts");
+    }
+}

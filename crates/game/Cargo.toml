@@ -10,3 +10,4 @@ path = "src/main.rs"
 
 [dependencies]
 bevy = { workspace = true }
+dungeon_sim = { path = "../sim" }

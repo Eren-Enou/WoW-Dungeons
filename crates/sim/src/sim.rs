@@ -296,6 +296,8 @@ pub struct Sim {
     pending_player_cast: Option<usize>,
     pub boss: ActorId,
     pub phase2_at: Option<f32>,
+    /// Sim time at which the outcome was decided.
+    pub ended_at: Option<f32>,
 }
 
 impl Sim {
@@ -326,6 +328,7 @@ impl Sim {
             pending_player_cast: None,
             boss: 0,
             phase2_at: None,
+            ended_at: None,
             content,
         };
         let entrance = sim.content.dungeon.entrance;
@@ -582,6 +585,7 @@ impl Sim {
     pub fn abandon(&mut self, outcome: RunOutcome) {
         if self.outcome == RunOutcome::InProgress {
             self.outcome = outcome;
+            self.ended_at = Some(self.time);
             self.emit(EventKind::Outcome { outcome });
         }
     }
@@ -1606,11 +1610,13 @@ impl Sim {
         }
         if self.alive_party().next().is_none() {
             self.outcome = RunOutcome::Wipe;
+            self.ended_at = Some(self.time);
             self.emit(EventKind::Outcome {
                 outcome: RunOutcome::Wipe,
             });
         } else if self.encounters[self.content.boss_encounter()].cleared {
             self.outcome = RunOutcome::Victory;
+            self.ended_at = Some(self.time);
             self.emit(EventKind::Outcome {
                 outcome: RunOutcome::Victory,
             });
