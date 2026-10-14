@@ -1,0 +1,12 @@
+[package]
+name = "dungeon_game"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "dungeon-sandbox"
+path = "src/main.rs"
+
+[dependencies]
+bevy = { workspace = true }

@@ -1,0 +1,179 @@
+# Dungeon Sandbox content file.
+#
+# Edit this file to change encounters without recompiling. The game re-reads it
+# every time the party enters the portal (and on F5 in the hub); the headless
+# runner reads it on start. Invalid values produce an error naming the field.
+#
+# Coordinates are [x, z] on the ground plane, in metres.
+
+[dungeon]
+name = "The Sunken Vault"
+hp_multiplier = 1.0          # scales every enemy's max HP (0.05 - 20.0)
+damage_multiplier = 1.0      # scales every enemy's damage (0.0 - 20.0)
+entrance = [0.0, 0.0]
+leash_radius = 45.0          # enemies dragged further than this from home reset
+
+# Walkable floor: overlapping rectangles. Neighbours must overlap to connect.
+[[dungeon.areas]]
+name = "Flooded Antechamber"
+min = [-8.0, -6.0]
+max = [8.0, 10.0]
+
+[[dungeon.areas]]
+name = "Drowned Stair"
+min = [-3.0, 8.0]
+max = [3.0, 30.0]
+
+[[dungeon.areas]]
+name = "Hall of Sluices"
+min = [-12.0, 28.0]
+max = [12.0, 48.0]
+
+[[dungeon.areas]]
+name = "East Culvert"
+min = [10.0, 35.0]
+max = [36.0, 41.0]
+
+[[dungeon.areas]]
+name = "Brute's Cistern"
+min = [34.0, 26.0]
+max = [56.0, 50.0]
+
+[[dungeon.areas]]
+name = "North Culvert"
+min = [42.0, 48.0]
+max = [48.0, 72.0]
+
+[[dungeon.areas]]
+name = "Reliquary"
+min = [34.0, 70.0]
+max = [56.0, 88.0]
+
+[[dungeon.areas]]
+name = "Throne Approach"
+min = [42.0, 86.0]
+max = [48.0, 100.0]
+
+[[dungeon.areas]]
+name = "Hollow Throne"
+min = [28.0, 98.0]
+max = [62.0, 128.0]
+
+# ---------------------------------------------------------------- enemies --
+
+[templates.skulker]
+name = "Gloomfang Skulker"
+rank = "trash"
+hp = 600.0
+melee_damage = 24.0
+attack_interval = 2.0
+aggro_radius = 10.0
+speed = 6.5
+radius = 0.6
+
+[templates.brute]
+name = "Cragbound Brute"
+rank = "elite"
+hp = 3000.0
+melee_damage = 60.0
+attack_interval = 2.4
+aggro_radius = 12.0
+speed = 6.0
+radius = 1.1
+damage_taken = 0.9
+cleave = { damage = 55.0, radius = 5.0, interval = 8.0 }
+
+[templates.hollow_king]
+name = "Morvane, the Hollow King"
+rank = "boss"
+hp = 14000.0
+melee_damage = 140.0
+attack_interval = 2.0
+attack_range = 2.5
+aggro_radius = 14.0
+speed = 6.5
+radius = 1.6
+damage_taken = 0.9
+
+[boss]
+template = "hollow_king"
+phase2_hp_fraction = 0.5        # phase 2 begins at 50% HP
+phase2_damage_multiplier = 1.25 # boss damage multiplier in phase 2
+ring_interval = 9.0             # BOSS TIMER: seconds between Cinder Rings in phase 2
+ring_telegraph = 2.5            # warning time before a ring detonates
+ring_radius = 5.0
+ring_damage = 450.0
+bolt_damage = 190.0             # phase 1 "Hollow Bolt" on a random non-tank
+bolt_interval = 8.0
+bolt_cast_time = 1.5
+enrage_seconds = 240.0          # hard enrage (x5 damage) after this long in combat
+
+# ------------------------------------------------------------- encounters --
+# Encounters are cleared in order by the autopilot. The boss must be last.
+
+[[encounters]]
+id = "sluice_pack"
+mobs = [
+  { template = "skulker", pos = [-4.0, 40.0] },
+  { template = "skulker", pos = [0.0, 42.0] },
+  { template = "skulker", pos = [4.0, 40.0] },
+]
+
+[[encounters]]
+id = "cistern_brute"
+mobs = [
+  { template = "brute", pos = [45.0, 40.0] },
+  { template = "skulker", pos = [41.0, 43.0] },
+  { template = "skulker", pos = [49.0, 43.0] },
+]
+
+[[encounters]]
+id = "reliquary_pack"
+mobs = [
+  { template = "skulker", pos = [40.0, 80.0] },
+  { template = "skulker", pos = [44.0, 82.0] },
+  { template = "skulker", pos = [48.0, 82.0] },
+  { template = "skulker", pos = [52.0, 80.0] },
+]
+
+[[encounters]]
+id = "hollow_king"
+mobs = [
+  { template = "hollow_king", pos = [45.0, 116.0] },
+]
+
+# ------------------------------------------------------------------ loot --
+# On victory one item is rolled (weighted) and added to the shared stash.
+
+[[loot]]
+id = "sluicewarden_blade"
+name = "Sluicewarden Blade"
+slot = "weapon"
+power = 8
+weight = 3
+
+[[loot]]
+id = "hollow_crown_shard"
+name = "Shard of the Hollow Crown"
+slot = "weapon"
+power = 12
+weight = 1
+
+[[loot]]
+id = "silted_mail"
+name = "Silted Chainmail"
+slot = "armor"
+stamina = 30
+weight = 3
+
+[[loot]]
+id = "vaultkeeper_mantle"
+name = "Vaultkeeper's Mantle"
+slot = "armor"
+stamina = 20
+power = 4
+weight = 2
+
+[rewards]
+marks_per_clear = 10
+marks_per_wipe = 1
