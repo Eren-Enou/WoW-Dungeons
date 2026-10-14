@@ -893,8 +893,14 @@ fn dungeons_tab(p: &mut ChildSpawnerCommands, data: &GameData) {
             label(
                 r,
                 format!(
-                    "{} (level {}+)",
-                    d.dungeon.name, d.dungeon.recommended_level
+                    "{} (level {}+{})",
+                    d.dungeon.name,
+                    d.dungeon.recommended_level,
+                    if d.dungeon.recommended_group > 5 {
+                        format!(", RAID for {} players", d.dungeon.recommended_group)
+                    } else {
+                        String::new()
+                    }
                 ),
                 14.0,
                 if selected {

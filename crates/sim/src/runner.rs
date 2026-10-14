@@ -39,11 +39,16 @@ pub fn with_familiarity(mut party: Vec<PartyMemberSpec>, familiarity: f32) -> Ve
     party
 }
 
-/// A raid-style group of `size` members: roughly 1 tank per 5 (min 1), 1 healer
+/// A raid-style group of `size` members: 1 tank (5), 2 (up to 15) or 3 tanks, 1 healer
 /// per 4 (min 1), the rest alternating ranged and melee damage dealers.
 pub fn raid_party(size: usize, level: u32, profile: AiProfile) -> Vec<PartyMemberSpec> {
     let size = size.max(1);
-    let tanks = (size / 10).max(1).min(size);
+    let tanks = match size {
+        0..=5 => 1,
+        6..=15 => 2,
+        _ => 3,
+    }
+    .min(size);
     let healers = (size / 4).max(1).min(size - tanks);
     let names = [
         "Brannoc", "Ysolde", "Thessaly", "Orrin", "Kael", "Dovic", "Mirelle", "Senna", "Hale",

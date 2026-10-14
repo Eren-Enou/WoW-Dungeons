@@ -24,6 +24,8 @@ const FORMATION: [(f32, f32); 8] = [
     (5.0, -4.5),
     (0.0, -8.0),
 ];
+/// Stacks of an enemy's damage-taken debuff at which tanks swap.
+pub const TANK_SWAP_STACKS: u32 = 3;
 /// Seconds after a pull during which healers avoid non-urgent heals.
 const PULL_GRACE: f32 = 4.0;
 /// Ranged members stand roughly this far from their enemy.
@@ -862,6 +864,56 @@ fn tank(sim: &Sim, id: ActorId) -> Decision {
         };
         score(b).total_cmp(&score(a)).then(a.cmp(&b))
     });
+    // Tank swap: stacks of an enemy's damage-taken debuff on its tank.
+    let stacks_from = |who: ActorId, e: ActorId| -> u32 {
+        sim.actor(who)
+            .auras
+            .iter()
+            .filter(|a| a.source == e && matches!(a.kind, AuraKind::DamageTaken { .. }))
+            .map(|a| a.stacks)
+            .sum()
+    };
+    let other_tanks: Vec<ActorId> = sim
+        .board
+        .tanks
+        .iter()
+        .copied()
+        .filter(|&t| t != id)
+        .collect();
+    for &e in &engaged {
+        let Some(holder) = sim.actor(e).target else {
+            continue;
+        };
+        if holder != id
+            && other_tanks.contains(&holder)
+            && stacks_from(holder, e) >= TANK_SWAP_STACKS
+            && stacks_from(id, e) < 2
+        {
+            let mut d = Decision {
+                target: Some(Some(e)),
+                auto_attack: true,
+                ..Default::default()
+            };
+            match usable(sim, id, AbilityId::Challenge, e) {
+                Some(c) => d.cast = Some(c),
+                None if !sim.reach(id, e, 20.0) => {
+                    d.move_goal = Some(safe_spot(sim, id, sim.actor(e).pos))
+                }
+                None => {}
+            }
+            return d;
+        }
+    }
+    // Enemies I should let go of: I carry swap-level stacks from them and a
+    // fresh tank is around to take over.
+    let backing_off: Vec<ActorId> = engaged
+        .iter()
+        .copied()
+        .filter(|&e| {
+            stacks_from(id, e) >= TANK_SWAP_STACKS
+                && other_tanks.iter().any(|&t| stacks_from(t, e) < 2)
+        })
+        .collect();
     let lead = |e: ActorId| {
         let mine = sim.threat(e, id);
         let other = sim
@@ -884,8 +936,22 @@ fn tank(sim: &Sim, id: ActorId) -> Decision {
         }
         e
     } else {
-        let current = me.target.filter(|t| engaged.contains(t));
-        let best = engaged
+        // Leave enemies held by another tank (and those we are backing off from)
+        // to them, unless there is nothing else to do.
+        let mine: Vec<ActorId> = engaged
+            .iter()
+            .copied()
+            .filter(|&e| {
+                !backing_off.contains(&e)
+                    && sim
+                        .actor(e)
+                        .target
+                        .is_none_or(|t| t == id || !other_tanks.contains(&t))
+            })
+            .collect();
+        let pool = if mine.is_empty() { &engaged } else { &mine };
+        let current = me.target.filter(|t| pool.contains(t));
+        let best = pool
             .iter()
             .copied()
             .min_by(|&a, &b| lead(a).total_cmp(&lead(b)).then(a.cmp(&b)))
@@ -896,6 +962,11 @@ fn tank(sim: &Sim, id: ActorId) -> Decision {
         }
     };
     d.target = Some(Some(target));
+    if backing_off.contains(&target) {
+        // Nothing else to tank: stand by without adding threat.
+        d.auto_attack = false;
+        return d;
+    }
     let stacks: u32 = me
         .auras
         .iter()

@@ -11,8 +11,9 @@ details and evidence live in PROGRESS.md.
 2. **Editor, part 3**: add/remove abilities and phases, edit aura values and mob
    placement in-game (today: tuning existing numbers in the Editor tab; structure
    via TOML + F5).
-3. **Raid content**: a purpose-built 10-player encounter (today raids reuse the
-   dungeons on the "Raid (10)" difficulty); 25-player graphical groups.
+3. **Raid tuning**: The Cinder Court (10-player raid, tank swaps) is 100% wins / 0 deaths
+   at damage x1.0 but 5% at x1.4 (20 runs each) - find the middle; add a raid test
+   for tank swaps; 25-player graphical groups.
 4. **AI**: first frontal sweeps right after a pull still catch melee arriving
    before enemies have turned; remaining threat failures come from healer-caster
    packs at the pull.

@@ -40,6 +40,9 @@ pub struct DungeonConfig {
     pub description: String,
     #[serde(default = "one_u32")]
     pub recommended_level: u32,
+    /// Group size the content is designed for (5 = party, 10 = raid).
+    #[serde(default = "five_u32")]
+    pub recommended_group: u32,
     /// Multiplies every enemy's max HP.
     pub hp_multiplier: f32,
     /// Multiplies all enemy damage.
@@ -78,6 +81,10 @@ fn one() -> f32 {
 
 fn one_u32() -> u32 {
     1
+}
+
+fn five_u32() -> u32 {
+    5
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -610,6 +617,13 @@ impl Content {
                 "dungeon.recommended_level = {} must be between 1 and {}",
                 d.recommended_level,
                 crate::class::MAX_LEVEL
+            ),
+        );
+        check(
+            (1..=40).contains(&d.recommended_group),
+            format!(
+                "dungeon.recommended_group = {} must be between 1 and 40",
+                d.recommended_group
             ),
         );
         check(
