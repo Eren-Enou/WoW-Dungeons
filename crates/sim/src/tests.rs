@@ -1725,3 +1725,127 @@ fn non_tanks_walk_around_frontal_cones_instead_of_through_them() {
     let clear = bp + V2::new(-10.0, 6.0);
     assert_eq!(ai::route_around_cones(&sim, HEALER, clear), clear);
 }
+
+// ------------------------------------------------- 0.3 UI-facing APIs ---
+
+fn player_mender_sim() -> Sim {
+    let mut p = crate::profile::Profile::new_default();
+    p.player_class = ClassId::Mender;
+    p.auto_fill_party();
+    let mut sim = Sim::new(&Content::builtin(), &p.party_specs(true), 5);
+    for q in sim.party.clone() {
+        sim.actors[q].controller = Controller::Player;
+    }
+    sim.player = Some(0);
+    sim
+}
+
+#[test]
+fn mouseover_heal_targets_the_hovered_ally_and_keeps_selection() {
+    let mut sim = player_mender_sim();
+    let mob = first_skulker(&sim);
+    sim.set_player_target(Some(mob));
+    let ally = 3;
+    sim.actors[ally].hp = sim.actors[ally].max_hp * 0.5;
+    let renew = slot(&sim, 0, AbilityId::Renew);
+    sim.queue_player_cast_on(renew, Some(ally));
+    sim.step();
+    assert!(sim.actors[ally].has_hot_from(0), "hovered ally got the HoT");
+    assert_eq!(sim.actors[0].target, Some(mob), "selection unchanged");
+}
+
+#[test]
+fn friendly_spell_target_order_is_mouseover_then_selected_ally_then_self() {
+    let mut sim = player_mender_sim();
+    let renew = slot(&sim, 0, AbilityId::Renew);
+    // Invalid (dead) mouseover falls back to the selected friendly target.
+    sim.kill(4);
+    sim.set_player_target(Some(2));
+    sim.queue_player_cast_on(renew, Some(4));
+    sim.step();
+    assert!(sim.actors[2].has_hot_from(0));
+    // A hostile mouseover is not a valid friendly target either: self-cast.
+    let mut sim = player_mender_sim();
+    let mob = first_skulker(&sim);
+    sim.set_player_target(Some(mob));
+    sim.queue_player_cast_on(renew, Some(mob));
+    sim.step();
+    assert!(sim.actors[0].has_hot_from(0), "self-cast fallback");
+}
+
+#[test]
+fn hostile_spells_ignore_mouseover() {
+    let mut sim = player_mender_sim();
+    let mob = first_skulker(&sim);
+    place_near(&mut sim, 0, mob, 10.0);
+    sim.set_player_target(Some(mob));
+    let smite = slot(&sim, 0, AbilityId::Smite);
+    sim.queue_player_cast_on(smite, Some(2));
+    sim.step();
+    assert_eq!(sim.actors[0].cast.as_ref().map(|c| c.target), Some(mob));
+}
+
+#[test]
+fn ability_state_matches_what_a_cast_would_do() {
+    let mut sim = passive_sim();
+    let mob = first_skulker(&sim);
+    sim.player = Some(PLAYER);
+    let rend = slot(&sim, PLAYER, AbilityId::RendStrike);
+    let st = sim.ability_state(PLAYER, rend, Some(mob));
+    assert_eq!(st.in_range, Some(false));
+    assert_eq!(st.result, Err(CastError::OutOfRange));
+    place_near(&mut sim, PLAYER, mob, 1.0);
+    let st = sim.ability_state(PLAYER, rend, Some(mob));
+    assert_eq!(st.in_range, Some(true));
+    assert_eq!(st.result, Ok(()));
+    assert_eq!(
+        sim.validate_cast(PLAYER, rend, Some(mob)).is_ok(),
+        st.result.is_ok()
+    );
+    sim.try_cast(PLAYER, rend, Some(mob)).unwrap();
+    let st = sim.ability_state(PLAYER, rend, Some(mob));
+    assert!(
+        st.gcd_left > 0.0 && st.cooldown_left == 0.0,
+        "GCD, not a cooldown"
+    );
+    assert_eq!(st.result, Err(CastError::OnGlobalCooldown));
+    // Energy: 100 - 40 = 60 left after Rend; another needs 40 -> available now,
+    // but after draining to 10 it needs 3 s at 10 energy/s.
+    sim.actors[PLAYER].resource = 10.0;
+    let st = sim.ability_state(PLAYER, rend, Some(mob));
+    assert!((st.resource_in.unwrap() - 3.0).abs() < 1e-4);
+    assert!((sim.resource_rate(PLAYER) - 10.0).abs() < 1e-6);
+}
+
+#[test]
+fn threat_view_reports_secure_contested_lost_and_taunt() {
+    use crate::sim::{PersonalThreat, TankThreat};
+    let mut sim = passive_sim();
+    let mob = first_skulker(&sim);
+    place_near(&mut sim, TANK, mob, 1.0);
+    place_near(&mut sim, MELEE, mob, 1.5);
+    sim.engage(0, TANK);
+    sim.add_threat(mob, TANK, 1000.0);
+    sim.actors[mob].target = Some(TANK);
+    let v = sim.threat_view(mob, TANK);
+    assert_eq!(v.tank, TankThreat::Secure);
+    assert_eq!(sim.threat_view(mob, MELEE).personal, PersonalThreat::Safe);
+    // DPS climbs to 95% of the 110% melee threshold: contested / warning.
+    sim.add_threat(mob, MELEE, 1045.0);
+    assert_eq!(sim.threat_view(mob, TANK).tank, TankThreat::Contested);
+    let dv = sim.threat_view(mob, MELEE);
+    assert_eq!(dv.personal, PersonalThreat::Warning);
+    assert!((dv.pull_at - 1100.0).abs() < 1e-3);
+    // The DPS pulls it: lost for the tank, attacking for the DPS.
+    sim.add_threat(mob, MELEE, 100.0);
+    sim.actors[mob].target = sim.select_enemy_target(mob);
+    assert_eq!(sim.threat_view(mob, TANK).tank, TankThreat::Lost);
+    assert_eq!(
+        sim.threat_view(mob, MELEE).personal,
+        PersonalThreat::Attacking
+    );
+    // A taunt immediately makes it secure again.
+    let s = slot(&sim, TANK, AbilityId::Challenge);
+    sim.try_cast(TANK, s, Some(mob)).unwrap();
+    assert_eq!(sim.threat_view(mob, TANK).tank, TankThreat::Secure);
+}

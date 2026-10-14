@@ -563,6 +563,96 @@ impl HazardState {
     }
 }
 
+/// How close someone must get (fraction of the threat needed to pull) before the
+/// UI calls the threat "contested".
+pub const THREAT_WARNING: f32 = 0.8;
+
+/// Threat situation of one enemy, seen from a tank's perspective.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TankThreat {
+    /// Not in combat.
+    Idle,
+    /// Attacking me (or taunted by me) and nobody is close to pulling it.
+    Secure,
+    /// Attacking a tank, but someone is within `THREAT_WARNING` of pulling it.
+    Contested,
+    /// Held by another tank, nobody close.
+    OtherTank,
+    /// Attacking a non-tank: needs a taunt.
+    Lost,
+}
+
+/// Threat situation of one enemy, seen from a non-tank's perspective.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PersonalThreat {
+    Idle,
+    /// Comfortably below the threshold.
+    Safe,
+    /// Within `THREAT_WARNING` of pulling aggro.
+    Warning,
+    /// The enemy is attacking me.
+    Attacking,
+}
+
+/// Threat information about `enemy` for `viewer` (see `Sim::threat_view`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ThreatView {
+    pub attacking: Option<ActorId>,
+    pub taunted: bool,
+    /// Viewer's threat.
+    pub mine: f32,
+    /// Highest threat of anyone other than the viewer.
+    pub top_other: Option<(ActorId, f32)>,
+    /// Threat the viewer needs to pull the enemy (0 if the viewer already holds it).
+    pub pull_at: f32,
+    /// Viewer's threat as a fraction of `pull_at` (0 when holding it).
+    pub pull_fraction: f32,
+    /// Closest competitor's fraction of the threat needed to pull from the holder.
+    pub contest: f32,
+    pub tank: TankThreat,
+    pub personal: PersonalThreat,
+}
+
+/// Per-second resource regeneration for an actor (negative for rage decay).
+pub fn resource_regen_per_sec(a: &Actor, in_combat: bool, now: f32) -> f32 {
+    match a.resource_kind {
+        ResourceKind::Mana => {
+            let rate = if !in_combat {
+                OOC_MANA_REGEN
+            } else if now - a.last_mana_spend >= FIVE_SECOND_RULE {
+                a.mana_regen
+            } else {
+                a.mana_regen * CASTING_REGEN_FRACTION
+            };
+            a.max_resource * rate
+        }
+        ResourceKind::Energy => ENERGY_PER_SECOND,
+        ResourceKind::Rage => {
+            if in_combat {
+                0.0
+            } else {
+                -RAGE_DECAY_PER_SECOND
+            }
+        }
+    }
+}
+
+/// Action-bar view of one ability (see `Sim::ability_state`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AbilityState {
+    pub cooldown_left: f32,
+    pub cooldown_total: f32,
+    pub gcd_left: f32,
+    pub gcd_total: f32,
+    pub cost: f32,
+    /// Seconds until the resource cost is affordable (`None` = not by regeneration).
+    pub resource_in: Option<f32>,
+    /// `None` when the ability has no target to measure (self abilities, no target).
+    pub in_range: Option<bool>,
+    /// Exactly what would happen if pressed now.
+    pub result: Result<(), CastError>,
+}
+
 /// Everything about how one hit is resolved.
 #[derive(Debug, Clone)]
 pub struct DamageSpec {
@@ -617,7 +707,8 @@ pub struct Sim {
     pub leader: ActorId,
     pub leader_heading: V2,
     pub options: RunOptions,
-    pending_player_cast: Option<usize>,
+    /// Queued ability press: slot and optional explicit (mouseover) target.
+    pending_player_cast: Option<(usize, Option<ActorId>)>,
     /// The final boss (shown in the boss frame).
     pub boss: ActorId,
     pub phase2_at: Option<f32>,
@@ -973,6 +1064,137 @@ impl Sim {
         });
     }
 
+    /// Current resource regeneration (per second) of an actor, exactly as `regen` applies it.
+    pub fn resource_rate(&self, id: ActorId) -> f32 {
+        resource_regen_per_sec(&self.actors[id], self.in_combat(id), self.time)
+    }
+
+    /// Seconds until the five-second rule lets full mana regeneration resume (0 if active).
+    pub fn five_second_rule_left(&self, id: ActorId) -> f32 {
+        let a = &self.actors[id];
+        if a.resource_kind != ResourceKind::Mana || !self.in_combat(id) {
+            return 0.0;
+        }
+        (FIVE_SECOND_RULE - (self.time - a.last_mana_spend)).max(0.0)
+    }
+
+    /// Everything the action bar needs to know about one ability, computed from the
+    /// same rules as `validate_cast`.
+    pub fn ability_state(
+        &self,
+        caster: ActorId,
+        slot: usize,
+        target: Option<ActorId>,
+    ) -> AbilityState {
+        let a = &self.actors[caster];
+        let def = a.abilities[slot].def();
+        let rate = self.resource_rate(caster);
+        let missing = (def.cost - a.resource).max(0.0);
+        let resource_in = if missing <= 0.0 {
+            Some(0.0)
+        } else if rate > 0.0 {
+            Some(missing / rate)
+        } else {
+            None
+        };
+        // Range only matters for targeted abilities with a resolvable target.
+        let range_target = match def.target {
+            TargetRule::SelfOnly => None,
+            TargetRule::Enemy => {
+                target.filter(|&t| self.actors[t].alive && self.is_hostile(caster, t))
+            }
+            TargetRule::Ally => target
+                .filter(|&t| self.actors[t].alive && !self.is_hostile(caster, t))
+                .or(Some(caster)),
+        };
+        let in_range = range_target.map(|t| self.reach(caster, t, def.range));
+        AbilityState {
+            cooldown_left: a.cooldowns[slot],
+            cooldown_total: def.cooldown,
+            gcd_left: a.gcd,
+            gcd_total: GCD,
+            cost: def.cost,
+            resource_in,
+            in_range,
+            result: self.validate_cast(caster, slot, target).map(|_| ()),
+        }
+    }
+
+    /// Threat factor someone needs over the current target's threat to take the
+    /// enemy: 1.1 within the enemy's melee reach, 1.3 outside (same rule as
+    /// `select_enemy_target`).
+    fn pull_factor(&self, enemy: ActorId, who: ActorId) -> f32 {
+        if self.reach(enemy, who, self.actors[enemy].attack_range) {
+            SWITCH_MELEE
+        } else {
+            SWITCH_RANGED
+        }
+    }
+
+    /// Read-only threat summary of `enemy` for `viewer`, from the real threat table.
+    pub fn threat_view(&self, enemy: ActorId, viewer: ActorId) -> ThreatView {
+        let e = &self.actors[enemy];
+        let mine = self.threat(enemy, viewer);
+        let engaged = e.is_engaged_enemy();
+        let attacking = if engaged { e.target } else { None };
+        let taunted = e.taunted_by().is_some();
+        let mut top_other: Option<(ActorId, f32)> = None;
+        if let Some(es) = &e.enemy {
+            for t in es
+                .threat
+                .iter()
+                .filter(|t| t.actor != viewer && self.actors[t.actor].alive)
+            {
+                if top_other.is_none_or(|(_, v)| t.value > v) {
+                    top_other = Some((t.actor, t.value));
+                }
+            }
+        }
+        // How close anyone (other than the holder) is to pulling it.
+        let mut contest: f32 = 0.0;
+        if let (Some(holder), Some(es)) = (attacking, &e.enemy) {
+            let held = self.threat(enemy, holder).max(1.0);
+            for t in es
+                .threat
+                .iter()
+                .filter(|t| t.actor != holder && self.actors[t.actor].alive)
+            {
+                contest = contest.max(t.value / (held * self.pull_factor(enemy, t.actor)));
+            }
+        }
+        let (pull_at, pull_fraction) = match attacking {
+            Some(h) if h != viewer => {
+                let need = self.threat(enemy, h).max(1.0) * self.pull_factor(enemy, viewer);
+                (need, mine / need)
+            }
+            _ => (0.0, 0.0),
+        };
+        let tank = match attacking {
+            None => TankThreat::Idle,
+            Some(h) if !self.is_tank(h) => TankThreat::Lost,
+            _ if contest >= THREAT_WARNING && !taunted => TankThreat::Contested,
+            Some(h) if h == viewer => TankThreat::Secure,
+            Some(_) => TankThreat::OtherTank,
+        };
+        let personal = match attacking {
+            None => PersonalThreat::Idle,
+            Some(h) if h == viewer => PersonalThreat::Attacking,
+            _ if pull_fraction >= THREAT_WARNING => PersonalThreat::Warning,
+            _ => PersonalThreat::Safe,
+        };
+        ThreatView {
+            attacking,
+            taunted,
+            mine,
+            top_other,
+            pull_at,
+            pull_fraction,
+            contest,
+            tank,
+            personal,
+        }
+    }
+
     pub fn label(&self, id: ActorId, slot: usize) -> Label {
         self.actors[id].ability_labels[slot].clone()
     }
@@ -1005,7 +1227,16 @@ impl Sim {
 
     /// Queue an ability press (slot 0..5) to be resolved on the next tick.
     pub fn queue_player_cast(&mut self, slot: usize) {
-        self.pending_player_cast = Some(slot);
+        self.pending_player_cast = Some((slot, None));
+    }
+
+    /// Queue an ability press on an explicit target (e.g. a mouseover party frame)
+    /// without changing the player's selected target. For friendly spells the
+    /// target order is: this target if it is a living ally, then the selected
+    /// target if it is a living ally, then the player. Hostile spells always use
+    /// the selected target. The simulation validates everything as usual.
+    pub fn queue_player_cast_on(&mut self, slot: usize, target: Option<ActorId>) {
+        self.pending_player_cast = Some((slot, target));
     }
 
     /// Toggle auto-attack on the player's current target.
@@ -1141,10 +1372,19 @@ impl Sim {
     }
 
     fn process_player_cast(&mut self) {
-        let (Some(p), Some(slot)) = (self.player, self.pending_player_cast.take()) else {
+        let (Some(p), Some((slot, explicit))) = (self.player, self.pending_player_cast.take())
+        else {
             return;
         };
-        let target = self.actors[p].target;
+        let selected = self.actors[p].target;
+        let friendly = |t: ActorId| self.actors[t].alive && !self.is_hostile(p, t);
+        let rule = self.actors[p].abilities.get(slot).map(|a| a.def().target);
+        let target = match rule {
+            Some(TargetRule::Ally) => explicit
+                .filter(|&t| friendly(t))
+                .or(selected.filter(|&t| friendly(t))),
+            _ => selected,
+        };
         if let Err(reason) = self.try_cast(p, slot, target) {
             let what = self.actors[p]
                 .ability_labels
@@ -1165,13 +1405,15 @@ impl Sim {
         }
     }
 
-    /// Attempt to use ability `slot`. Validates state, resources, target and range.
-    pub fn try_cast(
-        &mut self,
+    /// Check whether `caster` could use ability `slot` on `target` right now,
+    /// without changing anything. Returns the resolved target. `try_cast` uses
+    /// exactly this check, so UI previews can never disagree with the rules.
+    pub fn validate_cast(
+        &self,
         caster: ActorId,
         slot: usize,
         target: Option<ActorId>,
-    ) -> Result<(), CastError> {
+    ) -> Result<ActorId, CastError> {
         let a = &self.actors[caster];
         if !a.alive {
             return Err(CastError::Dead);
@@ -1231,12 +1473,25 @@ impl Sim {
         if def.target != TargetRule::SelfOnly && !self.reach(caster, target, def.range) {
             return Err(CastError::OutOfRange);
         }
+        if def.cast_time > 0.0
+            && self.actors[caster].controller == Controller::Player
+            && self.actors[caster].move_dir.len_sq() > 0.0
+        {
+            return Err(CastError::Moving);
+        }
+        Ok(target)
+    }
+
+    /// Attempt to use ability `slot`. Validates state, resources, target and range.
+    pub fn try_cast(
+        &mut self,
+        caster: ActorId,
+        slot: usize,
+        target: Option<ActorId>,
+    ) -> Result<(), CastError> {
+        let target = self.validate_cast(caster, slot, target)?;
+        let def = self.actors[caster].abilities[slot].def();
         if def.cast_time > 0.0 {
-            if self.actors[caster].controller == Controller::Player
-                && self.actors[caster].move_dir.len_sq() > 0.0
-            {
-                return Err(CastError::Moving);
-            }
             let name = self.label(caster, slot);
             let a = &mut self.actors[caster];
             a.cast = Some(Cast {
@@ -2547,26 +2802,8 @@ impl Sim {
             if !a.alive {
                 continue;
             }
-            match a.resource_kind {
-                ResourceKind::Mana => {
-                    let rate = if !in_combat {
-                        OOC_MANA_REGEN
-                    } else if now - a.last_mana_spend >= FIVE_SECOND_RULE {
-                        a.mana_regen
-                    } else {
-                        a.mana_regen * CASTING_REGEN_FRACTION
-                    };
-                    a.resource = (a.resource + a.max_resource * rate * DT).min(a.max_resource);
-                }
-                ResourceKind::Energy => {
-                    a.resource = (a.resource + ENERGY_PER_SECOND * DT).min(a.max_resource);
-                }
-                ResourceKind::Rage => {
-                    if !in_combat {
-                        a.resource = (a.resource - RAGE_DECAY_PER_SECOND * DT).max(0.0);
-                    }
-                }
-            }
+            let rate = resource_regen_per_sec(a, in_combat, now);
+            a.resource = (a.resource + rate * DT).clamp(0.0, a.max_resource);
             if !in_combat {
                 a.hp = (a.hp + a.max_hp * OOC_HP_REGEN * DT).min(a.max_hp);
             }
