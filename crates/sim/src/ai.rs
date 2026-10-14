@@ -173,6 +173,19 @@ impl AiProfile {
     }
 }
 
+/// Profile parameters adjusted by what this character has learned:
+/// * familiarity (0..1, from past clears of this dungeon): up to 40% faster
+///   reactions, +0.6 m danger margin and +0.4 s interrupt window;
+/// * alertness (this run, from avoidable hits taken): reaction time − alertness.
+pub fn params_of(a: &crate::sim::Actor) -> ProfileParams {
+    let mut p = a.profile.params();
+    let f = a.familiarity.clamp(0.0, 1.0);
+    p.reaction_time = (p.reaction_time * (1.0 - 0.4 * f) - a.alertness).max(0.1);
+    p.danger_margin += 0.6 * f;
+    p.interrupt_window += 0.4 * f;
+    p
+}
+
 /// A circle to stay out of: a telegraph or an (about to be) active hazard.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Danger {
@@ -332,7 +345,7 @@ pub fn compute_blackboard(sim: &Sim) -> Blackboard {
             let a = sim.actor(p);
             a.controller == crate::sim::Controller::Ai
                 && a.ability_slot(AbilityId::Hex).is_some()
-                && a.profile.params().use_cc
+                && params_of(a).use_cc
         })
         .collect();
     let already_hexed = b
@@ -471,7 +484,7 @@ fn point_safe(sim: &Sim, p: V2, radius: f32, margin: f32) -> bool {
 /// If standing in a noticed danger zone, the nearest safe point.
 pub fn escape_point(sim: &Sim, id: ActorId) -> Option<V2> {
     let me = sim.actor(id);
-    let p = me.profile.params();
+    let p = params_of(me);
     let margin = p.danger_margin;
     let danger = sim.board.dangers.iter().find(|d| {
         d.age >= p.reaction_time && me.pos.dist(d.center) <= d.radius + me.radius + margin
@@ -525,7 +538,7 @@ fn in_frontal_cone(sim: &Sim, id: ActorId, p: V2, margin: f32) -> bool {
 /// Keep a desired position out of danger zones by nudging it outward.
 fn safe_spot(sim: &Sim, id: ActorId, want: V2) -> V2 {
     let me = sim.actor(id);
-    let margin = me.profile.params().danger_margin;
+    let margin = params_of(me).danger_margin;
     let want = if !sim.is_tank(id) && in_frontal_cone(sim, id, want, margin) {
         // Swing the spot around to the back of the cleaving enemy.
         let e = sim
@@ -580,7 +593,7 @@ pub fn party_decision(sim: &Sim, id: ActorId) -> Decision {
     if sim.board.engaged.is_empty() {
         return out_of_combat(sim, id);
     }
-    let params = me.profile.params();
+    let params = params_of(me);
     if !sim.is_tank(id) && in_frontal_cone(sim, id, me.pos, params.danger_margin * 0.5) {
         let goal = safe_spot(sim, id, me.pos);
         if goal.dist(me.pos) > 0.2 {
@@ -597,7 +610,7 @@ pub fn party_decision(sim: &Sim, id: ActorId) -> Decision {
         && let Some(ab) = interrupt_ability(sim, id)
         && let Some(cast) = &sim.actor(enemy).cast
     {
-        let window = me.profile.params().interrupt_window;
+        let window = params_of(me).interrupt_window;
         if let Some(c) = usable(sim, id, ab, enemy) {
             if cast.remaining <= window {
                 return Decision {
@@ -694,7 +707,7 @@ fn out_of_combat(sim: &Sim, id: ActorId) -> Decision {
 /// then walk to the next uncleared encounter and pull it.
 fn autopilot(sim: &Sim, id: ActorId) -> Decision {
     let me = sim.actor(id);
-    let p = me.profile.params();
+    let p = params_of(me);
     let mut d = Decision {
         target: Some(None),
         ..Default::default()
@@ -763,7 +776,7 @@ fn behind_spot(sim: &Sim, id: ActorId, target: ActorId) -> V2 {
 /// is smallest, AoE threat on packs, defensives on low HP or incoming pulses.
 fn tank(sim: &Sim, id: ActorId) -> Decision {
     let me = sim.actor(id);
-    let p = me.profile.params();
+    let p = params_of(me);
     let engaged: Vec<ActorId> = sim
         .board
         .engaged
@@ -906,7 +919,7 @@ fn tank(sim: &Sim, id: ActorId) -> Decision {
 
 fn healer(sim: &Sim, id: ActorId) -> Decision {
     let me = sim.actor(id);
-    let p = me.profile.params();
+    let p = params_of(me);
     let mut d = Decision::default();
     // Cancel a big heal that would be pure overheal.
     if let Some(c) = &me.cast {
@@ -1053,7 +1066,7 @@ fn ranged_spot(sim: &Sim, id: ActorId, dist: f32) -> Option<V2> {
 
 fn dps(sim: &Sim, id: ActorId) -> Decision {
     let me = sim.actor(id);
-    let p = me.profile.params();
+    let p = params_of(me);
     let ranged = me.role() == Some(Role::RangedDps);
     let mut d = Decision::default();
     if me.cast.is_some() {

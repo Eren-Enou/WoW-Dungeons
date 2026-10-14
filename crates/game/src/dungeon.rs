@@ -140,7 +140,7 @@ fn start_run(
         .map(|d| d.as_millis() as u64)
         .unwrap_or(1)
         % 1_000_000;
-    let party = data.profile.party_specs(true);
+    let party = data.profile.party_specs_for(&content.dungeon.id, true);
     let autoplay = demo.as_ref().is_some_and(|d| d.autoplay);
     let options = RunOptions {
         difficulty: data.profile.selected_difficulty.clone(),

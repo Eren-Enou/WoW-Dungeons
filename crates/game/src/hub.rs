@@ -577,9 +577,13 @@ fn party_tab(p: &mut ChildSpawnerCommands, data: &GameData) {
             label(
                 r,
                 format!(
-                    "runs {}  gear {}",
+                    "runs {}  gear {}  familiarity {:.0}%",
                     c.runs_completed,
-                    c.equipment.slots.len()
+                    c.equipment.slots.len(),
+                    100.0
+                        * dungeon_sim::profile::familiarity(
+                            c.clears.get(&pr.selected_dungeon).copied().unwrap_or(0)
+                        )
                 ),
                 12.0,
                 Color::srgb(0.7, 0.7, 0.7),

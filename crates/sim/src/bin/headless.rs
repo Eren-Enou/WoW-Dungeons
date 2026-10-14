@@ -10,7 +10,9 @@ use dungeon_sim::ClassId;
 use dungeon_sim::ai::AiProfile;
 use dungeon_sim::content::{Content, ContentLibrary};
 use dungeon_sim::metrics::RunSummary;
-use dungeon_sim::runner::{DEFAULT_MAX_SECONDS, batch_stats, party_at_level, raid_party, run_with};
+use dungeon_sim::runner::{
+    DEFAULT_MAX_SECONDS, batch_stats, party_at_level, raid_party, run_with, with_familiarity,
+};
 use dungeon_sim::sim::PartyMemberSpec;
 use std::collections::BTreeMap;
 use std::process::ExitCode;
@@ -19,7 +21,7 @@ use std::time::Instant;
 const USAGE: &str = "usage: dungeon-headless [--seed N] [--runs N] [--dungeon ID] [--content PATH] \
 [--difficulty ID] [--class warden|mender|striker|arcanist] [--level N] \
 [--profile conservative|balanced|aggressive|support|mechanic] [--party-size N] \
-[--compare-profiles] [--bench] [--breakdown] [--max-seconds S] [--log FILE] [--json] [--quiet]";
+[--compare-profiles] [--bench] [--breakdown] [--familiarity 0..1] [--max-seconds S] [--log FILE] [--json] [--quiet]";
 
 struct Args {
     seed: u64,
@@ -38,6 +40,7 @@ struct Args {
     json: bool,
     quiet: bool,
     breakdown: bool,
+    familiarity: f32,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -58,6 +61,7 @@ fn parse_args() -> Result<Args, String> {
         json: false,
         quiet: false,
         breakdown: false,
+        familiarity: 0.0,
     };
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
@@ -103,6 +107,11 @@ fn parse_args() -> Result<Args, String> {
             "--json" => args.json = true,
             "--quiet" => args.quiet = true,
             "--breakdown" => args.breakdown = true,
+            "--familiarity" => {
+                args.familiarity = val("--familiarity")?
+                    .parse()
+                    .map_err(|e| format!("--familiarity: {e}"))?
+            }
             "--compare-profiles" => args.compare_profiles = true,
             "--bench" => args.bench = true,
             "-h" | "--help" => return Err(USAGE.into()),
@@ -121,10 +130,11 @@ fn build_party(args: &Args, content: &Content, profile: AiProfile) -> Vec<PartyM
     } else {
         args.level
     };
-    match args.party_size {
+    let party = match args.party_size {
         Some(n) if n != 5 => raid_party(n, level, profile),
         _ => party_at_level(args.class, level, profile),
-    }
+    };
+    with_familiarity(party, args.familiarity)
 }
 
 #[derive(Default)]

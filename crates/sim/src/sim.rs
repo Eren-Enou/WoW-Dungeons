@@ -46,6 +46,10 @@ pub const RAGE_DECAY_PER_SECOND: f32 = 2.0;
 pub const ENRAGE_MULT: f32 = 5.0;
 /// [orig] Summoned adds inherit this fraction of their summoner's threat table.
 pub const SUMMON_THREAT_INHERIT: f32 = 0.5;
+/// [orig] In-run learning: each avoidable hit taken adds alertness (seconds of
+/// reaction time saved), up to the cap.
+pub const ALERTNESS_PER_HIT: f32 = 0.1;
+pub const MAX_ALERTNESS: f32 = 0.3;
 
 pub type ActorId = usize;
 
@@ -78,6 +82,8 @@ pub struct PartyMemberSpec {
     pub gear: ItemStats,
     pub player_controlled: bool,
     pub profile: AiProfile,
+    /// 0..1 experience with this dungeon (from past clears); sharpens the AI.
+    pub familiarity: f32,
 }
 
 impl PartyMemberSpec {
@@ -89,6 +95,7 @@ impl PartyMemberSpec {
             gear: ItemStats::default(),
             player_controlled: false,
             profile: AiProfile::Balanced,
+            familiarity: 0.0,
         }
     }
 }
@@ -249,6 +256,10 @@ pub struct Actor {
     pub class: Option<ClassId>,
     pub controller: Controller,
     pub profile: AiProfile,
+    /// 0..1 dungeon familiarity (persistent learning).
+    pub familiarity: f32,
+    /// 0..0.3 in-run alertness, raised by taking avoidable damage.
+    pub alertness: f32,
     pub pos: V2,
     pub facing: f32,
     pub radius: f32,
@@ -626,6 +637,8 @@ impl Sim {
                     Controller::Ai
                 },
                 profile: spec.profile,
+                familiarity: spec.familiarity.clamp(0.0, 1.0),
+                alertness: 0.0,
                 pos: sim.nav.project(entrance + offset),
                 facing: 0.0,
                 radius: PARTY_RADIUS,
@@ -746,6 +759,8 @@ impl Sim {
             class: None,
             controller: Controller::Ai,
             profile: AiProfile::Balanced,
+            familiarity: 0.0,
+            alertness: 0.0,
             pos,
             facing: home_facing,
             radius: t.radius,
@@ -1653,6 +1668,9 @@ impl Sim {
         self.metrics.actors[dst].damage_taken += applied;
         if spec.avoidable && self.actors[dst].team == Team::Party {
             self.metrics.actors[dst].avoidable_taken += applied + absorbed;
+            // Getting hit by a mechanic makes this character more alert for the run.
+            let a = &mut self.actors[dst];
+            a.alertness = (a.alertness + ALERTNESS_PER_HIT).min(MAX_ALERTNESS);
         }
         // Rage: white melee swings dealt, and any damage taken.
         let lvl_src = att.level;

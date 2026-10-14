@@ -122,6 +122,14 @@ pub struct Companion {
     pub xp: u32,
     #[serde(default)]
     pub profile: AiProfile,
+    /// Victories per dungeon id (drives AI familiarity).
+    #[serde(default)]
+    pub clears: BTreeMap<String, u32>,
+}
+
+/// [orig] Familiarity grows with clears of a dungeon: 5 clears = fully familiar.
+pub fn familiarity(clears: u32) -> f32 {
+    (clears as f32 / 5.0).min(1.0)
 }
 
 fn one() -> u32 {
@@ -311,6 +319,7 @@ impl Profile {
             level: 1,
             xp: 0,
             profile: AiProfile::Balanced,
+            clears: BTreeMap::new(),
         })
         .collect();
         let mut p = Profile {
@@ -421,6 +430,11 @@ impl Profile {
 
     /// Party specs for a run: player first, then recruited companions.
     pub fn party_specs(&self, player_controlled: bool) -> Vec<PartyMemberSpec> {
+        self.party_specs_for("", player_controlled)
+    }
+
+    /// Party specs with companions' familiarity for `dungeon`.
+    pub fn party_specs_for(&self, dungeon: &str, player_controlled: bool) -> Vec<PartyMemberSpec> {
         let mut specs = vec![PartyMemberSpec {
             name: self.player_name.clone(),
             class: self.player_class,
@@ -428,6 +442,7 @@ impl Profile {
             gear: self.player_equipment.stats(),
             player_controlled,
             profile: AiProfile::Balanced,
+            familiarity: 0.0,
         }];
         for c in self.party_companions() {
             specs.push(PartyMemberSpec {
@@ -437,6 +452,7 @@ impl Profile {
                 gear: c.equipment.stats(),
                 player_controlled: false,
                 profile: c.profile,
+                familiarity: familiarity(c.clears.get(dungeon).copied().unwrap_or(0)),
             });
         }
         specs
@@ -634,6 +650,7 @@ impl Profile {
         for c in self.roster.iter_mut().filter(|c| party_ids.contains(&c.id)) {
             if victory {
                 c.runs_completed += 1;
+                *c.clears.entry(report.dungeon.clone()).or_default() += 1;
             }
             let gained = xp_for(c.level);
             if let Some(l) = add_xp(&mut c.level, &mut c.xp, gained) {
@@ -867,6 +884,7 @@ mod v1 {
                     level: 1,
                     xp: 0,
                     profile: AiProfile::Balanced,
+                    clears: BTreeMap::new(),
                 })
                 .collect();
             p.party = self.party;

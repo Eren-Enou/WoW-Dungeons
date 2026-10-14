@@ -31,6 +31,14 @@ pub fn party_at_level(
     specs
 }
 
+/// Set every member's dungeon familiarity (0..1).
+pub fn with_familiarity(mut party: Vec<PartyMemberSpec>, familiarity: f32) -> Vec<PartyMemberSpec> {
+    for s in party.iter_mut() {
+        s.familiarity = familiarity;
+    }
+    party
+}
+
 /// A raid-style group of `size` members: roughly 1 tank per 5 (min 1), 1 healer
 /// per 4 (min 1), the rest alternating ranged and melee damage dealers.
 pub fn raid_party(size: usize, level: u32, profile: AiProfile) -> Vec<PartyMemberSpec> {

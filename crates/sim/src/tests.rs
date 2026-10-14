@@ -1503,3 +1503,57 @@ fn summoned_adds_inherit_half_the_summoners_threat() {
         assert_eq!(sim.actors[a].target, Some(TANK));
     }
 }
+
+#[test]
+fn familiarity_and_alertness_sharpen_reactions() {
+    let mut sim = new_sim();
+    let base = ai::params_of(&sim.actors[RANGED]).reaction_time;
+    sim.actors[RANGED].familiarity = 1.0;
+    let familiar = ai::params_of(&sim.actors[RANGED]);
+    assert!(familiar.reaction_time < base * 0.7);
+    assert!(familiar.interrupt_window > AiProfile::Balanced.params().interrupt_window);
+    // Taking an avoidable hit raises alertness for the rest of the run.
+    let mut spec = DamageSpec::new(
+        10.0,
+        School::Fire,
+        HitKind::Unavoidable,
+        Label::from("Ring"),
+    );
+    spec.avoidable = true;
+    let src = sim.boss;
+    sim.deal(src, MELEE, spec.clone());
+    assert!(sim.actors[MELEE].alertness > 0.0);
+    for _ in 0..10 {
+        sim.deal(src, MELEE, spec.clone());
+    }
+    assert!((sim.actors[MELEE].alertness - crate::sim::MAX_ALERTNESS).abs() < 1e-6);
+}
+
+#[test]
+fn victories_build_companion_familiarity() {
+    use crate::profile::{Profile, RunReport};
+    let content = Content::builtin();
+    let mut p = Profile::new_default();
+    let report = RunReport {
+        dungeon: content.dungeon.id.clone(),
+        difficulty: "normal".into(),
+        reward_multiplier: 1.0,
+        rarity_bonus: 0,
+        outcome: RunOutcome::Victory,
+        cleared: vec![],
+        kills: vec![],
+        duration: 1.0,
+        deaths: 0,
+        seed: 1,
+    };
+    for _ in 0..3 {
+        p.grant_rewards(&content, &report);
+    }
+    let specs = p.party_specs_for(&content.dungeon.id, true);
+    assert_eq!(specs[0].familiarity, 0.0, "the player is not AI-driven");
+    for s in &specs[1..] {
+        assert!((s.familiarity - 0.6).abs() < 1e-6, "{}", s.familiarity);
+    }
+    let other = p.party_specs_for("gloomroot_warrens", true);
+    assert!(other[1..].iter().all(|s| s.familiarity == 0.0));
+}
