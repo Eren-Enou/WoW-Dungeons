@@ -31,6 +31,16 @@ level_bonus = 2
 reward_multiplier = 2.0
 rarity_bonus = 1
 
+# For 10-person raid groups (Party tab -> Raid (10)).
+[[difficulties]]
+id = "raid10"
+name = "Raid (10)"
+hp = 2.6
+damage = 1.6
+level_bonus = 1
+reward_multiplier = 1.5
+rarity_bonus = 1
+
 # Walkable floor: overlapping rectangles. Neighbours must overlap to connect.
 [[dungeon.areas]]
 name = "Flooded Antechamber"

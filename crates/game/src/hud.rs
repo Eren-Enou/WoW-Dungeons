@@ -102,15 +102,28 @@ pub fn spawn_hud(mut commands: Commands, run: Res<ActiveRun>) {
         )],
     ));
 
-    // Party frames (top-left).
+    // Party frames (top-left); raid groups use compact two-column frames.
+    let raid = run.sim.party.len() > 5;
+    let (frame_w, name_size, hp_h) = if raid {
+        (150.0, 10.0, 8.0)
+    } else {
+        (200.0, 13.0, 12.0)
+    };
     commands
         .spawn((
             Node {
                 position_type: PositionType::Absolute,
                 left: px(10),
                 top: px(10),
-                flex_direction: FlexDirection::Column,
-                row_gap: px(6),
+                flex_direction: FlexDirection::Row,
+                flex_wrap: FlexWrap::Wrap,
+                max_width: px(if raid {
+                    2.0 * (frame_w + 12.0) + 12.0
+                } else {
+                    400.0
+                }),
+                column_gap: px(10),
+                row_gap: px(if raid { 3.0 } else { 6.0 }),
                 padding: UiRect::all(px(6)),
                 ..default()
             },
@@ -122,19 +135,20 @@ pub fn spawn_hud(mut commands: Commands, run: Res<ActiveRun>) {
                 p.spawn(Node {
                     flex_direction: FlexDirection::Column,
                     row_gap: px(2),
+                    width: px(frame_w),
                     ..default()
                 })
                 .with_children(|f| {
-                    f.spawn((Text::new(""), text_font(13.0), HudText::PartyName(i)));
+                    f.spawn((Text::new(""), text_font(name_size), HudText::PartyName(i)));
                     f.spawn(bar(
-                        200.0,
-                        12.0,
+                        frame_w,
+                        hp_h,
                         Color::srgb(0.2, 0.75, 0.3),
                         HudBar::PartyHp(i),
                     ));
                     f.spawn(bar(
-                        200.0,
-                        5.0,
+                        frame_w,
+                        4.0,
                         Color::srgb(0.25, 0.45, 1.0),
                         HudBar::PartyMana(i),
                     ));
@@ -348,7 +362,13 @@ fn update_texts(run: Res<ActiveRun>, mut q: Query<(&mut Text, &mut TextColor, &H
                 } else {
                     Color::srgb(0.6, 0.3, 0.3)
                 };
-                if a.alive {
+                if a.alive && sim.party.len() > 5 {
+                    format!(
+                        "{}{you} {}{targeted}",
+                        a.name,
+                        a.class.map(|c| c.label()).unwrap_or("")
+                    )
+                } else if a.alive {
                     format!(
                         "F{} {}{you} - {}  {:.0}/{:.0}{targeted}",
                         i + 1,

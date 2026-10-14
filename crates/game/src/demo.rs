@@ -29,6 +29,7 @@ pub struct DemoConfig {
     pub dungeon: Option<String>,
     pub difficulty: Option<String>,
     pub level: Option<u32>,
+    pub group: Option<u32>,
 }
 
 #[derive(Resource, Default)]
@@ -63,6 +64,7 @@ pub fn parse_args() -> DemoConfig {
         dungeon: text("--dungeon"),
         difficulty: text("--difficulty"),
         level: value("--level").map(|l| l as u32),
+        group: value("--group").map(|g| g as u32),
     }
 }
 
@@ -111,6 +113,9 @@ fn demo_driver(
             }
             if let Some(d) = &cfg.difficulty {
                 data.profile.selected_difficulty = d.clone();
+            }
+            if let Some(g) = cfg.group {
+                data.profile.set_group_size(g);
             }
             if let Some(l) = cfg.level {
                 data.profile.player_level = l;

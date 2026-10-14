@@ -1609,3 +1609,51 @@ fn sandbox_overrides_scale_health_timers_and_rewards() {
         Overrides::MAX
     );
 }
+
+#[test]
+fn raid_groups_auto_fill_two_tanks_and_two_healers() {
+    use crate::class::Role;
+    let mut p = crate::profile::Profile::new_default();
+    assert_eq!(p.roster.len(), 12);
+    for class in ClassId::ALL {
+        p.player_class = class;
+        p.set_group_size(10);
+        assert_eq!(p.party.len(), 9);
+        let mut roles: Vec<Role> = p
+            .party_companions()
+            .iter()
+            .map(|c| c.class.role())
+            .collect();
+        roles.push(class.role());
+        assert_eq!(
+            roles.iter().filter(|r| **r == Role::Tank).count(),
+            2,
+            "{class:?}"
+        );
+        assert_eq!(
+            roles.iter().filter(|r| **r == Role::Healer).count(),
+            2,
+            "{class:?}"
+        );
+        assert!(
+            p.party_warnings().is_empty(),
+            "{class:?}: {:?}",
+            p.party_warnings()
+        );
+    }
+    p.set_group_size(5);
+    assert_eq!(p.party.len(), 4);
+    // Old saves with 8 companions get the new recruits.
+    p.roster.truncate(8);
+    p.ensure_roster();
+    assert_eq!(p.roster.len(), 12);
+}
+
+#[test]
+fn raid10_difficulty_exists_and_ten_person_group_can_clear() {
+    let c = Content::builtin_warrens();
+    assert!(c.difficulty("raid10").is_some());
+    let party = raid_party(10, 6, AiProfile::Balanced);
+    let (_, s) = run_with(&c, &party, 2, 1500.0, "raid10");
+    assert_eq!(s.outcome, RunOutcome::Victory, "{s:?}");
+}

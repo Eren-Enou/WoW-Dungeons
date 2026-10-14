@@ -18,7 +18,44 @@ use std::path::{Path, PathBuf};
 
 pub const PROFILE_VERSION: u32 = 2;
 pub const SAVE_DIR_ENV_VAR: &str = "DUNGEON_SAVE_DIR";
+/// Companions in a standard 5-person party.
 pub const PARTY_COMPANIONS: usize = 4;
+/// Group sizes the hub offers: a party or a 10-person raid.
+pub const GROUP_SIZES: [u32; 2] = [5, 10];
+
+/// The default roster: three companions of every class.
+const DEFAULT_ROSTER: [(&str, &str, ClassId); 12] = [
+    ("brannoc", "Brannoc", ClassId::Warden),
+    ("ysolde", "Ysolde", ClassId::Warden),
+    ("thessaly", "Thessaly", ClassId::Mender),
+    ("orrin", "Orrin", ClassId::Mender),
+    ("kael", "Kael", ClassId::Striker),
+    ("dovic", "Dovic", ClassId::Striker),
+    ("mirelle", "Mirelle", ClassId::Arcanist),
+    ("senna", "Senna", ClassId::Arcanist),
+    ("hale", "Hale", ClassId::Warden),
+    ("ivra", "Ivra", ClassId::Mender),
+    ("tamsin", "Tamsin", ClassId::Striker),
+    ("corvo", "Corvo", ClassId::Arcanist),
+];
+
+fn new_companion(id: &str, name: &str, class: ClassId) -> Companion {
+    Companion {
+        id: id.to_string(),
+        name: name.to_string(),
+        class,
+        equipment: Equipment::default(),
+        runs_completed: 0,
+        level: 1,
+        xp: 0,
+        profile: AiProfile::Balanced,
+        clears: BTreeMap::new(),
+    }
+}
+
+fn five() -> u32 {
+    5
+}
 const HISTORY_LEN: usize = 20;
 
 /// [orig] Experience needed to go from `level` to `level + 1`.
@@ -173,6 +210,9 @@ pub struct Profile {
     /// In-game sandbox knobs applied to every run.
     #[serde(default)]
     pub sandbox: crate::sim::Overrides,
+    /// 5 (party) or 10 (raid group), including the player.
+    #[serde(default = "five")]
+    pub group_size: u32,
 }
 
 /// Who a piece of gear is being equipped on.
@@ -303,29 +343,10 @@ fn add_xp(level: &mut u32, xp: &mut u32, gained: u32) -> Option<u32> {
 
 impl Profile {
     pub fn new_default() -> Self {
-        let roster = [
-            ("brannoc", "Brannoc", ClassId::Warden),
-            ("ysolde", "Ysolde", ClassId::Warden),
-            ("thessaly", "Thessaly", ClassId::Mender),
-            ("orrin", "Orrin", ClassId::Mender),
-            ("kael", "Kael", ClassId::Striker),
-            ("dovic", "Dovic", ClassId::Striker),
-            ("mirelle", "Mirelle", ClassId::Arcanist),
-            ("senna", "Senna", ClassId::Arcanist),
-        ]
-        .into_iter()
-        .map(|(id, name, class)| Companion {
-            id: id.to_string(),
-            name: name.to_string(),
-            class,
-            equipment: Equipment::default(),
-            runs_completed: 0,
-            level: 1,
-            xp: 0,
-            profile: AiProfile::Balanced,
-            clears: BTreeMap::new(),
-        })
-        .collect();
+        let roster = DEFAULT_ROSTER
+            .iter()
+            .map(|(id, name, class)| new_companion(id, name, *class))
+            .collect();
         let mut p = Profile {
             version: PROFILE_VERSION,
             player_name: "Wayfarer".to_string(),
@@ -344,6 +365,7 @@ impl Profile {
             selected_difficulty: "normal".into(),
             history: Vec::new(),
             sandbox: crate::sim::Overrides::default(),
+            group_size: 5,
         };
         p.auto_fill_party();
         p
@@ -353,15 +375,18 @@ impl Profile {
     /// the rest damage dealers (ranged and melee alternating).
     pub fn auto_fill_party(&mut self) {
         let player_role = self.player_class.role();
+        let max = self.max_companions();
+        // One tank and one healer per five players, including the player.
+        let per_role = (self.group_size as usize / 5).max(1);
         let mut needed: Vec<Role> = Vec::new();
-        if player_role != Role::Tank {
-            needed.push(Role::Tank);
-        }
-        if player_role != Role::Healer {
-            needed.push(Role::Healer);
+        for role in [Role::Tank, Role::Healer] {
+            let have = usize::from(player_role == role);
+            for _ in have..per_role {
+                needed.push(role);
+            }
         }
         let mut dps_cycle = [Role::RangedDps, Role::MeleeDps].into_iter().cycle();
-        while needed.len() < PARTY_COMPANIONS {
+        while needed.len() < max {
             needed.push(dps_cycle.next().expect("cycle never ends"));
         }
         let mut chosen: Vec<String> = Vec::new();
@@ -375,7 +400,7 @@ impl Profile {
             }
         }
         for c in &self.roster {
-            if chosen.len() >= PARTY_COMPANIONS {
+            if chosen.len() >= max {
                 break;
             }
             if !chosen.contains(&c.id) {
@@ -383,6 +408,27 @@ impl Profile {
             }
         }
         self.party = chosen;
+    }
+
+    /// Companions allowed by the current group size.
+    pub fn max_companions(&self) -> usize {
+        (self.group_size.max(2) - 1) as usize
+    }
+
+    /// Switch between a 5-person party and a 10-person raid group.
+    pub fn set_group_size(&mut self, size: u32) {
+        self.group_size = if GROUP_SIZES.contains(&size) { size } else { 5 };
+        self.ensure_roster();
+        self.auto_fill_party();
+    }
+
+    /// Add any default companions missing from an older save.
+    pub fn ensure_roster(&mut self) {
+        for (id, name, class) in DEFAULT_ROSTER {
+            if !self.roster.iter().any(|c| c.id == id) {
+                self.roster.push(new_companion(id, name, class));
+            }
+        }
     }
 
     /// Toggle a companion in or out of the party. Returns false if the party is full.
@@ -393,7 +439,7 @@ impl Profile {
         if let Some(pos) = self.party.iter().position(|id| *id == c.id) {
             self.party.remove(pos);
             true
-        } else if self.party.len() < PARTY_COMPANIONS {
+        } else if self.party.len() < self.max_companions() {
             self.party.push(c.id.clone());
             true
         } else {
@@ -417,11 +463,11 @@ impl Profile {
             .collect();
         roles.push(self.player_class.role());
         let mut w = Vec::new();
-        if self.party.len() < PARTY_COMPANIONS {
+        if self.party.len() < self.max_companions() {
             w.push(format!(
-                "Party has {} of {} companions",
+                "Group has {} of {} companions",
                 self.party.len(),
-                PARTY_COMPANIONS
+                self.max_companions()
             ));
         }
         if !roles.contains(&Role::Tank) {
@@ -761,7 +807,10 @@ impl Profile {
             Err(e) => return Err(ProfileError::Io(e.to_string())),
         };
         Profile::from_json(&text)
-            .map(Some)
+            .map(|mut p| {
+                p.ensure_roster();
+                Some(p)
+            })
             .map_err(|e| ProfileError::Corrupt(format!("{}: {e}", path.display())))
     }
 

@@ -11,7 +11,7 @@ use bevy::ui::Pressed;
 use bevy::ui_widgets::{Activate, Button as UiButton};
 use dungeon_sim::ClassId;
 use dungeon_sim::items::ItemSlot;
-use dungeon_sim::profile::{PARTY_COMPANIONS, Wearer, xp_to_next};
+use dungeon_sim::profile::{GROUP_SIZES, Wearer, xp_to_next};
 
 pub struct HubPlugin;
 
@@ -112,6 +112,7 @@ pub enum HubAction {
     StashPage(i32),
     SelectDungeon(String),
     SelectDifficulty(String),
+    GroupSize(u32),
     Reload,
     /// Change a sandbox knob by a factor (or reset with `Knob::Reset`).
     Sandbox(Knob, f32),
@@ -408,9 +409,8 @@ pub fn apply_action(action: HubAction, data: &mut GameData, ui: &mut HubUi) {
         }
         HubAction::ToggleRecruit(i) => {
             if !data.profile.toggle_recruit(i) {
-                data.flash(format!(
-                    "Party is full ({PARTY_COMPANIONS}) - dismiss someone first"
-                ));
+                let max = data.profile.max_companions();
+                data.flash(format!("Group is full ({max}) - dismiss someone first"));
             }
             ui.companions_dirty = true;
         }
@@ -472,6 +472,11 @@ pub fn apply_action(action: HubAction, data: &mut GameData, ui: &mut HubUi) {
             }
         }
         HubAction::SelectDifficulty(id) => data.profile.selected_difficulty = id,
+        HubAction::GroupSize(n) => {
+            data.profile.set_group_size(n);
+            data.flash(format!("Group size {n}: companions re-balanced"));
+            ui.companions_dirty = true;
+        }
         HubAction::Sandbox(knob, factor) => {
             let o = &mut data.profile.sandbox;
             match knob {
@@ -561,13 +566,25 @@ fn party_tab(p: &mut ChildSpawnerCommands, data: &GameData) {
         button(r, "Change class", HubAction::ChangeClass, false);
         button(r, "Auto-fill party", HubAction::AutoFill, false);
         button(r, "Auto-equip upgrades", HubAction::AutoEquip, false);
+        for n in GROUP_SIZES {
+            button(
+                r,
+                if n == 5 {
+                    "Party (5)".to_string()
+                } else {
+                    format!("Raid ({n})")
+                },
+                HubAction::GroupSize(n),
+                pr.group_size == n,
+            );
+        }
     });
     label(
         p,
         format!(
             "Companions ({}/{} recruited). Click a name to inspect; profile = AI behaviour.",
             pr.party.len(),
-            PARTY_COMPANIONS
+            pr.max_companions()
         ),
         13.0,
         Color::srgb(0.8, 0.8, 0.8),
@@ -600,12 +617,6 @@ fn party_tab(p: &mut ChildSpawnerCommands, data: &GameData) {
                 r,
                 format!("AI: {}", c.profile.label()),
                 HubAction::CycleProfile(i),
-                false,
-            );
-            button(
-                r,
-                "Inspect",
-                HubAction::Inspect(Wearer::Companion(i)),
                 false,
             );
             label(
