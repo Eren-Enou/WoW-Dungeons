@@ -170,6 +170,9 @@ pub struct Profile {
     pub selected_dungeon: String,
     pub selected_difficulty: String,
     pub history: Vec<RunRecord>,
+    /// In-game sandbox knobs applied to every run.
+    #[serde(default)]
+    pub sandbox: crate::sim::Overrides,
 }
 
 /// Who a piece of gear is being equipped on.
@@ -211,7 +214,8 @@ impl RunReport {
         RunReport {
             dungeon: sim.content.dungeon.id.clone(),
             difficulty: sim.difficulty.id.clone(),
-            reward_multiplier: sim.difficulty.reward_multiplier,
+            reward_multiplier: sim.difficulty.reward_multiplier
+                * sim.options.overrides.reward_factor(),
             rarity_bonus: sim.difficulty.rarity_bonus,
             outcome: sim.outcome,
             cleared: sim
@@ -339,6 +343,7 @@ impl Profile {
             selected_dungeon: "sunken_vault".into(),
             selected_difficulty: "normal".into(),
             history: Vec::new(),
+            sandbox: crate::sim::Overrides::default(),
         };
         p.auto_fill_party();
         p

@@ -96,7 +96,7 @@ pub fn run_with(
     let options = RunOptions {
         difficulty: difficulty.to_string(),
         autopilot: true,
-        skip_optional: false,
+        ..Default::default()
     };
     let mut sim = Sim::with_options(content, party, seed, options);
     sim.run_to_end(max_seconds);

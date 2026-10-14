@@ -1557,3 +1557,55 @@ fn victories_build_companion_familiarity() {
     let other = p.party_specs_for("gloomroot_warrens", true);
     assert!(other[1..].iter().all(|s| s.familiarity == 0.0));
 }
+
+#[test]
+fn sandbox_overrides_scale_health_timers_and_rewards() {
+    use crate::sim::Overrides;
+    let c = Content::builtin();
+    let party = default_party(ClassId::Striker);
+    let normal = Sim::new(&c, &party, 1);
+    let o = Overrides {
+        hp: 2.0,
+        damage: 1.5,
+        ability_speed: 2.0,
+        telegraph: 0.5,
+    };
+    let tuned = Sim::with_options(
+        &c,
+        &party,
+        1,
+        RunOptions {
+            overrides: o,
+            ..Default::default()
+        },
+    );
+    let b = normal.boss;
+    assert_eq!(tuned.actors[b].max_hp, 2.0 * normal.actors[b].max_hp);
+    let ring = |s: &Sim| {
+        s.content.templates["hollow_king"]
+            .abilities
+            .iter()
+            .find(|a| a.name == "Cinder Ring")
+            .cloned()
+            .unwrap()
+    };
+    assert!((ring(&tuned).interval - ring(&normal).interval / 2.0).abs() < 1e-4);
+    assert!(ring(&tuned).delay < ring(&normal).delay);
+    assert!(ring(&tuned).delay < ring(&tuned).interval, "invariant kept");
+    // Harder settings never raise rewards; easier ones lower them.
+    assert_eq!(o.reward_factor(), 1.0);
+    let easy = Overrides {
+        hp: 0.5,
+        ..Default::default()
+    };
+    assert!((easy.reward_factor() - 0.5).abs() < 1e-6);
+    assert_eq!(
+        Overrides {
+            hp: 100.0,
+            ..Default::default()
+        }
+        .clamped()
+        .hp,
+        Overrides::MAX
+    );
+}

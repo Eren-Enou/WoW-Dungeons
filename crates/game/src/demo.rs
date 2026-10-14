@@ -308,6 +308,7 @@ fn hub_tour(
         Tab::Dungeons,
         Tab::Classes,
         Tab::History,
+        Tab::Sandbox,
     ];
     if *step >= plan.len() {
         exit.write(AppExit::Success);

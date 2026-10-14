@@ -100,9 +100,81 @@ impl PartyMemberSpec {
     }
 }
 
+/// In-game sandbox knobs applied on top of the content file for one run.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct Overrides {
+    /// Multiplies enemy HP.
+    pub hp: f32,
+    /// Multiplies enemy damage.
+    pub damage: f32,
+    /// Enemy abilities fire this many times faster (intervals and casts divided).
+    pub ability_speed: f32,
+    /// Multiplies ground-telegraph warning time.
+    pub telegraph: f32,
+}
+
+impl Default for Overrides {
+    fn default() -> Self {
+        Overrides {
+            hp: 1.0,
+            damage: 1.0,
+            ability_speed: 1.0,
+            telegraph: 1.0,
+        }
+    }
+}
+
+impl Overrides {
+    pub const MIN: f32 = 0.25;
+    pub const MAX: f32 = 4.0;
+
+    pub fn clamped(self) -> Overrides {
+        let c = |v: f32| v.clamp(Self::MIN, Self::MAX);
+        Overrides {
+            hp: c(self.hp),
+            damage: c(self.damage),
+            ability_speed: c(self.ability_speed),
+            telegraph: c(self.telegraph),
+        }
+    }
+
+    pub fn is_default(&self) -> bool {
+        *self == Overrides::default()
+    }
+
+    /// [orig] Rewards scale down when the sandbox makes a run easier (never up):
+    /// `clamp(hp * damage * ability_speed / telegraph, 0.25, 1)`.
+    pub fn reward_factor(&self) -> f32 {
+        let o = self.clamped();
+        (o.hp * o.damage * o.ability_speed / o.telegraph).clamp(0.25, 1.0)
+    }
+
+    /// Apply to a content copy. Keeps every validated invariant (ring delay
+    /// shorter than its interval, casts shorter than intervals).
+    pub fn apply(&self, content: &mut Content) {
+        let o = self.clamped();
+        content.dungeon.hp_multiplier *= o.hp;
+        content.dungeon.damage_multiplier *= o.damage;
+        for t in content.templates.values_mut() {
+            for a in t.abilities.iter_mut() {
+                a.interval = (a.interval / o.ability_speed).max(1.0);
+                if let Some(i) = a.initial.as_mut() {
+                    *i /= o.ability_speed;
+                }
+                a.cast_time = (a.cast_time / o.ability_speed).min(a.interval * 0.9);
+                if a.delay > 0.0 {
+                    a.delay = (a.delay * o.telegraph).clamp(0.5, a.interval * 0.9);
+                }
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct RunOptions {
     pub difficulty: String,
+    pub overrides: Overrides,
     /// The AI leader walks the party through the dungeon.
     pub autopilot: bool,
     /// Autopilot skips optional encounters.
@@ -113,6 +185,7 @@ impl Default for RunOptions {
     fn default() -> Self {
         RunOptions {
             difficulty: "normal".into(),
+            overrides: Overrides::default(),
             autopilot: false,
             skip_optional: false,
         }
@@ -570,7 +643,8 @@ impl Sim {
         seed: u64,
         options: RunOptions,
     ) -> Sim {
-        let content = content.clone();
+        let mut content = content.clone();
+        options.overrides.apply(&mut content);
         let nav = content.nav();
         let difficulty = content
             .difficulty(&options.difficulty)

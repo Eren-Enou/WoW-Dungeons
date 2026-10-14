@@ -144,6 +144,7 @@ fn start_run(
     let autoplay = demo.as_ref().is_some_and(|d| d.autoplay);
     let options = RunOptions {
         difficulty: data.profile.selected_difficulty.clone(),
+        overrides: data.profile.sandbox,
         autopilot: autoplay,
         skip_optional: false,
     };

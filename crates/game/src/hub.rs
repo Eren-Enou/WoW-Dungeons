@@ -50,15 +50,17 @@ pub enum Tab {
     Dungeons,
     Classes,
     History,
+    Sandbox,
 }
 
 impl Tab {
-    const ALL: [Tab; 5] = [
+    const ALL: [Tab; 6] = [
         Tab::Party,
         Tab::Character,
         Tab::Dungeons,
         Tab::Classes,
         Tab::History,
+        Tab::Sandbox,
     ];
 
     fn label(self) -> &'static str {
@@ -68,6 +70,7 @@ impl Tab {
             Tab::Dungeons => "Dungeons",
             Tab::Classes => "Classes",
             Tab::History => "History",
+            Tab::Sandbox => "Sandbox",
         }
     }
 }
@@ -110,6 +113,17 @@ pub enum HubAction {
     SelectDungeon(String),
     SelectDifficulty(String),
     Reload,
+    /// Change a sandbox knob by a factor (or reset with `Knob::Reset`).
+    Sandbox(Knob, f32),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Knob {
+    Hp,
+    Damage,
+    AbilitySpeed,
+    Telegraph,
+    Reset,
 }
 
 #[derive(Component)]
@@ -458,6 +472,25 @@ pub fn apply_action(action: HubAction, data: &mut GameData, ui: &mut HubUi) {
             }
         }
         HubAction::SelectDifficulty(id) => data.profile.selected_difficulty = id,
+        HubAction::Sandbox(knob, factor) => {
+            let o = &mut data.profile.sandbox;
+            match knob {
+                Knob::Hp => o.hp *= factor,
+                Knob::Damage => o.damage *= factor,
+                Knob::AbilitySpeed => o.ability_speed *= factor,
+                Knob::Telegraph => o.telegraph *= factor,
+                Knob::Reset => *o = Default::default(),
+            }
+            let clamped = o.clamped();
+            // Snap to two decimals so repeated steps return exactly to 1.0.
+            let snap = |v: f32| (v * 100.0).round() / 100.0;
+            *o = dungeon_sim::sim::Overrides {
+                hp: snap(clamped.hp),
+                damage: snap(clamped.damage),
+                ability_speed: snap(clamped.ability_speed),
+                telegraph: snap(clamped.telegraph),
+            };
+        }
         HubAction::Reload => {
             if data.reload_content() {
                 data.flash("Content reloaded OK");
@@ -505,6 +538,7 @@ fn rebuild_panel(
             Tab::Dungeons => dungeons_tab(p, &data),
             Tab::Classes => classes_tab(p),
             Tab::History => history_tab(p, &data),
+            Tab::Sandbox => sandbox_tab(p, &data),
         }
     });
 }
@@ -876,6 +910,80 @@ fn classes_tab(p: &mut ChildSpawnerCommands) {
     }
 }
 
+fn sandbox_tab(p: &mut ChildSpawnerCommands, data: &GameData) {
+    let o = data.profile.sandbox;
+    label(
+        p,
+        "Sandbox: adjust the next runs without editing files",
+        15.0,
+        Color::srgb(1.0, 0.9, 0.6),
+    );
+    label(
+        p,
+        "These knobs apply on top of the dungeon file to every dungeon and difficulty.\nFor deeper changes (new phases, abilities, mobs, hazards) edit the TOML files in\nassets/content/dungeons/ and press F5 - see assets/content/variants/ for examples.",
+        12.0,
+        Color::srgb(0.8, 0.8, 0.8),
+    );
+    let knob_row =
+        |p: &mut ChildSpawnerCommands, name: &str, value: f32, knob: Knob, hint: &str| {
+            row(p, |r| {
+                button(r, "-", HubAction::Sandbox(knob, 1.0 / 1.25), false);
+                button(r, "+", HubAction::Sandbox(knob, 1.25), false);
+                label(
+                    r,
+                    format!("{name}: x{value:.2}"),
+                    14.0,
+                    if (value - 1.0).abs() < 1e-3 {
+                        Color::WHITE
+                    } else {
+                        Color::srgb(1.0, 0.8, 0.4)
+                    },
+                );
+                label(r, hint.to_string(), 12.0, Color::srgb(0.65, 0.65, 0.7));
+            });
+        };
+    knob_row(
+        p,
+        "Enemy health",
+        o.hp,
+        Knob::Hp,
+        "longer fights, enrage pressure",
+    );
+    knob_row(
+        p,
+        "Enemy damage",
+        o.damage,
+        Knob::Damage,
+        "healer and tank pressure",
+    );
+    knob_row(
+        p,
+        "Ability speed",
+        o.ability_speed,
+        Knob::AbilitySpeed,
+        "boss timers: rings, pulses, summons come sooner",
+    );
+    knob_row(
+        p,
+        "Telegraph warning",
+        o.telegraph,
+        Knob::Telegraph,
+        "longer = easier to dodge",
+    );
+    row(p, |r| {
+        button(r, "Reset all", HubAction::Sandbox(Knob::Reset, 1.0), false);
+        label(
+            r,
+            format!(
+                "Rewards x{:.2} (easier settings reduce rewards; harder ones never increase them)",
+                o.reward_factor()
+            ),
+            12.0,
+            Color::srgb(0.8, 0.8, 0.6),
+        );
+    });
+}
+
 fn history_tab(p: &mut ChildSpawnerCommands, data: &GameData) {
     let pr = &data.profile;
     label(
@@ -973,6 +1081,7 @@ fn hub_keys(keys: Res<ButtonInput<KeyCode>>, mut data: ResMut<GameData>, mut ui:
         KeyCode::Digit3,
         KeyCode::Digit4,
         KeyCode::Digit5,
+        KeyCode::Digit6,
     ]
     .into_iter()
     .enumerate()
@@ -1096,9 +1205,20 @@ fn update_hub_text(
                 }
                 s.push_str(
                     "WASD move | RMB-drag / arrows: camera | wheel: zoom\n\
-                     Panel: click buttons, or 1-5 switch tabs, P hide\n\
+                     Panel: click buttons, or 1-6 switch tabs, P hide\n\
                      F5: reload content files",
                 );
+                if !p.sandbox.is_default() {
+                    let o = p.sandbox;
+                    s.push_str(&format!(
+                        "\n\nSANDBOX ACTIVE: HP x{:.2}, damage x{:.2}, ability speed x{:.2}, telegraphs x{:.2} (rewards x{:.2})",
+                        o.hp,
+                        o.damage,
+                        o.ability_speed,
+                        o.telegraph,
+                        o.reward_factor()
+                    ));
+                }
                 if !data.content_errors.is_empty() {
                     s.push_str(&format!(
                         "\n\n{} CONTENT ERROR(S) - see the Dungeons tab",
