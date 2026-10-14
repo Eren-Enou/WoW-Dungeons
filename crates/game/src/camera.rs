@@ -1,10 +1,12 @@
 //! Third-person orbit camera that follows the entity marked `CameraFocus`.
 //!
-//! Right mouse drag (or the arrow keys) rotates, the mouse wheel zooms. The camera
-//! is pulled in front of any `CameraBlockers` box between it and the focus, and
-//! its distance is smoothed (fast in, slow out) so it never clips through walls.
+//! Rotation and steering live in `controls.rs`; this module handles zoom, follow
+//! and collision. The camera is pulled in front of any `CameraBlockers` box
+//! between it and the focus (probing with five parallel rays so thin gaps and
+//! corners don't flicker), pulls in fast and eases back out with a small
+//! deadband so it never clips through walls or jitters near them.
 
-use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
+use bevy::input::mouse::AccumulatedMouseScroll;
 use bevy::prelude::*;
 
 pub struct CameraPlugin;
@@ -61,11 +63,6 @@ impl OrbitCamera {
         Vec3::new(self.yaw.sin(), 0.0, self.yaw.cos())
     }
 
-    /// Horizontal right direction as seen on screen.
-    pub fn right(&self) -> Vec3 {
-        Vec3::new(-self.yaw.cos(), 0.0, self.yaw.sin())
-    }
-
     fn offset_dir(&self) -> Vec3 {
         (-self.forward() * self.pitch.cos() + Vec3::Y * self.pitch.sin()).normalize()
     }
@@ -81,32 +78,48 @@ fn spawn_camera(mut commands: Commands) {
 
 fn orbit_input(
     mut orbit: ResMut<OrbitCamera>,
-    mouse: Res<ButtonInput<MouseButton>>,
-    keys: Res<ButtonInput<KeyCode>>,
-    motion: Res<AccumulatedMouseMotion>,
     scroll: Res<AccumulatedMouseScroll>,
-    time: Res<Time>,
+    pc: Res<crate::controls::PlayerControl>,
 ) {
-    if mouse.pressed(MouseButton::Right) {
-        orbit.yaw -= motion.delta.x * 0.006;
-        orbit.pitch = (orbit.pitch + motion.delta.y * 0.004).clamp(0.08, 1.35);
-    }
-    let dt = time.delta_secs();
-    if keys.pressed(KeyCode::ArrowLeft) {
-        orbit.yaw += 2.0 * dt;
-    }
-    if keys.pressed(KeyCode::ArrowRight) {
-        orbit.yaw -= 2.0 * dt;
-    }
-    if keys.pressed(KeyCode::ArrowUp) {
-        orbit.pitch = (orbit.pitch + dt).min(1.35);
-    }
-    if keys.pressed(KeyCode::ArrowDown) {
-        orbit.pitch = (orbit.pitch - dt).max(0.08);
-    }
-    if scroll.delta.y != 0.0 {
+    if scroll.delta.y != 0.0 && !pc.cursor_over_ui {
         orbit.distance = (orbit.distance - scroll.delta.y.signum() * 1.5).clamp(4.0, 32.0);
     }
+}
+
+/// How far the camera may sit from `center` along `dir` without entering a box.
+/// Probes the centre ray plus four rays offset sideways/vertically by the camera's
+/// "radius", so the camera keeps clear of edges instead of grazing them.
+pub fn collision_distance(center: Vec3, dir: Vec3, desired: f32, boxes: &[(Vec3, Vec3)]) -> f32 {
+    const RADIUS: f32 = 0.35;
+    let side = dir.cross(Vec3::Y).normalize_or_zero();
+    let up = side.cross(dir).normalize_or_zero();
+    let mut allowed = desired;
+    for offset in [
+        Vec3::ZERO,
+        side * RADIUS,
+        -side * RADIUS,
+        up * RADIUS,
+        -up * RADIUS,
+    ] {
+        for (min, max) in boxes {
+            if let Some(t) = ray_box(center + offset, dir, *min, *max) {
+                allowed = allowed.min((t - 0.4).max(1.5));
+            }
+        }
+    }
+    allowed
+}
+
+/// Pull in immediately, ease back out, and ignore tiny outward changes (deadband)
+/// so the distance doesn't oscillate at corners.
+pub fn smooth_distance(current: f32, allowed: f32, dt: f32) -> f32 {
+    if allowed < current {
+        return current + (allowed - current) * (30.0 * dt).min(1.0);
+    }
+    if allowed - current < 0.25 {
+        return current;
+    }
+    current + (allowed - current) * (4.0 * dt).min(1.0)
 }
 
 /// Distance along `dir` (unit) from `origin` to the first box hit, if any (slab test).
@@ -146,16 +159,8 @@ fn follow(
     };
     let center = target.translation + Vec3::Y * 1.5;
     let dir = orbit.offset_dir();
-    let mut allowed = orbit.distance;
-    for (min, max) in &blockers.0 {
-        if let Some(t) = ray_box(center, dir, *min, *max) {
-            allowed = allowed.min((t - 0.4).max(1.5));
-        }
-    }
-    // Pull in instantly when blocked, ease back out.
-    let rate = if allowed < orbit.current { 30.0 } else { 4.0 };
-    let k = (rate * time.delta_secs()).min(1.0);
-    orbit.current += (allowed - orbit.current) * k;
+    let allowed = collision_distance(center, dir, orbit.distance, &blockers.0);
+    orbit.current = smooth_distance(orbit.current, allowed, time.delta_secs());
     **cam = Transform::from_translation(center + dir * orbit.current).looking_at(center, Vec3::Y);
 }
 
@@ -172,6 +177,21 @@ mod tests {
             Vec3::new(6.0, 1.0, 1.0),
         );
         assert_eq!(t, Some(5.0));
+    }
+
+    #[test]
+    fn camera_keeps_clear_of_walls_and_does_not_jitter() {
+        // A wall 6 m behind the focus.
+        let wall = (Vec3::new(-5.0, -5.0, -6.5), Vec3::new(5.0, 5.0, -6.0));
+        let d = collision_distance(Vec3::ZERO, -Vec3::Z, 14.0, &[wall]);
+        assert!(d < 6.0 && d >= 1.5, "{d}");
+        // A wall just beside the ray is still respected thanks to the side probes.
+        let beside = (Vec3::new(0.2, -5.0, -9.0), Vec3::new(3.0, 5.0, -8.0));
+        assert!(collision_distance(Vec3::ZERO, -Vec3::Z, 14.0, &[beside]) < 9.0);
+        // Pull-in is immediate-ish; tiny outward changes are ignored.
+        assert!(smooth_distance(10.0, 4.0, 0.1) < 5.0);
+        assert_eq!(smooth_distance(4.0, 4.1, 0.1), 4.0);
+        assert!(smooth_distance(4.0, 10.0, 0.1) > 4.0);
     }
 
     #[test]

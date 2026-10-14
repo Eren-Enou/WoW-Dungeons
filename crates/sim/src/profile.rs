@@ -213,6 +213,28 @@ pub struct Profile {
     /// 5 (party) or 10 (raid group), including the player.
     #[serde(default = "five")]
     pub group_size: u32,
+    /// Player interface preferences.
+    #[serde(default)]
+    pub settings: Settings,
+}
+
+/// Interface preferences stored with the profile.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Settings {
+    /// Camera eases behind the character while moving.
+    pub camera_follow: bool,
+    /// Auto-follow responsiveness (1/seconds).
+    pub follow_speed: f32,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Settings {
+            camera_follow: true,
+            follow_speed: 3.0,
+        }
+    }
 }
 
 /// Who a piece of gear is being equipped on.
@@ -366,6 +388,7 @@ impl Profile {
             history: Vec::new(),
             sandbox: crate::sim::Overrides::default(),
             group_size: 5,
+            settings: Settings::default(),
         };
         p.auto_fill_party();
         p

@@ -6,6 +6,7 @@
 
 mod camera;
 mod common;
+mod controls;
 mod demo;
 mod dungeon;
 mod fx;
@@ -39,6 +40,7 @@ fn main() {
     .init_state::<AppState>()
     .add_plugins((
         camera::CameraPlugin,
+        controls::ControlsPlugin,
         hub::HubPlugin,
         dungeon::DungeonPlugin,
         hud::HudPlugin,

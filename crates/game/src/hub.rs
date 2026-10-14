@@ -5,6 +5,7 @@
 
 use crate::camera::{CameraBlockers, CameraFocus, OrbitCamera};
 use crate::common::{AppState, GameData, rarity_color, text_font};
+use crate::controls::{ControlSet, PlayerControl};
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 use bevy::ui::Pressed;
@@ -34,6 +35,7 @@ impl Plugin for HubPlugin {
                     animate_portal,
                 )
                     .chain()
+                    .after(ControlSet)
                     .run_if(in_state(AppState::Hub)),
             );
     }
@@ -184,11 +186,14 @@ fn setup_hub(
     mut ui: ResMut<HubUi>,
     mut orbit: ResMut<OrbitCamera>,
     mut blockers: ResMut<CameraBlockers>,
+    mut pc: ResMut<PlayerControl>,
     data: Res<GameData>,
 ) {
     ui.companions_dirty = true;
     ui.dirty = true;
     orbit.yaw = 0.0;
+    pc.state.facing = 0.0;
+    pc.state.yaw = 0.0;
     blockers.0.clear();
     let scoped = DespawnOnExit(AppState::Hub);
     commands.insert_resource(GlobalAmbientLight {
@@ -1363,24 +1368,12 @@ fn history_tab(p: &mut ChildSpawnerCommands, data: &GameData) {
 // ------------------------------------------------------------- systems --
 
 fn hub_movement(
-    keys: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
-    orbit: Res<OrbitCamera>,
+    pc: Res<PlayerControl>,
     mut player: Single<&mut Transform, With<HubPlayer>>,
 ) {
-    let mut dir = Vec3::ZERO;
-    if keys.pressed(KeyCode::KeyW) {
-        dir += orbit.forward();
-    }
-    if keys.pressed(KeyCode::KeyS) {
-        dir -= orbit.forward();
-    }
-    if keys.pressed(KeyCode::KeyD) {
-        dir += orbit.right();
-    }
-    if keys.pressed(KeyCode::KeyA) {
-        dir -= orbit.right();
-    }
+    player.rotation = Quat::from_rotation_y(pc.state.facing);
+    let dir = Vec3::new(pc.output.move_dir.x, 0.0, pc.output.move_dir.y);
     if dir.length_squared() > 0.0 {
         let dir = dir.normalize();
         let mut p = player.translation + dir * 7.0 * time.delta_secs();
@@ -1391,7 +1384,6 @@ fn hub_movement(
             p.z = c.y;
         }
         player.translation = p;
-        player.rotation = Quat::from_rotation_y(dir.x.atan2(dir.z));
     }
 }
 

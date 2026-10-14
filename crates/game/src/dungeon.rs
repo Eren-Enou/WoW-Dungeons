@@ -3,6 +3,7 @@
 
 use crate::camera::{CameraBlockers, CameraFocus, MainCamera, OrbitCamera};
 use crate::common::{AppState, GameData, LastResult, rgb, to_vec3};
+use crate::controls::{ControlSet, PlayerControl};
 use crate::demo::DemoConfig;
 use crate::hub::class_color;
 use bevy::prelude::*;
@@ -39,7 +40,7 @@ impl Plugin for DungeonPlugin {
         .add_systems(
             Update,
             (
-                player_input,
+                player_input.after(ControlSet),
                 step_sim,
                 process_events,
                 spawn_new_actors,
@@ -129,6 +130,7 @@ fn start_run(
     mut commands: Commands,
     mut data: ResMut<GameData>,
     mut orbit: ResMut<OrbitCamera>,
+    mut pc: ResMut<PlayerControl>,
     demo: Option<Res<DemoConfig>>,
 ) {
     let content = data
@@ -163,6 +165,8 @@ fn start_run(
         party.len()
     );
     orbit.yaw = 0.0;
+    pc.state.facing = 0.0;
+    pc.state.yaw = 0.0;
     let prev_pos = sim.actors.iter().map(|a| a.pos).collect();
     let required = sim.encounters.iter().filter(|e| !e.optional).count();
     let boss_name = sim.actors[sim.boss].name.clone();
@@ -424,46 +428,29 @@ fn spawn_new_actors(
     run.visuals_spawned = total;
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn player_input(
     keys: Res<ButtonInput<KeyCode>>,
-    mouse: Res<ButtonInput<MouseButton>>,
     orbit: Res<OrbitCamera>,
-    window: Single<&Window>,
+    pc: Res<PlayerControl>,
     camera: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
+    demo: Option<Res<DemoConfig>>,
     mut run: ResMut<ActiveRun>,
 ) {
     let Some(player) = run.sim.player else {
         return;
     };
-    let mut dir = Vec3::ZERO;
-    // Both mouse buttons held = run forward (classic MMO control).
-    let both = mouse.pressed(MouseButton::Left) && mouse.pressed(MouseButton::Right);
-    if keys.pressed(KeyCode::KeyW) || both {
-        dir += orbit.forward();
-    }
-    if keys.pressed(KeyCode::KeyS) {
-        dir -= orbit.forward();
-    }
-    if keys.pressed(KeyCode::KeyD) || keys.pressed(KeyCode::KeyE) {
-        dir += orbit.right();
-    }
-    if keys.pressed(KeyCode::KeyA) || keys.pressed(KeyCode::KeyQ) {
-        dir -= orbit.right();
-    }
     let alive = run.sim.actors[player].alive;
+    let dir = pc.output.move_dir;
     let mv = if alive && run.end_timer.is_none() {
-        V2::new(dir.x, dir.z)
+        V2::new(dir.x, dir.y)
     } else {
         V2::ZERO
     };
     run.sim.set_player_move(mv);
-    if mv.len_sq() > 0.0 {
-        run.sim.set_player_facing(mv.heading());
-    } else if let Some(t) = run.sim.actors[player].target {
-        let d = run.sim.actors[t].pos - run.sim.actors[player].pos;
-        if d.len_sq() > 0.01 && run.sim.is_hostile(player, t) {
-            run.sim.set_player_facing(d.heading());
-        }
+    // The character faces where the controls say (keyboard turning / mouse steering).
+    if !demo.as_ref().is_some_and(|d| d.autoplay) {
+        run.sim.set_player_facing(pc.state.facing);
     }
 
     for (key, slot) in [
@@ -553,8 +540,7 @@ pub fn player_input(
     {
         run.sim.set_player_target(Some(k));
     }
-    if mouse.just_pressed(MouseButton::Left)
-        && let Some(cursor) = window.cursor_position()
+    if let Some(cursor) = pc.world_click
         && let Ok(ray) = camera.0.viewport_to_world(camera.1, cursor)
     {
         let mut best: Option<(f32, ActorId)> = None;

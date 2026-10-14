@@ -177,6 +177,8 @@ fn scripted_input(
     cfg: Res<DemoConfig>,
     mut keys: ResMut<ButtonInput<KeyCode>>,
     run: Res<ActiveRun>,
+    pc: Res<crate::controls::PlayerControl>,
+    orbit: Res<crate::camera::OrbitCamera>,
     mut script: Local<ScriptState>,
     mut exit: MessageWriter<AppExit>,
 ) {
@@ -207,7 +209,7 @@ fn scripted_input(
             keys.release(key);
         }
     }
-    // Camera yaw is 0: W walks +Z (north); A strafes toward +X.
+    // Facing is 0: W walks +Z (north); Q strafes left, toward +X.
     let hold = |keys: &mut ButtonInput<KeyCode>, key: KeyCode, from: f32, to: f32| {
         if now >= from && now < to {
             keys.press(key);
@@ -215,8 +217,10 @@ fn scripted_input(
             keys.release(key);
         }
     };
-    hold(&mut keys, KeyCode::KeyA, 0.5, 0.93);
+    hold(&mut keys, KeyCode::KeyQ, 0.5, 0.93);
     hold(&mut keys, KeyCode::KeyW, 1.0, 5.8);
+    // Turn right while walking: the camera should swing behind (auto-follow).
+    hold(&mut keys, KeyCode::KeyD, 4.4, 4.8);
     if crossed(6.5) {
         keys.press(KeyCode::Tab);
         *tab_pressed += 1;
@@ -262,6 +266,12 @@ fn scripted_input(
             format!("failed casts: {}", failures.len()),
             failures.join("\n"),
             format!("engaged enemies: {engaged}"),
+            format!(
+                "facing {:.2} rad, camera yaw {:.2} rad, follow gap {:.2} rad",
+                pc.state.facing,
+                orbit.yaw,
+                crate::controls::angle_diff(orbit.yaw, pc.state.facing).abs()
+            ),
         ]
         .join("\n");
         info!("{report}");
