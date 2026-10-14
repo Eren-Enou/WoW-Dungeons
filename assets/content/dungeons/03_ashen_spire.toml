@@ -1,0 +1,484 @@
+# Dungeon Sandbox content file: The Ashen Spire (levels 8-10).
+#
+# The endgame dungeon. Encounter design goals:
+#   * Ember Acolytes heal allies and brand the party with Searing Mark
+#     (-25% healing received) - interrupt the heals, Purify the marks.
+#   * Obsidian Sentinels: heavy armor and a frontal sweep.
+#   * The Fire Walk is a corridor of timed flame jets.
+#   * The Twin Altar is a council: Ignis (interruptible Flame Wave on the whole
+#     party) and Cindra (Cinder Lance on whoever stands farthest, stacking
+#     Kindling on her target). Both must die; interrupt both.
+#   * Ashmaw has three phases: frontal maw + lances, then ashling adds and
+#     healing-reduction brands with triple eruptions, then Cataclysm pulses.
+#   * The Furnace is optional.
+
+[dungeon]
+id = "ashen_spire"
+name = "The Ashen Spire"
+description = "A smouldering tower of the old fire cult. Acolytes, obsidian sentinels, the Twin Altar council and Ashmaw, the Sovereign of Cinders."
+recommended_level = 8
+hp_multiplier = 1.0
+damage_multiplier = 1.0
+entrance = [0.0, 0.0]
+leash_radius = 55.0
+theme = { floor = [0.26, 0.20, 0.18], wall = [0.30, 0.22, 0.20], light = [1.0, 0.55, 0.30] }
+
+[[difficulties]]
+id = "normal"
+name = "Normal"
+
+[[difficulties]]
+id = "heroic"
+name = "Heroic"
+hp = 1.5
+damage = 1.35
+level_bonus = 2
+reward_multiplier = 2.0
+rarity_bonus = 1
+
+# For 10-person raid groups (Party tab -> Raid (10)).
+[[difficulties]]
+id = "raid10"
+name = "Raid (10)"
+hp = 2.6
+damage = 1.6
+level_bonus = 1
+reward_multiplier = 1.5
+rarity_bonus = 1
+
+[[dungeon.areas]]
+name = "Base Hall"
+min = [-10.0, -6.0]
+max = [10.0, 10.0]
+
+[[dungeon.areas]]
+name = "Ash Ramp"
+min = [-3.0, 8.0]
+max = [3.0, 26.0]
+
+[[dungeon.areas]]
+name = "Acolyte Gallery"
+min = [-14.0, 24.0]
+max = [14.0, 46.0]
+
+[[dungeon.areas]]
+name = "The Furnace"
+min = [-36.0, 26.0]
+max = [-12.0, 46.0]
+
+[[dungeon.areas]]
+name = "East Bridge"
+min = [12.0, 32.0]
+max = [34.0, 38.0]
+
+[[dungeon.areas]]
+name = "Sentinel Court"
+min = [32.0, 20.0]
+max = [54.0, 50.0]
+
+[[dungeon.areas]]
+name = "Fire Walk"
+min = [39.0, 48.0]
+max = [47.0, 80.0]
+
+[[dungeon.areas]]
+name = "Twin Altar"
+min = [26.0, 78.0]
+max = [60.0, 104.0]
+
+[[dungeon.areas]]
+name = "Crown Stair"
+min = [40.0, 102.0]
+max = [46.0, 116.0]
+
+[[dungeon.areas]]
+name = "Ashmaw's Crown"
+min = [24.0, 114.0]
+max = [62.0, 148.0]
+
+# ---------------------------------------------------------------- enemies --
+
+[templates.acolyte]
+name = "Ember Acolyte"
+rank = "trash"
+level = 8
+hp = 1700.0
+melee_damage = 108.0
+attack_interval = 2.0
+aggro_radius = 11.0
+speed = 6.5
+radius = 0.6
+armor = 200.0
+resist = 20.0
+
+[[templates.acolyte.abilities]]
+name = "Ember Mend"
+kind = "heal_ally"
+interval = 10.0
+initial = 5.0
+cast_time = 2.0
+interruptible = true
+amount = 1100.0
+
+[[templates.acolyte.abilities]]
+name = "Searing Mark"
+kind = "debuff"
+interval = 9.0
+initial = 3.0
+target = "random_non_tank"
+aura = { name = "Searing Mark", effect = "healing_taken", value = 0.25, duration = 12.0, max_stacks = 1, dispellable = true }
+
+[templates.sentinel]
+name = "Obsidian Sentinel"
+rank = "elite"
+level = 9
+hp = 6500.0
+melee_damage = 306.0
+attack_interval = 2.4
+aggro_radius = 12.0
+speed = 5.5
+radius = 1.2
+armor = 900.0
+parry = 0.10
+
+[[templates.sentinel.abilities]]
+name = "Obsidian Sweep"
+kind = "cleave"
+interval = 8.0
+initial = 4.0
+damage = 414.0
+radius = 6.0
+frontal = true
+
+[templates.ashling]
+name = "Ashling"
+rank = "trash"
+level = 8
+hp = 1000.0
+melee_damage = 117.0
+attack_interval = 1.8
+aggro_radius = 25.0
+speed = 8.0
+radius = 0.5
+armor = 150.0
+
+[templates.golem]
+name = "Furnace Golem"
+rank = "elite"
+level = 9
+hp = 11000.0
+melee_damage = 342.0
+attack_interval = 2.5
+aggro_radius = 12.0
+speed = 5.0
+radius = 1.5
+armor = 700.0
+enrage_seconds = 180.0
+
+[[templates.golem.abilities]]
+name = "Slag Burst"
+kind = "ring"
+interval = 9.0
+initial = 4.0
+delay = 2.0
+radius = 3.5
+damage = 756.0
+school = "fire"
+target = "random"
+count = 3
+
+[templates.ignis]
+name = "Ignis of the Twin Altar"
+rank = "boss"
+level = 10
+hp = 24000.0
+melee_damage = 378.0
+attack_interval = 2.0
+attack_range = 2.5
+aggro_radius = 16.0
+speed = 6.0
+radius = 1.6
+armor = 500.0
+resist = 20.0
+parry = 0.08
+enrage_seconds = 300.0
+
+[[templates.ignis.abilities]]
+name = "Flame Wave"
+kind = "pulse"
+interval = 14.0
+initial = 8.0
+cast_time = 2.5
+interruptible = true
+damage = 504.0
+school = "fire"
+
+[templates.cindra]
+name = "Cindra of the Twin Altar"
+rank = "boss"
+level = 10
+hp = 22000.0
+melee_damage = 324.0
+attack_interval = 2.0
+attack_range = 2.5
+aggro_radius = 16.0
+speed = 6.0
+radius = 1.5
+armor = 450.0
+resist = 20.0
+enrage_seconds = 300.0
+
+[[templates.cindra.abilities]]
+name = "Cinder Lance"
+kind = "bolt"
+interval = 7.0
+initial = 4.0
+cast_time = 2.0
+interruptible = true
+target = "farthest"
+damage = 684.0
+school = "fire"
+
+[[templates.cindra.abilities]]
+name = "Kindling"
+kind = "debuff"
+interval = 8.0
+initial = 6.0
+target = "current"
+aura = { name = "Kindling", effect = "damage_taken", value = 0.08, duration = 16.0, max_stacks = 5, dispellable = false }
+
+[templates.ashmaw]
+name = "Ashmaw, Sovereign of Cinders"
+rank = "boss"
+level = 10
+hp = 60000.0
+melee_damage = 486.0
+attack_interval = 2.0
+attack_range = 3.0
+aggro_radius = 16.0
+speed = 6.0
+radius = 2.2
+armor = 600.0
+resist = 25.0
+parry = 0.10
+enrage_seconds = 420.0
+
+[[templates.ashmaw.phases]]
+hp_below = 0.65
+damage_multiplier = 1.1
+announce = "Ashmaw shakes ashlings from his mane!"
+summon = [{ template = "ashling", count = 3 }]
+
+[[templates.ashmaw.phases]]
+hp_below = 0.3
+damage_multiplier = 1.25
+announce = "Ashmaw's crown ignites - CATACLYSM approaches!"
+
+[[templates.ashmaw.abilities]]
+name = "Molten Maw"
+kind = "cleave"
+interval = 10.0
+initial = 6.0
+damage = 576.0
+radius = 7.0
+frontal = true
+
+[[templates.ashmaw.abilities]]
+name = "Ash Spit"
+kind = "bolt"
+interval = 8.0
+initial = 4.0
+cast_time = 1.5
+interruptible = true
+target = "farthest"
+damage = 576.0
+school = "fire"
+phases = [1, 2]
+
+[[templates.ashmaw.abilities]]
+name = "Scorched Soul"
+kind = "debuff"
+interval = 15.0
+initial = 3.0
+target = "random"
+phases = [2, 3]
+aura = { name = "Scorched Soul", effect = "healing_taken", value = 0.3, duration = 10.0, max_stacks = 1, dispellable = true }
+
+[[templates.ashmaw.abilities]]
+name = "Eruption"
+kind = "ring"
+interval = 11.0
+initial = 5.0
+delay = 2.2
+radius = 4.0
+damage = 828.0
+school = "fire"
+target = "random"
+count = 3
+phases = [2, 3]
+
+[[templates.ashmaw.abilities]]
+name = "Cataclysm"
+kind = "pulse"
+interval = 25.0
+initial = 6.0
+cast_time = 3.0
+damage = 612.0
+school = "fire"
+phases = [3]
+
+# ------------------------------------------------------------- encounters --
+
+[[encounters]]
+id = "acolyte_gallery"
+name = "Acolyte Gallery"
+mobs = [
+  { template = "acolyte", pos = [-6.0, 36.0] },
+  { template = "acolyte", pos = [0.0, 39.0] },
+  { template = "acolyte", pos = [6.0, 36.0] },
+]
+
+[[encounters]]
+id = "the_furnace"
+name = "Furnace Golem (optional)"
+optional = true
+mobs = [
+  { template = "golem", pos = [-26.0, 36.0] },
+]
+
+[[encounters]]
+id = "sentinel_court"
+name = "Sentinel Court"
+mobs = [
+  { template = "sentinel", pos = [40.0, 38.0] },
+  { template = "sentinel", pos = [48.0, 38.0] },
+  { template = "acolyte", pos = [44.0, 44.0] },
+]
+
+[[encounters]]
+id = "fire_walk"
+name = "Fire Walk"
+mobs = [
+  { template = "ashling", pos = [42.0, 70.0] },
+  { template = "ashling", pos = [44.0, 70.0] },
+]
+hazards = [
+  { name = "Flame Jet", pos = [43.0, 56.0], radius = 3.0, damage = 288.0, school = "fire", on = 2.0, off = 3.0 },
+  { name = "Flame Jet", pos = [43.0, 64.0], radius = 3.0, damage = 288.0, school = "fire", on = 2.0, off = 3.0, offset = 1.6 },
+  { name = "Flame Jet", pos = [43.0, 72.0], radius = 3.0, damage = 288.0, school = "fire", on = 2.0, off = 3.0, offset = 3.2 },
+]
+
+[[encounters]]
+id = "twin_altar"
+name = "The Twin Altar"
+mobs = [
+  { template = "ignis", pos = [38.0, 92.0] },
+  { template = "cindra", pos = [48.0, 92.0] },
+]
+
+[[encounters]]
+id = "ashmaw_crown"
+name = "Ashmaw, Sovereign of Cinders"
+mobs = [
+  { template = "ashmaw", pos = [43.0, 134.0] },
+]
+
+# ------------------------------------------------------------------ loot --
+
+[[loot]]
+id = "slagheart"
+name = "Slagheart"
+slot = "trinket"
+rarity = "rare"
+role = "tank"
+stats = { stamina = 30, armor = 300, dodge = 1.0 }
+weight = 1
+source = "the_furnace"
+
+[[loot]]
+id = "golem_knuckles"
+name = "Golem Knuckles"
+slot = "main_hand"
+rarity = "rare"
+role = "melee"
+stats = { power = 14, crit = 1.5, hit = 1.0 }
+weight = 1
+source = "the_furnace"
+
+[[loot]]
+id = "twin_altar_censer"
+name = "Censer of the Twin Altar"
+slot = "off_hand"
+rarity = "rare"
+role = "healer"
+stats = { stamina = 18, power = 12, resist = 15 }
+weight = 2
+source = "twin_altar"
+
+[[loot]]
+id = "cindra_lance"
+name = "Cindra's Lance"
+slot = "main_hand"
+rarity = "rare"
+role = "caster"
+stats = { power = 16, crit = 1.5, hit = 1.0 }
+weight = 2
+source = "twin_altar"
+
+[[loot]]
+id = "ignis_bulwark"
+name = "Bulwark of Ignis"
+slot = "off_hand"
+rarity = "rare"
+role = "tank"
+stats = { stamina = 32, armor = 400 }
+weight = 2
+source = "twin_altar"
+
+[[loot]]
+id = "crown_of_cinders"
+name = "Crown of Cinders"
+slot = "head"
+rarity = "epic"
+stats = { stamina = 26, power = 10, crit = 1.0 }
+weight = 2
+
+[[loot]]
+id = "ashmaw_hide"
+name = "Ashmaw-Hide Plate"
+slot = "chest"
+rarity = "epic"
+role = "tank"
+stats = { stamina = 44, armor = 520, dodge = 1.5 }
+weight = 2
+
+[[loot]]
+id = "sovereign_fang"
+name = "Sovereign's Fang"
+slot = "main_hand"
+rarity = "epic"
+role = "melee"
+stats = { power = 20, crit = 2.0, hit = 1.0 }
+weight = 2
+
+[[loot]]
+id = "emberweave_robes"
+name = "Emberweave Robes"
+slot = "chest"
+rarity = "epic"
+role = "caster"
+stats = { stamina = 24, power = 18, resist = 20 }
+weight = 2
+
+[[loot]]
+id = "cinderwalk_boots"
+name = "Cinderwalk Boots"
+slot = "feet"
+rarity = "rare"
+stats = { stamina = 22, armor = 120, dodge = 1.0 }
+weight = 3
+
+[rewards]
+marks_per_clear = 35
+marks_per_wipe = 3
+xp_per_clear = 2200

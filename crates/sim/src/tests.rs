@@ -1657,3 +1657,26 @@ fn raid10_difficulty_exists_and_ten_person_group_can_clear() {
     let (_, s) = run_with(&c, &party, 2, 1500.0, "raid10");
     assert_eq!(s.outcome, RunOutcome::Victory, "{s:?}");
 }
+
+#[test]
+fn ashen_spire_loads_and_is_clearable_at_level_ten() {
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/content/dungeons");
+    let lib = crate::content::ContentLibrary::load(dir);
+    let spire = lib.get("ashen_spire").expect("third dungeon ships").clone();
+    let council = spire
+        .encounters
+        .iter()
+        .position(|e| e.id == "twin_altar")
+        .unwrap();
+    let bosses = spire.encounters[council]
+        .mobs
+        .iter()
+        .filter(|m| spire.templates[&m.template].rank == crate::content::EnemyRank::Boss)
+        .count();
+    assert_eq!(bosses, 2, "council encounter has two bosses");
+    let party = party_at_level(ClassId::Mender, 10, AiProfile::Balanced);
+    let wins = (1..=3)
+        .filter(|&seed| run_headless(&spire, &party, seed, 1500.0).1.outcome == RunOutcome::Victory)
+        .count();
+    assert!(wins >= 2, "only {wins}/3 wins");
+}

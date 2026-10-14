@@ -107,7 +107,7 @@ pub fn spawn_hud(mut commands: Commands, run: Res<ActiveRun>) {
     let (frame_w, name_size, hp_h) = if raid {
         (150.0, 10.0, 8.0)
     } else {
-        (200.0, 13.0, 12.0)
+        (270.0, 13.0, 12.0)
     };
     commands
         .spawn((
