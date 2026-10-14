@@ -8,6 +8,9 @@
 //! * `--input-test`: enter the dungeon and drive the *real* keyboard input
 //!   systems with a scripted sequence (strafe, walk, Tab, 1/2/3), then print a
 //!   report of what the sim registered and exit.
+//! * `--frame-test`: play a Mender, target an enemy, then use synthetic mouse
+//!   events to hover a party frame and press 1 (mouseover heal), click another
+//!   frame, and report whether the heal, selection and click-through rules held.
 
 use crate::common::{AppState, GameData};
 use crate::dungeon::ActiveRun;
@@ -23,6 +26,8 @@ pub struct DemoConfig {
     pub hub_tour: bool,
     /// Click the History tab with synthetic pointer events and report the result.
     pub click_test: bool,
+    /// Hover/click party frames in the dungeon with synthetic pointer events.
+    pub frame_test: bool,
     /// Edit a boss through the editor actions, save, and verify the reload.
     pub editor_test: bool,
     pub speed: f32,
@@ -61,6 +66,7 @@ pub fn parse_args() -> DemoConfig {
         input_test: args.iter().any(|a| a == "--input-test"),
         hub_tour: args.iter().any(|a| a == "--hub-tour"),
         click_test: args.iter().any(|a| a == "--click-test"),
+        frame_test: args.iter().any(|a| a == "--frame-test"),
         editor_test: args.iter().any(|a| a == "--editor-test"),
         speed: value("--speed").unwrap_or(1.0).clamp(0.1, 10.0),
         screenshot_every: value("--screenshots"),
@@ -90,6 +96,13 @@ impl Plugin for DemoPlugin {
             )
             .add_systems(
                 Update,
+                frame_test
+                    .before(crate::controls::ControlSet)
+                    .run_if(in_state(AppState::Dungeon))
+                    .run_if(resource_exists::<ActiveRun>),
+            )
+            .add_systems(
+                Update,
                 scripted_input
                     .before(crate::dungeon::player_input)
                     .run_if(in_state(AppState::Dungeon))
@@ -107,7 +120,7 @@ fn demo_driver(
     mut next: ResMut<NextState<AppState>>,
     mut last: Local<Option<AppState>>,
 ) {
-    if !cfg.autoplay && !cfg.input_test {
+    if !cfg.autoplay && !cfg.input_test && !cfg.frame_test {
         return;
     }
     let current = *state.get();
@@ -126,6 +139,10 @@ fn demo_driver(
             }
             if let Some(g) = cfg.group {
                 data.profile.set_group_size(g);
+            }
+            if cfg.frame_test {
+                data.profile.player_class = dungeon_sim::class::ClassId::Mender;
+                data.profile.auto_fill_party();
             }
             if let Some(l) = cfg.level {
                 data.profile.player_level = l;
@@ -437,6 +454,168 @@ fn click_test(
         let _ = std::fs::create_dir_all("logs");
         let _ = std::fs::write("logs/click_test.txt", msg);
         exit.write(AppExit::Success);
+    }
+}
+
+#[derive(Default)]
+struct FrameTest {
+    t: f32,
+    step: u32,
+    enemy: Option<dungeon_sim::ActorId>,
+    log: Vec<String>,
+    ok: bool,
+}
+
+/// `--frame-test`: see the module docs. Runs before the control systems so the
+/// synthetic pointer events and key presses are seen the same frame.
+#[allow(clippy::too_many_arguments)]
+fn frame_test(
+    time: Res<Time>,
+    cfg: Res<DemoConfig>,
+    mut run: ResMut<ActiveRun>,
+    mut keys: ResMut<ButtonInput<KeyCode>>,
+    frames: Query<(&crate::hud::HudClick, &bevy::ui::UiGlobalTransform)>,
+    mouseover: Res<crate::hud::Mouseover>,
+    pc: Res<crate::controls::PlayerControl>,
+    window: Single<(Entity, &Window)>,
+    mut pointer: MessageWriter<bevy::picking::pointer::PointerInput>,
+    mut commands: Commands,
+    mut st: Local<FrameTest>,
+    mut exit: MessageWriter<AppExit>,
+) {
+    use crate::hud::HudClick;
+    use bevy::camera::RenderTarget;
+    use bevy::picking::pointer::{Location, PointerAction, PointerButton, PointerId, PointerInput};
+    use bevy::window::WindowRef;
+    if !cfg.frame_test {
+        return;
+    }
+    if keys.pressed(KeyCode::Digit1) {
+        keys.release(KeyCode::Digit1);
+    }
+    st.t += time.delta_secs();
+    let Some(p) = run.sim.player else { return };
+    let party = run.sim.party.clone();
+    let (win_entity, win) = *window;
+    let Some(target) =
+        RenderTarget::Window(WindowRef::Entity(win_entity)).normalize(Some(win_entity))
+    else {
+        return;
+    };
+    let frame_pos = |i: usize| {
+        frames
+            .iter()
+            .find(|(c, _)| **c == HudClick::Party(i))
+            .map(|(_, gt)| gt.translation / win.scale_factor())
+    };
+    let mut send = |pos: Vec2, action: PointerAction| {
+        pointer.write(PointerInput::new(
+            PointerId::Mouse,
+            Location {
+                target: target.clone(),
+                position: pos,
+            },
+            action,
+        ));
+    };
+    // The healer must be in range: put the hurt ally next to the player.
+    let ally = party.iter().copied().find(|&a| a != p).unwrap_or(p);
+    let other = party
+        .iter()
+        .copied()
+        .find(|&a| a != p && a != ally)
+        .unwrap_or(p);
+    let (Some(ally_i), Some(other_i)) = (
+        party.iter().position(|&a| a == ally),
+        party.iter().position(|&a| a == other),
+    ) else {
+        return;
+    };
+    match st.step {
+        0 if st.t > 2.0 => {
+            let enemy = run
+                .sim
+                .enemies
+                .iter()
+                .copied()
+                .find(|&e| run.sim.actors[e].alive);
+            st.enemy = enemy;
+            run.sim.set_player_target(enemy);
+            let ppos = run.sim.actors[p].pos;
+            let a = &mut run.sim.actors[ally];
+            a.pos = ppos + dungeon_sim::V2::new(2.0, 0.0);
+            a.hp = a.max_hp * 0.4;
+            st.step = 1;
+        }
+        1 => {
+            if let Some(pos) = frame_pos(ally_i) {
+                send(pos, PointerAction::Move { delta: Vec2::ZERO });
+                st.step = 2;
+                st.t = 0.0;
+            }
+        }
+        2 if st.t > 0.3 => {
+            st.log.push(format!(
+                "hover frame {ally_i}: mouseover {:?} (expected {:?}), cursor_over_ui {}",
+                mouseover.0,
+                Some(ally),
+                pc.cursor_over_ui
+            ));
+            st.ok = mouseover.0 == Some(ally) && pc.cursor_over_ui;
+            keys.press(KeyCode::Digit1);
+            st.step = 3;
+            st.t = 0.0;
+        }
+        3 if st.t > 3.5 => {
+            let healed = run.sim.events.iter().any(|e| {
+                matches!(e.kind, dungeon_sim::EventKind::Heal { src, dst, .. } if src == p && dst == ally)
+            });
+            let kept = run.sim.actors[p].target == st.enemy;
+            st.log.push(format!(
+                "pressed 1 (Mend) with an enemy selected: healed hovered ally {healed}, selection kept on enemy {kept}"
+            ));
+            st.ok &= healed && kept;
+            commands
+                .spawn(Screenshot::primary_window())
+                .observe(save_to_disk("screenshots/frame_test.png"));
+            if let Some(pos) = frame_pos(other_i) {
+                send(pos, PointerAction::Move { delta: Vec2::ZERO });
+                send(pos, PointerAction::Press(PointerButton::Primary));
+            }
+            st.step = 4;
+            st.t = 0.0;
+        }
+        4 if st.t > 0.1 => {
+            if let Some(pos) = frame_pos(other_i) {
+                send(pos, PointerAction::Release(PointerButton::Primary));
+            }
+            st.step = 5;
+            st.t = 0.0;
+        }
+        5 if st.t > 0.5 => {
+            let sel = run.sim.actors[p].target;
+            st.log.push(format!(
+                "clicked frame {other_i}: selected {:?} (expected {:?}); world click consumed by UI: {}",
+                sel.map(|t| run.sim.actors[t].name.clone()),
+                run.sim.actors[other].name,
+                pc.world_click.is_none()
+            ));
+            st.ok &= sel == Some(other);
+            let msg = format!(
+                "FRAME TEST {}\n{}",
+                if st.ok { "OK" } else { "FAILED" },
+                st.log.join("\n")
+            );
+            info!("{msg}");
+            let _ = std::fs::create_dir_all("logs");
+            let _ = std::fs::write("logs/frame_test.txt", msg);
+            st.step = 6;
+            st.t = 0.0;
+        }
+        6 if st.t > 1.0 => {
+            exit.write(AppExit::Success);
+        }
+        _ => {}
     }
 }
 

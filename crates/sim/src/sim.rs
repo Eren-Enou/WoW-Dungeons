@@ -1239,6 +1239,20 @@ impl Sim {
         self.pending_player_cast = Some((slot, target));
     }
 
+    /// The target a player press of `slot` would use (see `queue_player_cast_on`).
+    /// `None` for a friendly spell means "yourself".
+    pub fn player_cast_target(&self, slot: usize, explicit: Option<ActorId>) -> Option<ActorId> {
+        let p = self.player?;
+        let selected = self.actors[p].target;
+        let friendly = |t: ActorId| self.actors[t].alive && !self.is_hostile(p, t);
+        match self.actors[p].abilities.get(slot).map(|a| a.def().target) {
+            Some(TargetRule::Ally) => explicit
+                .filter(|&t| friendly(t))
+                .or(selected.filter(|&t| friendly(t))),
+            _ => selected,
+        }
+    }
+
     /// Toggle auto-attack on the player's current target.
     pub fn player_start_attack(&mut self) {
         if let Some(p) = self.player {
@@ -1376,15 +1390,7 @@ impl Sim {
         else {
             return;
         };
-        let selected = self.actors[p].target;
-        let friendly = |t: ActorId| self.actors[t].alive && !self.is_hostile(p, t);
-        let rule = self.actors[p].abilities.get(slot).map(|a| a.def().target);
-        let target = match rule {
-            Some(TargetRule::Ally) => explicit
-                .filter(|&t| friendly(t))
-                .or(selected.filter(|&t| friendly(t))),
-            _ => selected,
-        };
+        let target = self.player_cast_target(slot, explicit);
         if let Err(reason) = self.try_cast(p, slot, target) {
             let what = self.actors[p]
                 .ability_labels

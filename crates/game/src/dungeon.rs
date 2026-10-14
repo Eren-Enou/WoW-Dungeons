@@ -61,6 +61,8 @@ impl Plugin for DungeonPlugin {
 /// Seconds between the run ending and the results screen.
 const END_DELAY: f32 = 3.0;
 const LOG_LINES: usize = 14;
+/// How long a failed-action message stays on screen.
+const ERROR_SECS: f32 = 1.5;
 const WALL_HEIGHT: f32 = 3.2;
 
 #[derive(Resource)]
@@ -435,6 +437,7 @@ pub fn player_input(
     pc: Res<PlayerControl>,
     camera: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
     demo: Option<Res<DemoConfig>>,
+    mouseover: Res<crate::hud::Mouseover>,
     mut run: ResMut<ActiveRun>,
 ) {
     let Some(player) = run.sim.player else {
@@ -460,8 +463,10 @@ pub fn player_input(
         (KeyCode::Digit4, 3),
         (KeyCode::Digit5, 4),
     ] {
+        // Friendly spells go to the mouseover ally (if any); the sim ignores it
+        // for hostile spells and validates everything as usual.
         if keys.just_pressed(key) {
-            run.sim.queue_player_cast(slot);
+            run.sim.queue_player_cast_on(slot, mouseover.0);
         }
     }
     if keys.just_pressed(KeyCode::KeyF) {
@@ -542,27 +547,31 @@ pub fn player_input(
     }
     if let Some(cursor) = pc.world_click
         && let Ok(ray) = camera.0.viewport_to_world(camera.1, cursor)
+        && let Some(id) = pick_actor(&run.sim, ray, |_| true)
     {
-        let mut best: Option<(f32, ActorId)> = None;
-        for a in run.sim.actors.iter().filter(|a| a.alive) {
-            let center = to_vec3(a.pos, if a.is_enemy() { a.radius * 1.6 } else { 1.0 });
-            let r = a.radius + 0.6;
-            let oc = ray.origin - center;
-            let b = oc.dot(*ray.direction);
-            let c = oc.length_squared() - r * r;
-            let disc = b * b - c;
-            if disc < 0.0 {
-                continue;
-            }
-            let t = -b - disc.sqrt();
-            if t > 0.0 && best.is_none_or(|(bt, _)| t < bt) {
-                best = Some((t, a.id));
-            }
+        run.sim.set_player_target(Some(id));
+    }
+}
+
+/// Nearest living actor accepted by `filter` whose pick sphere the ray hits.
+pub fn pick_actor(sim: &Sim, ray: Ray3d, filter: impl Fn(&Actor) -> bool) -> Option<ActorId> {
+    let mut best: Option<(f32, ActorId)> = None;
+    for a in sim.actors.iter().filter(|a| a.alive && filter(a)) {
+        let center = to_vec3(a.pos, if a.is_enemy() { a.radius * 1.6 } else { 1.0 });
+        let r = a.radius + 0.6;
+        let oc = ray.origin - center;
+        let b = oc.dot(*ray.direction);
+        let c = oc.length_squared() - r * r;
+        let disc = b * b - c;
+        if disc < 0.0 {
+            continue;
         }
-        if let Some((_, id)) = best {
-            run.sim.set_player_target(Some(id));
+        let t = -b - disc.sqrt();
+        if t > 0.0 && best.is_none_or(|(bt, _)| t < bt) {
+            best = Some((t, a.id));
         }
     }
+    best.map(|(_, id)| id)
 }
 
 fn step_sim(time: Res<Time>, mut run: ResMut<ActiveRun>, demo: Option<Res<DemoConfig>>) {
@@ -623,8 +632,17 @@ pub fn process_events(mut run: ResMut<ActiveRun>) {
             }
         }
         match &e.kind {
-            EventKind::CastFailed { src, reason, .. } if Some(*src) == player => {
-                run.error = Some((reason.to_string(), 1.5));
+            EventKind::CastFailed { src, reason, what } if Some(*src) == player => {
+                // Rate-limited: mashing a key repeats the same message without
+                // flicker; a different failure replaces it immediately.
+                let msg = format!("{what}: {reason}");
+                let fresh = run
+                    .error
+                    .as_ref()
+                    .is_none_or(|(m, t)| *m != msg || *t < ERROR_SECS - 0.4);
+                if fresh {
+                    run.error = Some((msg, ERROR_SECS));
+                }
             }
             EventKind::Interrupt { src, dst, what } if Some(*src) == player => {
                 let name = run.sim.actors[*dst].name.clone();

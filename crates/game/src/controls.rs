@@ -18,6 +18,7 @@
 use crate::camera::OrbitCamera;
 use crate::common::GameData;
 use bevy::input::mouse::AccumulatedMouseMotion;
+use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 use std::f32::consts::{PI, TAU};
 
@@ -207,18 +208,35 @@ pub struct PlayerControl {
     pub cursor_over_ui: bool,
 }
 
+/// UI panels that swallow the mouse while hovered: clicks don't select 3D
+/// characters through them, left-drag doesn't look and the wheel doesn't zoom.
+#[derive(Component, Default)]
+#[require(Hovered)]
+pub struct BlocksWorld;
+
 pub struct ControlsPlugin;
 
 impl Plugin for ControlsPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<PlayerControl>()
-            .add_systems(Update, update_player_control.in_set(ControlSet));
+        app.init_resource::<PlayerControl>().add_systems(
+            Update,
+            (detect_ui_hover, update_player_control)
+                .chain()
+                .in_set(ControlSet),
+        );
     }
 }
 
 /// Runs before gameplay input systems that consume [`PlayerControl`].
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ControlSet;
+
+fn detect_ui_hover(q: Query<&Hovered, With<BlocksWorld>>, mut pc: ResMut<PlayerControl>) {
+    let over = q.iter().any(|h| h.get());
+    if pc.cursor_over_ui != over {
+        pc.cursor_over_ui = over;
+    }
+}
 
 #[allow(clippy::too_many_arguments)]
 fn update_player_control(

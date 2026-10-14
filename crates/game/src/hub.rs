@@ -5,7 +5,7 @@
 
 use crate::camera::{CameraBlockers, CameraFocus, OrbitCamera};
 use crate::common::{AppState, GameData, rarity_color, text_font};
-use crate::controls::{ControlSet, PlayerControl};
+use crate::controls::{BlocksWorld, ControlSet, PlayerControl};
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 use bevy::ui::Pressed;
@@ -312,6 +312,7 @@ fn spawn_hub_ui(mut commands: Commands) {
             ..default()
         },
         BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.6)),
+        BlocksWorld,
         children![(Text::new(""), text_font(14.0), HubText::Info)],
         scoped.clone(),
     ));
@@ -330,6 +331,7 @@ fn spawn_hub_ui(mut commands: Commands) {
         },
         BackgroundColor(Color::srgba(0.02, 0.02, 0.06, 0.82)),
         PanelRoot,
+        BlocksWorld,
         scoped.clone(),
     ));
     commands.spawn((
