@@ -8,7 +8,7 @@ use crate::items::{ItemSlot, ItemStats, Rarity, RoleAffinity};
 use crate::math::V2;
 use crate::nav::{Nav, Rect};
 use crate::stats::School;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -18,7 +18,7 @@ pub const DEFAULT_CONTENT_DIR: &str = "assets/content/dungeons";
 /// Environment variable that overrides the content location (file or directory).
 pub const CONTENT_ENV_VAR: &str = "DUNGEON_CONTENT";
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Content {
     pub dungeon: DungeonConfig,
@@ -30,7 +30,7 @@ pub struct Content {
     pub rewards: RewardConfig,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct DungeonConfig {
     /// Stable identifier (used in saves and on the command line).
@@ -54,7 +54,7 @@ pub struct DungeonConfig {
     pub theme: Theme,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Theme {
     pub floor: [f32; 3],
@@ -80,7 +80,7 @@ fn one_u32() -> u32 {
     1
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Difficulty {
     pub id: String,
@@ -114,7 +114,7 @@ impl Difficulty {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AreaConfig {
     pub name: String,
@@ -122,7 +122,7 @@ pub struct AreaConfig {
     pub max: V2,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum EnemyRank {
     Trash,
@@ -130,7 +130,7 @@ pub enum EnemyRank {
     Boss,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct EnemyTemplate {
     pub name: String,
@@ -160,14 +160,14 @@ pub struct EnemyTemplate {
     /// Immune to incapacitate effects. Defaults to true for bosses.
     #[serde(default)]
     pub cc_immune: Option<bool>,
+    /// Damage x5 after this many seconds in combat.
+    #[serde(default)]
+    pub enrage_seconds: Option<f32>,
     #[serde(default)]
     pub abilities: Vec<EnemyAbility>,
     /// Phase transitions in order of decreasing `hp_below`.
     #[serde(default)]
     pub phases: Vec<PhaseConfig>,
-    /// Damage x5 after this many seconds in combat.
-    #[serde(default)]
-    pub enrage_seconds: Option<f32>,
 }
 
 impl EnemyTemplate {
@@ -188,7 +188,7 @@ fn default_crit() -> f32 {
     0.05
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AbilityKind {
     /// Cast (optionally) then hit one target with spell damage.
@@ -207,7 +207,7 @@ pub enum AbilityKind {
     HealAlly,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum TargetSelector {
     /// The enemy's current (threat) target.
@@ -221,7 +221,7 @@ pub enum TargetSelector {
     Caster,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct EnemyAbility {
     pub name: String,
@@ -258,15 +258,15 @@ pub struct EnemyAbility {
     /// Summon: template key.
     #[serde(default)]
     pub template: Option<String>,
-    /// Debuff: the aura applied.
-    #[serde(default)]
-    pub aura: Option<AuraConfig>,
     /// HealAlly: amount healed.
     #[serde(default)]
     pub amount: f32,
+    /// Debuff: the aura applied.
+    #[serde(default)]
+    pub aura: Option<AuraConfig>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DebuffEffect {
     /// `value` damage per second.
@@ -277,7 +277,7 @@ pub enum DebuffEffect {
     HealingTaken,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AuraConfig {
     pub name: String,
@@ -296,7 +296,7 @@ fn yes() -> bool {
     true
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct PhaseConfig {
     /// Enter this phase when HP fraction falls to or below this value.
@@ -309,7 +309,7 @@ pub struct PhaseConfig {
     pub summon: Vec<SummonSpec>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SummonSpec {
     pub template: String,
@@ -317,7 +317,7 @@ pub struct SummonSpec {
     pub count: u32,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct EncounterConfig {
     pub id: String,
@@ -341,7 +341,7 @@ impl EncounterConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct MobSpawn {
     pub template: String,
@@ -349,7 +349,7 @@ pub struct MobSpawn {
 }
 
 /// An environmental hazard that pulses on and off while its encounter is alive.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct HazardConfig {
     pub name: String,
@@ -366,7 +366,7 @@ pub struct HazardConfig {
     pub offset: f32,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct LootEntry {
     pub id: String,
@@ -376,15 +376,15 @@ pub struct LootEntry {
     pub rarity: Rarity,
     #[serde(default)]
     pub role: RoleAffinity,
-    #[serde(default)]
-    pub stats: ItemStats,
     pub weight: u32,
     /// Encounter that drops this item; default: the final boss.
     #[serde(default)]
     pub source: Option<String>,
+    #[serde(default)]
+    pub stats: ItemStats,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RewardConfig {
     pub marks_per_clear: u32,
@@ -393,6 +393,23 @@ pub struct RewardConfig {
     /// Experience for clearing the dungeon (kills give extra).
     #[serde(default)]
     pub xp_per_clear: u32,
+}
+
+/// One change made in the in-game encounter editor.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ContentEdit {
+    /// Multiply max HP.
+    Hp(f32),
+    /// Multiply melee damage.
+    Melee(f32),
+    /// Add seconds to ability `i`'s interval.
+    Interval(usize, f32),
+    /// Multiply ability `i`'s damage (and heal amount).
+    Damage(usize, f32),
+    /// Add seconds to ability `i`'s cast time.
+    CastTime(usize, f32),
+    /// Add seconds to ring ability `i`'s warning delay.
+    Delay(usize, f32),
 }
 
 #[derive(Debug)]
@@ -451,6 +468,78 @@ impl Content {
         }
         content.validate(origin)?;
         Ok(content)
+    }
+
+    /// Serialize back to TOML (used by the in-game encounter editor).
+    pub fn to_toml(&self) -> Result<String, String> {
+        toml::to_string_pretty(self).map_err(|e| e.to_string())
+    }
+
+    /// Templates worth editing in the in-game editor: bosses then elites.
+    pub fn editable_templates(&self) -> Vec<String> {
+        let mut keys: Vec<(u8, String)> = self
+            .templates
+            .iter()
+            .filter_map(|(k, t)| match t.rank {
+                EnemyRank::Boss => Some((0, k.clone())),
+                EnemyRank::Elite => Some((1, k.clone())),
+                EnemyRank::Trash => None,
+            })
+            .collect();
+        keys.sort();
+        keys.into_iter().map(|(_, k)| k).collect()
+    }
+
+    /// Apply one editor change, clamped so the content stays valid.
+    pub fn apply_edit(&mut self, template: &str, edit: ContentEdit) {
+        let Some(t) = self.templates.get_mut(template) else {
+            return;
+        };
+        match edit {
+            ContentEdit::Hp(f) => t.hp = (t.hp * f).clamp(1.0, 10_000_000.0).round(),
+            ContentEdit::Melee(f) => {
+                t.melee_damage = (t.melee_damage * f).clamp(0.0, 100_000.0).round()
+            }
+            ContentEdit::Interval(i, d) => {
+                if let Some(a) = t.abilities.get_mut(i) {
+                    a.interval = (a.interval + d).clamp(1.0, 600.0);
+                    a.cast_time = a.cast_time.min(a.interval * 0.9);
+                    if a.delay > 0.0 {
+                        a.delay = a.delay.min(a.interval * 0.9).max(0.5);
+                    }
+                }
+            }
+            ContentEdit::Damage(i, f) => {
+                if let Some(a) = t.abilities.get_mut(i) {
+                    a.damage = (a.damage * f)
+                        .round()
+                        .max(if a.damage > 0.0 { 1.0 } else { 0.0 });
+                    a.amount = (a.amount * f).round();
+                }
+            }
+            ContentEdit::CastTime(i, d) => {
+                if let Some(a) = t.abilities.get_mut(i) {
+                    a.cast_time = (a.cast_time + d).clamp(0.0, a.interval * 0.9);
+                }
+            }
+            ContentEdit::Delay(i, d) => {
+                if let Some(a) = t.abilities.get_mut(i)
+                    && a.kind == AbilityKind::Ring
+                {
+                    a.delay = (a.delay + d).clamp(0.5, a.interval * 0.9);
+                }
+            }
+        }
+    }
+
+    /// Turn this content into a "custom" copy with its own id and name.
+    pub fn as_custom(&self) -> Content {
+        let mut c = self.clone();
+        if !c.dungeon.id.ends_with("_custom") {
+            c.dungeon.id = format!("{}_custom", c.dungeon.id);
+            c.dungeon.name = format!("{} (Custom)", c.dungeon.name);
+        }
+        c
     }
 
     /// The shipped Sunken Vault (used by tests).
@@ -996,6 +1085,47 @@ mod tests {
         assert!(bosses >= 2, "second dungeon needs two bosses");
         assert!(w.encounters.iter().any(|e| e.optional));
         assert!(w.difficulties.len() >= 2);
+    }
+
+    #[test]
+    fn content_round_trips_through_toml() {
+        for c in [Content::builtin(), Content::builtin_warrens()] {
+            let text = c.to_toml().expect("serializes");
+            let back = Content::from_toml_str(&text, "roundtrip").expect("re-parses and validates");
+            assert_eq!(back.to_toml().unwrap(), text, "stable round trip");
+            assert_eq!(back.encounters.len(), c.encounters.len());
+        }
+    }
+
+    #[test]
+    fn editor_changes_stay_valid_and_save_as_a_custom_dungeon() {
+        let mut c = Content::builtin().as_custom();
+        assert_eq!(c.dungeon.id, "sunken_vault_custom");
+        assert_eq!(c.editable_templates(), vec!["hollow_king", "brute"]);
+        let ring = c.templates["hollow_king"]
+            .abilities
+            .iter()
+            .position(|a| a.kind == AbilityKind::Ring)
+            .unwrap();
+        // Hammer the interval down: delay and cast time follow so it stays valid.
+        for _ in 0..30 {
+            c.apply_edit("hollow_king", ContentEdit::Interval(ring, -1.0));
+        }
+        c.apply_edit("hollow_king", ContentEdit::Delay(ring, 10.0));
+        c.apply_edit("hollow_king", ContentEdit::Hp(2.0));
+        c.validate("edited").expect("edits keep the content valid");
+        let a = &c.templates["hollow_king"].abilities[ring];
+        assert_eq!(a.interval, 1.0);
+        assert!(a.delay < a.interval);
+        assert_eq!(c.templates["hollow_king"].hp, 28000.0);
+        let text = c.to_toml().unwrap();
+        let back = Content::from_toml_str(&text, "saved").unwrap();
+        assert_eq!(back.dungeon.name, "The Sunken Vault (Custom)");
+        assert_eq!(
+            back.as_custom().dungeon.id,
+            "sunken_vault_custom",
+            "idempotent"
+        );
     }
 
     #[test]

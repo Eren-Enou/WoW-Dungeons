@@ -23,6 +23,8 @@ pub struct DemoConfig {
     pub hub_tour: bool,
     /// Click the History tab with synthetic pointer events and report the result.
     pub click_test: bool,
+    /// Edit a boss through the editor actions, save, and verify the reload.
+    pub editor_test: bool,
     pub speed: f32,
     pub screenshot_every: Option<f32>,
     /// Demo overrides for the selected dungeon / difficulty / party level.
@@ -59,6 +61,7 @@ pub fn parse_args() -> DemoConfig {
         input_test: args.iter().any(|a| a == "--input-test"),
         hub_tour: args.iter().any(|a| a == "--hub-tour"),
         click_test: args.iter().any(|a| a == "--click-test"),
+        editor_test: args.iter().any(|a| a == "--editor-test"),
         speed: value("--speed").unwrap_or(1.0).clamp(0.1, 10.0),
         screenshot_every: value("--screenshots"),
         dungeon: text("--dungeon"),
@@ -76,7 +79,14 @@ impl Plugin for DemoPlugin {
             .init_resource::<DemoState>()
             .add_systems(
                 Update,
-                (demo_driver, screenshots, demo_camera, hub_tour, click_test),
+                (
+                    demo_driver,
+                    screenshots,
+                    demo_camera,
+                    hub_tour,
+                    click_test,
+                    editor_test,
+                ),
             )
             .add_systems(
                 Update,
@@ -315,6 +325,7 @@ fn hub_tour(
         Tab::History,
         Tab::Sandbox,
         Tab::Vendor,
+        Tab::Editor,
     ];
     if *step >= plan.len() {
         exit.write(AppExit::Success);
@@ -326,6 +337,9 @@ fn hub_tour(
         if let Some(i) = first.and_then(|id| data.profile.roster.iter().position(|c| c.id == id)) {
             ui.wearer = dungeon_sim::profile::Wearer::Companion(i);
         }
+    }
+    if *step == 8 {
+        crate::hub::apply_action(crate::hub::HubAction::EditStart, &mut data, &mut ui);
     }
     if *step == 3 {
         // Exercise the same action path a button click uses.
@@ -413,4 +427,59 @@ fn click_test(
         let _ = std::fs::write("logs/click_test.txt", msg);
         exit.write(AppExit::Success);
     }
+}
+
+/// `--editor-test`: drive the encounter editor through its hub actions (start a
+/// copy, shorten the first boss ability's interval, raise boss HP, save) and check
+/// the saved dungeon is in the reloaded library. Run with `DUNGEON_CONTENT`
+/// pointing at a scratch copy of the content directory.
+fn editor_test(
+    time: Res<Time>,
+    cfg: Res<DemoConfig>,
+    state: Res<State<AppState>>,
+    mut data: ResMut<GameData>,
+    mut ui: ResMut<crate::hub::HubUi>,
+    mut t: Local<f32>,
+    mut exit: MessageWriter<AppExit>,
+) {
+    use crate::hub::{HubAction, apply_action};
+    use dungeon_sim::content::ContentEdit;
+    if !cfg.editor_test || *state.get() != AppState::Hub {
+        return;
+    }
+    *t += time.delta_secs();
+    if *t < 2.0 {
+        return;
+    }
+    let original = data.profile.selected_dungeon.clone();
+    apply_action(HubAction::EditStart, &mut data, &mut ui);
+    apply_action(
+        HubAction::Edit(ContentEdit::Interval(0, -3.0)),
+        &mut data,
+        &mut ui,
+    );
+    apply_action(HubAction::Edit(ContentEdit::Hp(1.1)), &mut data, &mut ui);
+    let before = data
+        .editor
+        .as_ref()
+        .map(|c| c.editable_templates()[0].clone())
+        .unwrap_or_default();
+    apply_action(HubAction::EditSave, &mut data, &mut ui);
+    let custom = format!("{original}_custom");
+    let loaded = data.library.get(&custom).map(|c| {
+        let tpl = &c.templates[&before];
+        (tpl.hp, tpl.abilities.first().map(|a| a.interval))
+    });
+    let ok = loaded.is_some() && data.profile.selected_dungeon == custom;
+    let msg = format!(
+        "EDITOR TEST {}: saved '{custom}' (template '{before}': hp/interval {loaded:?}); selected '{}'; message {:?}; content errors {}",
+        if ok { "OK" } else { "FAILED" },
+        data.profile.selected_dungeon,
+        data.message.as_ref().map(|m| m.0.clone()),
+        data.content_errors.len()
+    );
+    info!("{msg}");
+    let _ = std::fs::create_dir_all("logs");
+    let _ = std::fs::write("logs/editor_test.txt", msg);
+    exit.write(AppExit::Success);
 }

@@ -24,6 +24,8 @@ pub struct GameData {
     pub content_errors: Vec<String>,
     /// Transient message shown in the hub (text, seconds left).
     pub message: Option<(String, f32)>,
+    /// Working copy for the in-game encounter editor.
+    pub editor: Option<Content>,
 }
 
 impl GameData {
@@ -37,6 +39,7 @@ impl GameData {
             library: ContentLibrary::default(),
             content_errors: Vec::new(),
             message: err.map(|e| (format!("Save problem: {e}"), 10.0)),
+            editor: None,
         };
         data.reload_content();
         for e in &data.content_errors {
@@ -69,6 +72,32 @@ impl GameData {
             self.profile.selected_difficulty = c.difficulties[0].id.clone();
         }
         self.content_errors.is_empty()
+    }
+
+    /// Validate and write the editor's working copy as a dungeon file in the
+    /// content directory, reload, and select it. Returns the written path.
+    pub fn save_editor(&mut self) -> Result<String, String> {
+        let Some(c) = &self.editor else {
+            return Err("nothing to save".into());
+        };
+        let c = c.as_custom();
+        c.validate("editor").map_err(|e| e.to_string())?;
+        let text = c.to_toml()?;
+        let dir = std::path::Path::new(&self.content_path);
+        let dir = if dir.is_dir() {
+            dir.to_path_buf()
+        } else {
+            dir.parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| std::path::PathBuf::from("."))
+        };
+        let path = dir.join(format!("90_{}.toml", c.dungeon.id));
+        let header = "# Written by the in-game encounter editor. Edit freely; F5 reloads.\n";
+        std::fs::write(&path, format!("{header}{text}")).map_err(|e| e.to_string())?;
+        self.reload_content();
+        self.profile.selected_dungeon = c.dungeon.id.clone();
+        self.editor = Some(c);
+        Ok(path.display().to_string())
     }
 
     pub fn selected_content(&self) -> Option<&Content> {

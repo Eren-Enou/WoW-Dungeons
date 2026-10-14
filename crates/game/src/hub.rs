@@ -10,6 +10,7 @@ use bevy::prelude::*;
 use bevy::ui::Pressed;
 use bevy::ui_widgets::{Activate, Button as UiButton};
 use dungeon_sim::ClassId;
+use dungeon_sim::content::ContentEdit;
 use dungeon_sim::items::ItemSlot;
 use dungeon_sim::profile::{GROUP_SIZES, Wearer, xp_to_next};
 
@@ -53,10 +54,11 @@ pub enum Tab {
     History,
     Sandbox,
     Vendor,
+    Editor,
 }
 
 impl Tab {
-    const ALL: [Tab; 7] = [
+    const ALL: [Tab; 8] = [
         Tab::Party,
         Tab::Character,
         Tab::Vendor,
@@ -64,6 +66,7 @@ impl Tab {
         Tab::Classes,
         Tab::History,
         Tab::Sandbox,
+        Tab::Editor,
     ];
 
     fn label(self) -> &'static str {
@@ -75,6 +78,7 @@ impl Tab {
             Tab::History => "History",
             Tab::Sandbox => "Sandbox",
             Tab::Vendor => "Vendor",
+            Tab::Editor => "Editor",
         }
     }
 }
@@ -86,6 +90,7 @@ pub struct HubUi {
     pub wearer: Wearer,
     pub stash_page: usize,
     pub vendor_page: usize,
+    pub editor_template: usize,
     pub dirty: bool,
     pub companions_dirty: bool,
 }
@@ -98,6 +103,7 @@ impl Default for HubUi {
             wearer: Wearer::Player,
             stash_page: 0,
             vendor_page: 0,
+            editor_template: 0,
             dirty: true,
             companions_dirty: true,
         }
@@ -122,6 +128,11 @@ pub enum HubAction {
     Buy(usize),
     Salvage(usize),
     VendorPage(i32),
+    EditStart,
+    EditPick(usize),
+    Edit(ContentEdit),
+    EditSave,
+    EditDiscard,
     Reload,
     /// Change a sandbox knob by a factor (or reset with `Knob::Reset`).
     Sandbox(Knob, f32),
@@ -513,6 +524,36 @@ pub fn apply_action(action: HubAction, data: &mut GameData, ui: &mut HubUi) {
             ui.vendor_page = (ui.vendor_page as i32 + d).rem_euclid(pages) as usize;
             save = false;
         }
+        HubAction::EditStart => {
+            data.editor = data.selected_content().map(|c| c.as_custom());
+            ui.editor_template = 0;
+            save = false;
+        }
+        HubAction::EditPick(i) => {
+            ui.editor_template = i;
+            save = false;
+        }
+        HubAction::Edit(edit) => {
+            let key = data
+                .editor
+                .as_ref()
+                .and_then(|c| c.editable_templates().get(ui.editor_template).cloned());
+            if let (Some(c), Some(key)) = (data.editor.as_mut(), key) {
+                c.apply_edit(&key, edit);
+            }
+            save = false;
+        }
+        HubAction::EditSave => match data.save_editor() {
+            Ok(path) => data.flash(format!("Saved and selected: {path}")),
+            Err(e) => {
+                data.flash(format!("Could not save: {e}"));
+                save = false;
+            }
+        },
+        HubAction::EditDiscard => {
+            data.editor = None;
+            save = false;
+        }
         HubAction::GroupSize(n) => {
             data.profile.set_group_size(n);
             data.flash(format!("Group size {n}: companions re-balanced"));
@@ -586,6 +627,7 @@ fn rebuild_panel(
             Tab::History => history_tab(p, &data),
             Tab::Sandbox => sandbox_tab(p, &data),
             Tab::Vendor => vendor_tab(p, &data, ui),
+            Tab::Editor => editor_tab(p, &data, ui),
         }
     });
 }
@@ -963,6 +1005,150 @@ fn classes_tab(p: &mut ChildSpawnerCommands) {
     }
 }
 
+fn editor_tab(p: &mut ChildSpawnerCommands, data: &GameData, ui: &HubUi) {
+    let Some(c) = &data.editor else {
+        label(
+            p,
+            "Encounter editor: tune bosses and elites, then save a custom dungeon file.",
+            14.0,
+            Color::srgb(1.0, 0.9, 0.6),
+        );
+        let name = data
+            .selected_content()
+            .map(|c| c.dungeon.name.clone())
+            .unwrap_or_else(|| "-".into());
+        row(p, |r| {
+            button(
+                r,
+                format!("Edit a copy of {name}"),
+                HubAction::EditStart,
+                false,
+            );
+        });
+        label(
+            p,
+            "The copy is saved as assets/content/dungeons/90_<id>_custom.toml and selected.",
+            12.0,
+            Color::srgb(0.7, 0.7, 0.7),
+        );
+        return;
+    };
+    label(
+        p,
+        format!("Editing: {} (unsaved changes live here)", c.dungeon.name),
+        14.0,
+        Color::srgb(1.0, 0.9, 0.6),
+    );
+    let keys = c.editable_templates();
+    row(p, |r| {
+        for (i, k) in keys.iter().enumerate() {
+            button(
+                r,
+                c.templates[k].name.clone(),
+                HubAction::EditPick(i),
+                i == ui.editor_template,
+            );
+        }
+    });
+    let Some(key) = keys.get(ui.editor_template.min(keys.len().saturating_sub(1))) else {
+        return;
+    };
+    let t = &c.templates[key];
+    let step_row =
+        |p: &mut ChildSpawnerCommands, text: String, down: ContentEdit, up: ContentEdit| {
+            row(p, |r| {
+                button(r, "-", HubAction::Edit(down), false);
+                button(r, "+", HubAction::Edit(up), false);
+                label(r, text, 13.0, Color::WHITE);
+            });
+        };
+    step_row(
+        p,
+        format!("Health {:.0}", t.hp),
+        ContentEdit::Hp(1.0 / 1.1),
+        ContentEdit::Hp(1.1),
+    );
+    step_row(
+        p,
+        format!(
+            "Melee damage {:.0} every {:.1}s",
+            t.melee_damage, t.attack_interval
+        ),
+        ContentEdit::Melee(1.0 / 1.1),
+        ContentEdit::Melee(1.1),
+    );
+    for (i, a) in t.abilities.iter().enumerate() {
+        label(
+            p,
+            format!(
+                "{} ({:?}{}){}",
+                a.name,
+                a.kind,
+                if a.interruptible {
+                    ", interruptible"
+                } else {
+                    ""
+                },
+                if a.phases.is_empty() {
+                    String::new()
+                } else {
+                    format!(" phases {:?}", a.phases)
+                }
+            ),
+            13.0,
+            Color::srgb(1.0, 0.7, 0.4),
+        );
+        row(p, |r| {
+            button(
+                r,
+                "-",
+                HubAction::Edit(ContentEdit::Interval(i, -1.0)),
+                false,
+            );
+            button(
+                r,
+                "+",
+                HubAction::Edit(ContentEdit::Interval(i, 1.0)),
+                false,
+            );
+            label(r, format!("every {:.1}s", a.interval), 12.0, Color::WHITE);
+            if a.damage > 0.0 || a.amount > 0.0 {
+                button(
+                    r,
+                    "-",
+                    HubAction::Edit(ContentEdit::Damage(i, 1.0 / 1.1)),
+                    false,
+                );
+                button(r, "+", HubAction::Edit(ContentEdit::Damage(i, 1.1)), false);
+                let v = if a.damage > 0.0 { a.damage } else { a.amount };
+                label(r, format!("power {v:.0}"), 12.0, Color::WHITE);
+            }
+            button(
+                r,
+                "-",
+                HubAction::Edit(ContentEdit::CastTime(i, -0.25)),
+                false,
+            );
+            button(
+                r,
+                "+",
+                HubAction::Edit(ContentEdit::CastTime(i, 0.25)),
+                false,
+            );
+            label(r, format!("cast {:.2}s", a.cast_time), 12.0, Color::WHITE);
+            if a.delay > 0.0 {
+                button(r, "-", HubAction::Edit(ContentEdit::Delay(i, -0.5)), false);
+                button(r, "+", HubAction::Edit(ContentEdit::Delay(i, 0.5)), false);
+                label(r, format!("warning {:.1}s", a.delay), 12.0, Color::WHITE);
+            }
+        });
+    }
+    row(p, |r| {
+        button(r, "Save as custom dungeon", HubAction::EditSave, true);
+        button(r, "Discard", HubAction::EditDiscard, false);
+    });
+}
+
 fn vendor_tab(p: &mut ChildSpawnerCommands, data: &GameData, ui: &HubUi) {
     let pr = &data.profile;
     label(
@@ -1219,6 +1405,7 @@ fn hub_keys(keys: Res<ButtonInput<KeyCode>>, mut data: ResMut<GameData>, mut ui:
         KeyCode::Digit5,
         KeyCode::Digit6,
         KeyCode::Digit7,
+        KeyCode::Digit8,
     ]
     .into_iter()
     .enumerate()
@@ -1342,7 +1529,7 @@ fn update_hub_text(
                 }
                 s.push_str(
                     "WASD move | RMB-drag / arrows: camera | wheel: zoom\n\
-                     Panel: click buttons, or 1-7 switch tabs, P hide\n\
+                     Panel: click buttons, or 1-8 switch tabs, P hide\n\
                      F5: reload content files",
                 );
                 if !p.sandbox.is_default() {
