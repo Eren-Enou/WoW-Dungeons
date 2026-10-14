@@ -596,7 +596,7 @@ pub fn party_decision(sim: &Sim, id: ActorId) -> Decision {
 
 /// If the straight path to `goal` crosses a frontal cleave cone, steer to a point
 /// beside the cleaving enemy first (on our side), so we walk around the front.
-fn route_around_cones(sim: &Sim, id: ActorId, goal: V2) -> V2 {
+pub(crate) fn route_around_cones(sim: &Sim, id: ActorId, goal: V2) -> V2 {
     let me = sim.actor(id);
     let margin = params_of(me).danger_margin * 0.5;
     for k in 1..=8 {

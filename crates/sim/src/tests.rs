@@ -1696,3 +1696,32 @@ fn ashen_spire_loads_and_is_clearable_at_level_ten() {
         .count();
     assert!(wins >= 2, "only {wins}/3 wins");
 }
+
+#[test]
+fn non_tanks_walk_around_frontal_cones_instead_of_through_them() {
+    let mut sim = Sim::new(
+        &Content::builtin_warrens(),
+        &party_at_level(ClassId::Striker, 6, AiProfile::Balanced),
+        3,
+    );
+    let enc = encounter_index(&sim, "brood_chamber");
+    let boss = sim.encounters[enc].mobs[0];
+    let bp = sim.actors[boss].pos;
+    sim.actors[TANK].pos = bp + V2::new(0.0, -2.5);
+    sim.actors[boss].facing = std::f32::consts::PI; // facing -Z
+    sim.engage(enc, TANK);
+    sim.add_threat(boss, TANK, 1e6);
+    sim.actors[boss].target = Some(TANK);
+    sim.actors[HEALER].pos = bp + V2::new(-10.0, -2.0);
+    sim.board = ai::compute_blackboard(&sim);
+    let goal = bp + V2::new(10.0, -2.0); // straight line crosses the cone
+    let step = ai::route_around_cones(&sim, HEALER, goal);
+    assert_ne!(step, goal, "takes a detour");
+    assert!(
+        !crate::stats::is_in_front(bp, sim.actors[boss].facing, step) || step.dist(bp) > 9.0,
+        "detour {step:?} stays out of the cone"
+    );
+    // A path that never touches the cone is left alone.
+    let clear = bp + V2::new(-10.0, 6.0);
+    assert_eq!(ai::route_around_cones(&sim, HEALER, clear), clear);
+}
