@@ -758,3 +758,33 @@ fn wipe_is_final_no_rally() {
     assert_eq!(sim.outcome, RunOutcome::Wipe);
     assert!(sim.alive_party().next().is_none());
 }
+
+#[test]
+fn unbalanced_parties_still_finish() {
+    use crate::sim::PartyMemberSpec;
+    let spec = |name: &str, class| PartyMemberSpec {
+        name: name.into(),
+        class,
+        power: 0,
+        stamina: 0,
+        player_controlled: false,
+    };
+    let content = Content::builtin();
+    // No healer, and a party with no tank: the run must reach an outcome either way.
+    let no_healer = vec![
+        spec("A", ClassId::Warden),
+        spec("B", ClassId::Striker),
+        spec("C", ClassId::Striker),
+        spec("D", ClassId::Arcanist),
+        spec("E", ClassId::Arcanist),
+    ];
+    let no_tank = vec![
+        spec("A", ClassId::Mender),
+        spec("B", ClassId::Striker),
+        spec("C", ClassId::Arcanist),
+    ];
+    for party in [no_healer, no_tank] {
+        let (_, s) = run_headless(&content, &party, 4, 1200.0);
+        assert_ne!(s.outcome, RunOutcome::InProgress);
+    }
+}

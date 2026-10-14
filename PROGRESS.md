@@ -12,7 +12,8 @@ Environment used for verification: Windows 11 Pro, Rust 1.99.0, Bevy 0.20.0
 ### Checks (latest run, 2026-10-14)
 - `cargo fmt --all -- --check` — clean.
 - `cargo check --workspace` — clean.
-- `cargo test --workspace` — **49 passed, 0 failed** (all in `dungeon_sim`).
+- `cargo test --workspace` — **50 passed, 0 failed** (all in `dungeon_sim`).
+- `cargo build --release --workspace` — succeeds; `cargo run --release -- --demo --speed 4 --smoke-test 50` played a full run to Victory and exited cleanly.
 - `cargo clippy --workspace --all-targets -- -D warnings` — clean.
 
 ### M0 — Bootstrap
@@ -51,6 +52,7 @@ Environment used for verification: Windows 11 Pro, Rust 1.99.0, Bevy 0.20.0
 
 ### Post-M5 additions
 - **Real input path (acceptance B):** `cargo run -- --input-test` injects key presses into Bevy's `ButtonInput<KeyCode>` resource and drives the game's own input systems: strafe (A), walk (W), Tab, then 1/2/3. Observed report: player moved 33.7 m through the corridor into the first room, Tab acquired a Gloomfang Skulker, 3 abilities landed (Rend Strike, Whirl, Evade; 430–458 damage), the pack died; later presses correctly failed with "not ready"/"no target". Screenshot confirmed the scene. Limitation: synthetic presses at the `ButtonInput` level, not OS keyboard events.
+- Unbalanced parties (no healer / no tank) still reach an outcome (test `unbalanced_parties_still_finish`).
 - **Rally rule:** fallen party members get back up (40% HP/mana) after the whole party has been out of combat for 8 s, so a dead player/leader cannot soft-lock the run. A full wipe stays final. Tests `fallen_members_rally_after_combat_but_not_during_it`, `wipe_is_final_no_rally`.
 
 ## Not verified / requires human playtesting
