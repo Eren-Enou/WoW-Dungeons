@@ -4,9 +4,11 @@ An original Rust + Bevy 0.20 third-person dungeon RPG inspired by the
 *mechanical feel* of classic tab-target MMORPG dungeons: one player, four
 autonomous companions (tank / healer / DPS) with selectable AI personalities,
 a WoW-Classic-style combat model (armor, hit tables, rage/energy/mana,
-interrupts, crowd control), two data-driven dungeons with multi-phase bosses,
-levels, loot with rarities, and a sandbox for editing encounters without
-recompiling. All assets are primitive meshes; all names, maps and numbers are
+interrupts, crowd control), three data-driven dungeons and a 10-player raid
+with multi-phase bosses, levels, loot with rarities, and a sandbox for editing
+encounters without recompiling. Classic MMO controls, clickable party/raid
+frames with mouseover healing, threat-coloured nameplates and tooltips
+generated from the real rules. All assets are primitive meshes; all names, maps and numbers are
 original.
 
 ## Quick start
@@ -22,21 +24,34 @@ profile) also works; dependencies are optimised even in debug.
 
 | Where   | Input | Action |
 |---------|-------|--------|
-| Hub     | WASD | move (relative to camera) |
+| Both    | W / S | move forward / back along your facing (moving cancels casts) |
+| Both    | A / D | turn (strafe while the right button is held) |
+| Both    | Q / E | strafe |
+| Both    | right-drag | rotate the camera and steer the character |
+| Both    | left-drag | free look (facing unchanged); a short click selects |
+| Both    | both buttons | run forward |
+| Both    | arrow keys, wheel | rotate/tilt camera, zoom |
+| Both    | V | camera auto-follow on/off (saved) |
+| Both    | hover | tooltips on buttons, stats, items, abilities, frames |
 | Hub     | mouse | click the panel buttons (recruit, AI profile, equip, dungeon, difficulty...) |
-| Hub     | 1-5 / P | switch panel tab / hide panel |
+| Hub     | 1-8 / P | switch panel tab / hide panel |
 | Hub     | E (at portal) | enter the selected dungeon (re-reads all content files) |
 | Hub     | F5 | reload content files |
-| Dungeon | WASD, Q/E | move / strafe (moving cancels casts); both mouse buttons run |
 | Dungeon | Tab / Shift+Tab / click | cycle enemies (engaged first) / reverse / pick any actor |
-| Dungeon | T / G | assist (target of target) / target the party's kill target |
-| Dungeon | F1-F5 | target party members (healers) |
-| Dungeon | 1-5 | class abilities |
+| Dungeon | click a party frame / F1-F5 | select a party member |
+| Dungeon | click the target-of-target frame / T | select your target's target |
+| Dungeon | G | target the party's kill target |
+| Dungeon | 1-5 | class abilities; friendly spells go to the ally under the mouse (frame or character), else your selected ally, else you |
 | Dungeon | F / Esc | start auto-attack / clear target |
 | Dungeon | L | toggle verbose combat log |
 | Dungeon | Backspace | leave the dungeon (counts as a failed run) |
-| Both    | right-drag / arrow keys, wheel | rotate camera, zoom |
 | Results | Enter | back to the hub |
+
+In the dungeon, enemy nameplates are coloured by threat from your point of view
+(tank: green secure / yellow contested / blue other tank / red lost; others:
+yellow = close to pulling, red = attacking you). The action bar shows range,
+cooldown (dark curtain), global cooldown (thin top bar) and resource shortfall
+with the time until affordable.
 
 ### Classes
 
@@ -62,6 +77,8 @@ RULES.md documents every formula.
 * **The Ashen Spire** (level 8+): healing-reduction brands, armored sentinels,
   a fire-jet corridor, the Twin Altar council (two bosses at once), an optional
   Furnace Golem, and three-phase Ashmaw.
+* **The Cinder Court** (raid, 10 players, level 10): gate guards, Twinmaw the
+  Behemoth (tank swaps) and the Cinder Regent.
 
 Each has Normal, Heroic and Raid (10) difficulties; the Party tab switches
 between a 5-person party and a 10-person raid group. The Sandbox tab adjusts
@@ -125,8 +142,16 @@ cargo run -- --demo --dungeon gloomroot_warrens --level 6 --speed 4 --screenshot
   `logs/input_test.txt`.
 * `--hub-tour` screenshots every hub tab; `--click-test` clicks a hub button with
   synthetic mouse events → `logs/click_test.txt`; `--editor-test` edits and saves
-  a custom dungeon through the editor (use a scratch `DUNGEON_CONTENT` dir) →
-  `logs/editor_test.txt`.
+  a custom dungeon through the editor (point `DUNGEON_CONTENT` at a scratch copy
+  of `assets/content/dungeons`) → `logs/editor_test.txt`.
+* `--frame-test` plays a Mender, hovers a party frame and presses 1 with an
+  enemy selected (mouseover heal), then clicks another frame →
+  `logs/frame_test.txt`; `--tooltip-test` hovers a stat and a vendor item →
+  `logs/tooltip_test.txt`.
+* `--class warden|mender|striker|arcanist` and `--group 10` pick the player
+  class and group size for `--demo`.
+
+Manual playtest scenarios for 0.3: [PLAYTEST_0_3.md](PLAYTEST_0_3.md).
 
 Set `DUNGEON_SAVE_DIR` to a temp folder for these runs so they don't touch your
 real profile.
@@ -147,7 +172,7 @@ cargo build --release --workspace
 crates/sim    dungeon_sim: stats & formulas, combat, auras, AI + blackboard, nav,
               content schema, items, profile/progression, headless runner
 crates/game   dungeon_game: Bevy app (hub, dungeon renderer, HUD, overlays, effects,
-              results, camera, demo/test automation)
+              results, camera, controls, tooltips, demo/test automation)
 assets/content/dungeons/   the playable dungeons (TOML)
 assets/content/variants/   example encounter variations
 RULES.md      authoritative rules and formulas ([WoW] / [orig] tagged)

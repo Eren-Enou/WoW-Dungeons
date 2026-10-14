@@ -1,6 +1,92 @@
 # Changelog
 
-## 0.2 (in development)
+## 0.3 — combat UX, controls and gameplay polish
+
+"Make the game better to play before making it bigger." No new dungeons,
+classes or balance changes; saves stay compatible (new settings default in).
+
+### Controls and camera
+- Classic MMO controls (`controls.rs`, a pure, unit-tested rules function):
+  right-drag rotates the camera and steers the character; left-drag is free look
+  that never changes facing; a left *click* (under 5 px of travel) still selects;
+  both buttons run forward; A/D turn (strafe while right-drag is held); Q/E
+  always strafe; arrow keys rotate/tilt the camera.
+- Optional auto-follow: while moving, the camera eases behind the character;
+  manual camera input suppresses it for 1.2 s. Toggle with **V** (saved in the
+  profile; on by default).
+- Camera collision probes five rays (0.35 m radius), pulls in fast and eases out
+  with a deadband, so it no longer jitters at wall corners.
+
+### Party frames and healing
+- Party and raid frames are buttons: the whole frame selects that member; gold
+  border = selected, blue = mouseover; dead (red) and stunned/silenced (purple)
+  tints; health numbers, debuffs (dispellable ones marked `*`) and buffs.
+- Clickable target-of-target frame (T still assists).
+- **Mouseover healing**: friendly spells go to the ally under the cursor (party
+  frame first, then the ToT frame, then the 3D character), else the selected
+  ally, else yourself — without changing your selection. Hostile spells ignore
+  mouseover. A blue ground ring shows who the spell would land on. Every cast
+  still goes through the simulation's normal validation.
+- HUD panels block the world: clicks on them never select characters behind
+  them, and drag-look and zoom don't trigger over them. Nameplates, floating
+  text, banners and the tooltip never intercept clicks.
+
+### Action bar
+- Driven by `Sim::ability_state`, the same checks a key press runs: cooldown
+  curtain with seconds left, a separate thin GCD sweep, red tint and
+  "Out of range" (edge-to-edge range, as the sim measures it), blue tint and
+  "need 40 energy - 2.5s" when short of resource (shown even during the GCD),
+  and blockers: no/invalid target, silenced, stunned, stop to cast, nothing to
+  dispel, target weakened.
+- Failure messages name the ability ("Mend: Out of range") and are not
+  re-triggered while a key is mashed.
+
+### Threat
+- Enemy nameplates are coloured from your perspective. Tank: green secure,
+  yellow contested (someone ≥ 80% of the way to pulling), blue held by another
+  tank, red attacking a non-tank. Others: muted when safe, yellow when you're
+  close to pulling, red when it's attacking you. The health-bar frame repeats the
+  colour (white for your target).
+- Target frame: threat status line, a bar toward the pull threshold (110% in
+  melee, 130% at range), who it attacks (and whether taunted), your threat, the
+  top competitor and the pull value.
+- Restrained alerts (at most one per 2.5 s): "Aggro lost: X is attacking Y -
+  taunt!" for tanks, "X is attacking you!" for others; "Taunted X" confirms a
+  taunt immediately.
+
+### Resources
+- Readout above the action bar: energy rate and time until full; mana regen
+  with the five-second-rule countdown; rage gain/decay explanation. Action slots
+  show the time until an ability becomes affordable.
+
+### Tooltips
+- One framework (`tooltip.rs`) with text generated in `dungeon_sim::describe`
+  from the real definitions: abilities (costs, range, cast, cooldown, target
+  rule, effect numbers scaled by your power), auras (effect, time left, stacks,
+  dispellable, source), stats (formulas from RULES.md), gear (role fit,
+  comparison with the equipped item, role score), AI profiles (their actual
+  parameters), difficulties, classes, dungeons, vendor (price, comparison),
+  sandbox knobs, editor operations and hub tabs. The panel flips/clamps to stay
+  on screen and is never pickable.
+
+### Readability
+- Your own buffs/debuffs above the resource bar; shorter, non-wrapping frame
+  names; wider nameplates; cast bars on enemy plates only; the default combat log
+  drops companions' failed casts, cast starts and fully overhealed ticks (`L`
+  shows everything); log no longer overlaps the action bar at 1280 px.
+
+### Simulation APIs (no rule changes)
+- `validate_cast` (side-effect-free; `try_cast` uses it), `queue_player_cast_on`
+  and `player_cast_target` (explicit friendly target), `ability_state`,
+  `resource_regen_per_sec` / `resource_rate` / `five_second_rule_left`,
+  `threat_view` with `TankThreat` / `PersonalThreat`. Headless results and
+  deterministic replay unchanged.
+
+### Developer flags
+- `--frame-test` (hover a party frame, press 1 as a Mender with an enemy
+  selected, click another frame), `--tooltip-test`, `--class NAME` for demo runs.
+
+## 0.2
 
 ### Phase A — playable experience
 - Camera: collision against wall/pillar boxes (pull in fast, ease out), zoom 4–32 m.
@@ -95,6 +181,8 @@
   content schema is serializable with a stable round trip. `--editor-test`.
 - AI routes non-tanks around frontal cleave cones via a cone-free flank (escapes
   from ground effects keep priority); Hex is no longer spent on short-lived adds.
+- Fourth dungeon, the raid **The Cinder Court** (10 players, level 10): gate
+  guards, Twinmaw the Behemoth (tank swaps) and the Cinder Regent; tank-swap AI.
 
 ## 0.1 — prototype
 - Hub → dungeon → boss → rewards → hub loop, four classes, AI party, headless runner.

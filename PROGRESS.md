@@ -1,10 +1,86 @@
 # Progress
 
-Status: **0.2 in development — Phases A–G implemented and verified headlessly
-and through automated graphical runs.** No human has played 0.2 yet.
+Status: **0.3 (combat UX, controls and gameplay polish) implemented and verified
+through unit tests and automated graphical runs.** No human has played 0.2 or
+0.3 yet; PLAYTEST_0_3.md is the script for that.
 
 Environment: Windows 11 Pro, Rust 1.99.0, Bevy 0.20.0 (pinned `=0.20.0`,
 Cargo.lock committed), NVIDIA RTX 2070 SUPER (Vulkan).
+
+## 0.3 — combat UX, controls and gameplay polish
+
+Starting point: commit 14730d3 (0.2 complete). Commits: c24f3c7 + a25727f
+(Phase A controls/camera), 905f3b2 (sim APIs), 8878767 (Phase D frames and
+mouseover + Phase B action bar + resource readout), f49f356 (Phase C threat),
+630effa (Phase F tooltips), 45efc02 (Phase G readability).
+
+### Checks (run 2026-10-14 after 45efc02)
+- `cargo fmt --all -- --check` — clean.
+- `cargo clippy --workspace --all-targets -- -D warnings` — clean.
+- `cargo test --workspace` — **118 passed** in `dungeon_sim`, **14 passed** in
+  `dungeon_game`, 0 failed.
+- `cargo build --release --workspace` — succeeded.
+- `dungeon-headless --runs 10` (Vault, L1) — 10/10 wins, deterministic replay OK;
+  `--party-size 10 --level 5 --runs 5` — 5/5, replay OK. The sim API work did
+  not change combat rules.
+
+### Unit tests added
+- Controls (10, `controls.rs`): W moves along facing, right-drag steers,
+  left-drag never changes facing, A/D turn vs strafe with the right button,
+  both buttons run, auto-follow eases behind a moving character, waits while
+  standing and can be disabled, manual camera input wins for a grace period,
+  backpedalling doesn't spin the camera, angle wrapping.
+- Camera: collision keeps clear of walls including side probes; smoothing pulls
+  in fast and ignores sub-deadband changes (no jitter).
+- Sim (5): mouseover heal targets the hovered ally and keeps the selection;
+  friendly target order mouseover → selected ally → self; hostile spells ignore
+  mouseover; `ability_state` agrees with what a cast does (range, resource, GCD,
+  cooldown); `threat_view` reports secure / contested / lost and taunt.
+- Describe (3): ability text uses real numbers scaled by power; every ability,
+  class, profile and stat has text; gear comparison with the equipped item and
+  role mismatch.
+- HUD (1): action-slot status priority (cooldown > resource with wait time >
+  range > blockers; GCD alone isn't an error).
+
+### Graphical runs (automated, real input/picking pipeline)
+- `--input-test`: scripted key presses through the real controls: moved 29.7 m
+  with W/Q/D, turned, Tab-targeted, casts landed; auto-follow left a 0.03 rad
+  gap between facing and camera. Same result as before the HUD rework (compared
+  against a stash of the changes).
+- `--frame-test` — **FRAME TEST OK**: synthetic pointer hover over a party frame
+  set the mouseover to that ally and `cursor_over_ui`; pressing 1 (Mend) with an
+  enemy selected healed the hovered ally and kept the enemy selected; clicking
+  another frame selected that member and produced no world click.
+- `--tooltip-test` — **TOOLTIP TEST OK**: armor stat and a vendor item showed
+  their tooltips fully on screen (the vendor one flipped left of the right-hand
+  panel). Screenshot of the Mend tooltip flipping above the action bar.
+- `--click-test` OK, `--hub-tour` OK, `--editor-test` OK (scratch copy of
+  `assets/content/dungeons`).
+- `--demo` screenshots: Warden (threat line "SECURE on you", green plates, ToT
+  frame, GCD sweeps), Arcanist in a 10-person raid (compact frames, five-second
+  rule countdown, "Threat 30% of pull"), Striker (0 energy → every slot "need N
+  energy - X s" in blue during the GCD; this was a bug found in the screenshots
+  and fixed in 45efc02), Mender (Smite red "Out of range", Purify "nothing to
+  dispel").
+
+### Not verified in 0.3 (needs a human)
+- How the controls and auto-follow *feel* with a real mouse (drag thresholds,
+  turn rate, follow speed 3.0, 1.2 s grace).
+- Readability of threat colours in big packs, alert frequency, tooltip delay
+  (0.2 s), frame sizes for healers in raids.
+- The aggro-loss alert and taunt confirmation were exercised only through the
+  logic paths (threat_view tests); no screenshot captured an alert.
+- Right-drag started over a HUD panel still steers (only left-drag, clicks and
+  zoom are blocked over UI) — intentional, but untested by a person.
+
+### Known limitations (0.3)
+- Mouseover in 3D picks the nearest friendly whose pick sphere the ray hits;
+  allies standing inside each other pick the nearer one.
+- Raid frames show only the first debuff; full details are in the tooltip.
+- Tooltips are text only; no icons. Aura tooltips are reached through party
+  frames, the target frame and your aura row, not per-aura chips.
+- Out-of-range checks use the sim's edge-to-edge range; casts finishing get the
+  sim's +3 m leeway, which the bar doesn't show.
 
 ## Starting condition of 0.2 (recorded 2026-10-14, commit b8e3fc2)
 
@@ -145,7 +221,7 @@ clear the Warrens at level 6. Benchmarks (release, `--bench`):
 Bottleneck candidates: per-call `engaged_enemies()` allocations and O(party ×
 enemies) AI scans; not a problem at these sizes.
 
-## Not verified / requires human playtesting
+## Not verified / requires human playtesting (0.2)
 - Feel of the controls and camera with real keyboard/mouse; readability of the
   new effects for a human; difficulty when a human controls the player slot.
 - Healer and tank player experience with the new abilities (Ward, Purify,
@@ -176,5 +252,4 @@ enemies) AI scans; not a problem at these sizes.
 - Save format v2 with automatic v1 migration.
 
 ## Next actions
-See TASKS.md (human playtest, add pickup AI, raid UI, third dungeon, optional
-in-game encounter editor).
+See TASKS.md: the human playtest (PLAYTEST_0_3.md) comes first.
