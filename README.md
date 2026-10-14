@@ -65,7 +65,9 @@ RULES.md documents every formula.
 
 Each has Normal, Heroic and Raid (10) difficulties; the Party tab switches
 between a 5-person party and a 10-person raid group. The Sandbox tab adjusts
-enemy health, damage, ability speed and telegraph time without editing files.
+enemy health, damage, ability speed and telegraph time without editing files;
+the Editor tab tunes individual bosses and abilities and saves a custom dungeon
+file. The Vendor sells gear for Vault Marks and buys back what you don't need.
 Companions grow more familiar with dungeons they clear and react faster there. Bosses and elites drop loot; kills and
 clears give XP (levels 1–10). Your companions level and gear up with you.
 
@@ -122,7 +124,9 @@ cargo run -- --demo --dungeon gloomroot_warrens --level 6 --speed 4 --screenshot
 * `--input-test` scripted keyboard sequence through the real input systems →
   `logs/input_test.txt`.
 * `--hub-tour` screenshots every hub tab; `--click-test` clicks a hub button with
-  synthetic mouse events → `logs/click_test.txt`.
+  synthetic mouse events → `logs/click_test.txt`; `--editor-test` edits and saves
+  a custom dungeon through the editor (use a scratch `DUNGEON_CONTENT` dir) →
+  `logs/editor_test.txt`.
 
 Set `DUNGEON_SAVE_DIR` to a temp folder for these runs so they don't touch your
 real profile.

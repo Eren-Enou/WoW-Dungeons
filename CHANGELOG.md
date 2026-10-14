@@ -87,6 +87,14 @@
   armored sentinels with frontal sweeps, a timed fire-jet corridor, the Twin Altar
   council (two bosses), an optional Furnace Golem, and three-phase Ashmaw.
 - `--hub-tour`, `--click-test`, `--group N` developer flags.
+- **Vendor** tab: buy unlocked Common/Uncommon (and later Rare) items for Vault
+  Marks; salvage stash items for a third of their price.
+- **Encounter editor** tab: tune a boss/elite's health and melee damage and each
+  ability's interval, power, cast time and ring warning, then save a validated
+  custom dungeon TOML (`90_<id>_custom.toml`) that is reloaded and selected. The
+  content schema is serializable with a stable round trip. `--editor-test`.
+- AI routes non-tanks around frontal cleave cones via a cone-free flank (escapes
+  from ground effects keep priority); Hex is no longer spent on short-lived adds.
 
 ## 0.1 — prototype
 - Hub → dungeon → boss → rewards → hub loop, four classes, AI party, headless runner.

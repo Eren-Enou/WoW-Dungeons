@@ -18,9 +18,10 @@ health bars, no camera collision, AI without coordination.
 ### Checks (latest)
 - `cargo fmt --all -- --check` — clean.
 - `cargo clippy --workspace --all-targets -- -D warnings` — clean.
-- `cargo test --workspace --release` — **106 passed** in `dungeon_sim` + 2 in
+- `cargo test --workspace --release` — **110 passed** in `dungeon_sim` + 2 in
   `dungeon_game` (camera ray tests), 0 failed.
-- `cargo build --release --workspace` — see the end-of-session entry below.
+- `cargo build --release --workspace` — succeeded; the release binary played a
+  full `--demo` loop (hub → Sunken Vault → Victory in 163 s sim → results → hub).
 
 ### Phase A — playable experience
 - Graphical runs via `--demo` (AI drives the player slot) on both dungeons with
@@ -104,6 +105,18 @@ drop, dead actors removed).
 - Sandbox overrides: test verifies HP scaling, ability interval and telegraph
   scaling with invariants kept, and the reward factor; the Sandbox tab rendered
   in `--hub-tour`.
+- Encounter editor: tests for clamped edits staying valid, custom id/name, and a
+  stable TOML round trip of both shipped dungeons. `--editor-test` (against a
+  scratch copy of the content directory) edited Morvane's Hollow Bolt interval
+  8 → 5 s and HP +10%, saved `90_sunken_vault_custom.toml`, reloaded with no
+  errors and selected it; the headless runner then cleared it (5/5). The Editor
+  tab rendered in `--hub-tour`.
+- Vendor: test for unlocked stock by level, buying with marks and salvage
+  refunds; the Vendor tab rendered in `--hub-tour`.
+- Cone routing (Warrens L4, 100 runs): non-tank Root Lash hits 1.6 → 0.6 and
+  Rending Mandibles 2.3 → 1.4 per run; avoidable damage 618 → 538, 97–99% wins;
+  Ashen Spire L8 deaths 0.12 → 0.05 per run, 100% wins (40 runs). Test asserts
+  paths crossing a cone are detoured and clear paths are left alone.
 
 ### Phase E — progression (tests in `profile.rs`)
 Reward survives save/reload; one item per cleared loot source; wipes keep kill
