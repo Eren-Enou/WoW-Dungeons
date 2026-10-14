@@ -72,6 +72,21 @@
 ### Phase G — raids
 - Configurable party size in the headless runner (5/10/25/40) with multiple tanks
   and healers; leader gather radius scales with party size; benchmarks recorded.
+- 10-person raid groups in the game: roster of 12 companions (3 per class, older
+  saves get the new recruits), Party / Raid (10) toggle with 2 tanks + 2 healers
+  auto-fill, "Raid (10)" difficulty on every dungeon, compact two-column frames.
+
+### Later 0.2 additions
+- Learning companions: per-dungeon familiarity (clears/5) sharpens reactions,
+  safety margins and interrupt timing; in-run alertness after avoidable hits.
+  `--familiarity` in the headless tool; familiarity shown in the Party tab.
+- Summoned adds inherit 50% of their summoner's threat (fewer healer pulls).
+- In-game **Sandbox** tab: enemy HP, damage, ability speed and telegraph-time
+  overrides saved in the profile; easier settings scale rewards down.
+- Third dungeon **The Ashen Spire** (levels 8–10): healing-reduction brands,
+  armored sentinels with frontal sweeps, a timed fire-jet corridor, the Twin Altar
+  council (two bosses), an optional Furnace Golem, and three-phase Ashmaw.
+- `--hub-tour`, `--click-test`, `--group N` developer flags.
 
 ## 0.1 — prototype
 - Hub → dungeon → boss → rewards → hub loop, four classes, AI party, headless runner.

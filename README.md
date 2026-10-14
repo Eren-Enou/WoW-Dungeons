@@ -59,7 +59,14 @@ RULES.md documents every formula.
   cleave), lava vents, and three-phase Vhorlag (party-wide pulses, adds, double
   rings, a stacking tank debuff).
 
-Each has Normal and Heroic difficulties. Bosses and elites drop loot; kills and
+* **The Ashen Spire** (level 8+): healing-reduction brands, armored sentinels,
+  a fire-jet corridor, the Twin Altar council (two bosses at once), an optional
+  Furnace Golem, and three-phase Ashmaw.
+
+Each has Normal, Heroic and Raid (10) difficulties; the Party tab switches
+between a 5-person party and a 10-person raid group. The Sandbox tab adjusts
+enemy health, damage, ability speed and telegraph time without editing files.
+Companions grow more familiar with dungeons they clear and react faster there. Bosses and elites drop loot; kills and
 clears give XP (levels 1–10). Your companions level and gear up with you.
 
 ## Editing encounters (no recompile)

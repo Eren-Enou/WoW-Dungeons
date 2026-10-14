@@ -11,15 +11,12 @@ details and evidence live in PROGRESS.md.
 2. **In-game encounter editor (Phase F, optional)**: a hub tab with sliders for HP /
    damage multipliers and boss ability intervals, writing a variant TOML file.
    Today the TOML workflow + F5 reload is the supported path.
-3. **Raid UI**: let the hub assemble 10-player groups (two parties) and render
-   group frames compactly; the simulation already supports it (headless).
-4. **AI: add pickup** — summoned adds still turn on the healer (~10 times per
-   Warrens run). Ideas: tank pre-positions on summon cast, DPS peel with threat-free
-   damage, healers delay heals when an add is unassigned.
-5. **AI learning/adaptation**: per-encounter memory (e.g. after a wipe to a ring,
-   the next pull uses the Mechanics margins).
-6. **Content**: a third dungeon (levels 7–10) using hazards + healing-taken debuffs;
-   a 10-player raid encounter.
+3. **Raid content**: a purpose-built 10-player encounter (today raids reuse the
+   dungeons on the "Raid (10)" difficulty); 25-player graphical groups.
+4. **AI**: path planning around frontal cones (members still clip cones ~3–4
+   times per Warrens run while moving); smarter CC target choice (don't Hex
+   short-lived adds).
+5. **Vendor / economy**: spend Vault Marks on items; salvage duplicates.
 7. **Performance**: cache `engaged_enemies()` per tick and avoid per-call Vec
    allocations in the AI (current cost ~0.012 ms/tick at 25 characters — fine, but
    the obvious next win).
@@ -37,4 +34,7 @@ details and evidence live in PROGRESS.md.
   AI fixes.
 - 0.2 Phase D/F: content schema 2.0, second dungeon, difficulties, variants.
 - 0.2 Phase E: levels/XP, 7-slot gear with rarity and roles, auto-equip, history.
-- 0.2 Phase G: configurable party sizes, multiple tanks/healers, benchmarks.
+- 0.2 Phase G: configurable party sizes, multiple tanks/healers, benchmarks,
+  10-person raid groups in the game.
+- 0.2 extras: learning companions (familiarity/alertness), summoned-add threat
+  inheritance, in-game Sandbox tab, third dungeon (Ashen Spire).

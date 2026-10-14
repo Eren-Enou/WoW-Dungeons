@@ -18,7 +18,7 @@ health bars, no camera collision, AI without coordination.
 ### Checks (latest)
 - `cargo fmt --all -- --check` — clean.
 - `cargo clippy --workspace --all-targets -- -D warnings` — clean.
-- `cargo test --workspace --release` — **99 passed** in `dungeon_sim` + 2 in
+- `cargo test --workspace --release` — **106 passed** in `dungeon_sim` + 2 in
   `dungeon_game` (camera ray tests), 0 failed.
 - `cargo build --release --workspace` — see the end-of-session entry below.
 
@@ -59,15 +59,25 @@ drop, dead actors removed).
   hexes in 4-mob pulls; AI interrupts most Hollow Bolts; followers follow;
   non-tanks leave frontal cones; healers hold top-up heals for 4 s after a pull;
   Aggressive vs Conservative profiles differ in threat failures and clear time.
-- Profile comparison (`--compare-profiles`, 50 runs, Warrens, level 4):
+- Profile comparison (`--compare-profiles`, 50 runs, Warrens, level 4, after
+  all AI fixes below):
 
   | profile | wins | mean time | deaths | avoidable dmg | interrupts | threat fails |
   |---|---|---|---|---|---|---|
-  | Conservative | 100% | 388 s | 0.12 | 621 | 90% | 14.7 |
-  | Balanced | 96% | 363 s | 0.26 | 815 | 85% | 19.1 |
-  | Aggressive | 58% | 332 s | 2.36 | 1627 | 55% | 12.6 |
-  | Support | 100% | 367 s | 0.10 | 656 | 93% | 18.5 |
-  | Mechanics | 98% | 365 s | 0.16 | 845 | 95% | 20.6 |
+  | Conservative | 100% | 371 s | 0.02 | 331 | 89% | 2.8 |
+  | Balanced | 98% | 356 s | 0.10 | 621 | 85% | 6.5 |
+  | Aggressive | 46% | 330 s | 2.86 | 1774 | 56% | 7.2 |
+  | Support | 100% | 360 s | 0.18 | 689 | 91% | 7.4 |
+  | Mechanics | 100% | 360 s | 0.04 | 550 | 94% | 7.8 |
+
+- Summoned adds inheriting 50% of the summoner's threat cut threat failures in
+  the Warrens from 19 to 6.7 per run (Balanced, 100 runs; spiderlings no longer
+  appear in the breakdown).
+- Learning (`--familiarity`, Warrens L4, 100 runs each): Balanced 99% → 100%
+  wins, deaths 0.12 → 0.04, ring hits 0.26 → 0; Aggressive 59% → 82% wins,
+  deaths 2.32 → 1.12, avoidable damage 1669 → 655, interrupts 58% → 85%.
+  Tests: familiarity/alertness sharpen parameters; victories build familiarity
+  per dungeon.
 
 - Evidence-driven fixes (`--breakdown`): non-tank frontal-cleave hits fell from
   12.5 to 3.9 per Warrens run, avoidable damage 2,500 → 770 per run,
@@ -87,6 +97,13 @@ drop, dead actors removed).
   100%; tests assert the Vault is mostly clearable at L1 for every class and
   the Warrens at L6.
 - Graphical: the Warrens played to Victory in `--demo --level 6` (279 s sim).
+- Third dungeon, the Ashen Spire (40 runs each): Normal L8 98% wins, L10 100%;
+  Heroic L10 25% (endgame challenge). Test asserts 2/3 wins at L10 and that the
+  Twin Altar has two bosses. Graphical `--demo --dungeon ashen_spire --level 10`
+  played to Victory (403 s sim).
+- Sandbox overrides: test verifies HP scaling, ability interval and telegraph
+  scaling with invariants kept, and the reward factor; the Sandbox tab rendered
+  in `--hub-tour`.
 
 ### Phase E — progression (tests in `profile.rs`)
 Reward survives save/reload; one item per cleared loot source; wipes keep kill
@@ -95,7 +112,13 @@ multiplier; equip/swap and auto-equip respecting role affinity; v1 save
 migration; corrupt save backup. Graphically: after a Warrens run the hub showed
 level 7, 20 marks, loot in the stash with comparisons.
 
-### Phase G — raids (headless)
+### Phase G — raids
+- In-game 10-person raid: `--demo --group 10 --difficulty raid10` on the Warrens
+  rendered compact two-column party frames and ran to Victory (359 s sim).
+  Raid (10) headless (30 runs): Warrens L6 97% wins / 0.83 deaths; Vault L3 100%.
+  Test: raid auto-fill gives 2 tanks + 2 healers for every player class.
+
+#### Headless scaling
 `--party-size` builds groups with ~1 tank per 10 and 1 healer per 4. All sizes
 clear the Warrens at level 6. Benchmarks (release, `--bench`):
 
@@ -116,12 +139,12 @@ enemies) AI scans; not a problem at these sizes.
   Shield Bash, Quake Stomp) in the graphical game.
 - Hub buttons other than the History tab were exercised through the action
   function, not real clicks (the click path itself is verified).
-- Raids are headless only; the hub/game still uses 5-member parties.
+- 25+ player groups are headless only (the game offers 5 and 10).
 - Only Windows/Vulkan tested.
 
 ## Known problems
-- Summoned spiderlings still turn on the healer ~10 times per Warrens run
-  (healing threat on fresh adds). Listed in TASKS.md.
+- Remaining threat failures (~6.5 per Warrens run) come mostly from
+  healer-caster packs at the pull.
 - The Sunken Vault is easy for the AI party at level 1 (100% wins); the human
   player slot is expected to be the variable. Heroic provides a challenge.
 - Frontal cleaves still clip non-tanks ~4 times per Warrens run (moving through
