@@ -5,6 +5,7 @@
 pub mod ai;
 pub mod class;
 pub mod content;
+pub mod describe;
 pub mod events;
 pub mod items;
 pub mod math;

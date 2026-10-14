@@ -10,6 +10,7 @@ use crate::camera::MainCamera;
 use crate::common::{AppState, text_font};
 use crate::controls::{BlocksWorld, ControlSet, PlayerControl};
 use crate::dungeon::{ActiveRun, pick_actor, player_input};
+use crate::tooltip::Tooltip;
 use bevy::picking::Pickable;
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
@@ -208,6 +209,7 @@ pub fn spawn_hud(mut commands: Commands, run: Res<ActiveRun>) {
                     UiButton,
                     Hovered::default(),
                     HudClick::Party(i),
+                    Tooltip::PartyMember(i),
                     Node {
                         flex_direction: FlexDirection::Column,
                         row_gap: px(1),
@@ -258,6 +260,7 @@ pub fn spawn_hud(mut commands: Commands, run: Res<ActiveRun>) {
         panel_bg,
         HudPanel::Target,
         BlocksWorld,
+        Tooltip::Target,
         scoped.clone(),
         children![
             (Text::new(""), text_font(15.0), HudText::TargetName),
@@ -289,6 +292,10 @@ pub fn spawn_hud(mut commands: Commands, run: Res<ActiveRun>) {
         UiButton,
         Hovered::default(),
         HudClick::TargetOfTarget,
+        Tooltip::text(
+            "Target of target",
+            "Who your target is targeting. Click to select them; T does the same from the keyboard. Friendly spells cast on them while you hover here.",
+        ),
         Node {
             position_type: PositionType::Absolute,
             left: percent(50),
@@ -455,6 +462,7 @@ pub fn spawn_hud(mut commands: Commands, run: Res<ActiveRun>) {
                         BackgroundColor(Color::srgba(0.1, 0.1, 0.15, 0.85)),
                         BorderColor::all(Color::srgb(0.5, 0.45, 0.3)),
                         ActionSlot(slot),
+                        Tooltip::Ability(slot),
                     ))
                     .with_children(|s| {
                         s.spawn((

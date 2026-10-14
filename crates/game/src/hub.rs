@@ -6,12 +6,14 @@
 use crate::camera::{CameraBlockers, CameraFocus, OrbitCamera};
 use crate::common::{AppState, GameData, rarity_color, text_font};
 use crate::controls::{BlocksWorld, ControlSet, PlayerControl};
+use crate::tooltip::Tooltip;
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 use bevy::ui::Pressed;
 use bevy::ui_widgets::{Activate, Button as UiButton};
 use dungeon_sim::ClassId;
 use dungeon_sim::content::ContentEdit;
+use dungeon_sim::describe::{self, Tip};
 use dungeon_sim::items::ItemSlot;
 use dungeon_sim::profile::{GROUP_SIZES, Wearer, xp_to_next};
 
@@ -365,6 +367,7 @@ fn button(p: &mut ChildSpawnerCommands, text: impl Into<String>, action: HubActi
         UiButton,
         Hovered::default(),
         HubButton,
+        Tooltip::Hub,
         action,
         Node {
             padding: UiRect::axes(px(7), px(3)),
@@ -426,6 +429,184 @@ fn on_hub_activate(
         return;
     };
     apply_action(action.clone(), &mut data, &mut ui);
+}
+
+/// Tooltip for a hub button, generated from the data it acts on.
+pub fn hub_tooltip(action: &HubAction, data: &GameData, ui: &HubUi) -> Option<Tip> {
+    let pr = &data.profile;
+    let wearer_role = pr.wearer_role(ui.wearer);
+    let equipped = |slot: ItemSlot| pr.equipment(ui.wearer).and_then(|e| e.get(slot));
+    Some(match action {
+        HubAction::Tab(t) => Tip::new(
+            t.label(),
+            match t {
+                Tab::Party => "Recruit companions, pick their AI profiles, set the group size.",
+                Tab::Character => {
+                    "Stats and equipment of you and your companions; equip loot from the stash."
+                }
+                Tab::Dungeons => "Choose a dungeon and difficulty, then walk into the portal.",
+                Tab::Classes => "What each class does and which abilities it has.",
+                Tab::History => "Results of your past runs.",
+                Tab::Sandbox => {
+                    "Practice knobs that scale enemies. Runs with changed knobs are marked as sandbox runs."
+                }
+                Tab::Vendor => "Buy gear with marks, or salvage stash items for marks.",
+                Tab::Editor => {
+                    "Copy a dungeon and tune its encounters; saved copies appear in the dungeon list."
+                }
+            },
+        ),
+        HubAction::ToggleRecruit(i) => {
+            let c = pr.roster.get(*i)?;
+            let mut t = describe::class(c.class);
+            t.title = format!("{} - level {} {}", c.name, c.level, t.title);
+            t.body.push_str(&format!(
+                "\nAI profile: {}. Click to add to or remove from the party.",
+                c.profile.label()
+            ));
+            t
+        }
+        HubAction::CycleProfile(i) => {
+            let c = pr.roster.get(*i)?;
+            let mut t = describe::profile(c.profile);
+            t.body.push_str(&format!(
+                "\nClick to switch to {}.",
+                c.profile.next().label()
+            ));
+            t
+        }
+        HubAction::ChangeClass => {
+            let mut t = describe::class(pr.player_class.next());
+            t.title = format!("Become a {}", t.title);
+            t.body
+                .push_str("\nThe party is re-balanced so it still has a tank and a healer.");
+            t
+        }
+        HubAction::AutoFill => Tip::new(
+            "Auto-fill party",
+            "Fill empty party slots so the group has a tank, a healer and damage dealers.",
+        ),
+        HubAction::AutoEquip => Tip::new(
+            "Auto-equip",
+            "Equip the best stash item for each slot of every party member, scored for their role.",
+        ),
+        HubAction::Inspect(_) => Tip::new("Inspect", "Show this character's stats and equipment."),
+        HubAction::Equip(i) | HubAction::Salvage(i) => {
+            let it = pr.stash.get(*i)?;
+            let extra = if matches!(action, HubAction::Salvage(_)) {
+                format!(
+                    "Salvage value: {} marks.",
+                    dungeon_sim::profile::Profile::salvage_value(it)
+                )
+            } else {
+                "Click to equip; the current item returns to the stash.".into()
+            };
+            describe::item(it, equipped(it.slot), wearer_role, &extra)
+        }
+        HubAction::Unequip(slot) => {
+            let it = equipped(*slot)?;
+            describe::item(it, None, None, "Click to move it to the stash.")
+        }
+        HubAction::Buy(i) => {
+            let stock = pr.vendor_stock(&data.library.dungeons);
+            let (src, e, price) = stock.get(*i)?;
+            let role = pr.wearer_role(Wearer::Player);
+            let current = pr.equipment(Wearer::Player).and_then(|eq| eq.get(e.slot));
+            describe::gear(
+                &e.name,
+                e.slot,
+                e.rarity,
+                e.role,
+                &e.stats,
+                current,
+                role,
+                &format!(
+                    "From {src}. Price {price} marks (you have {}). Compared with your own gear.",
+                    pr.marks
+                ),
+            )
+        }
+        HubAction::StashPage(_) | HubAction::VendorPage(_) => return None,
+        HubAction::SelectDungeon(id) => {
+            let c = data.library.get(id)?;
+            let d = &c.dungeon;
+            Tip::new(
+                d.name.clone(),
+                format!(
+                    "{}\nRecommended level {}, group of {}. {} encounters ({} optional).",
+                    d.description,
+                    d.recommended_level,
+                    d.recommended_group,
+                    c.encounters.len(),
+                    c.encounters.iter().filter(|e| e.optional).count()
+                ),
+            )
+        }
+        HubAction::SelectDifficulty(id) => {
+            describe::difficulty(data.selected_content()?.difficulty(id)?)
+        }
+        HubAction::GroupSize(n) => Tip::new(
+            format!("{n}-player group"),
+            if *n > 5 {
+                "Raid group: two tanks, two or three healers and damage dealers. Enemy health scales with group size."
+            } else {
+                "Classic dungeon party: one tank, one healer, three damage dealers."
+            },
+        ),
+        HubAction::Sandbox(knob, f) => Tip::new(
+            "Sandbox",
+            format!(
+                "{}{}",
+                match knob {
+                    Knob::Hp => "Multiplies enemy health.",
+                    Knob::Damage => "Multiplies enemy damage.",
+                    Knob::AbilitySpeed =>
+                        "Enemy abilities fire this many times faster (intervals and casts divided).",
+                    Knob::Telegraph => "Multiplies how long ground warnings show before they hit.",
+                    Knob::Reset => "Reset every sandbox knob to 1.0.",
+                },
+                if *knob == Knob::Reset {
+                    String::new()
+                } else {
+                    format!(" This button multiplies it by {f:.2}.")
+                }
+            ),
+        ),
+        HubAction::EditStart => Tip::new(
+            "Edit a copy",
+            "Copy the selected dungeon into the editor. The original is never changed.",
+        ),
+        HubAction::EditPick(_) => Tip::new("Pick enemy", "Choose which enemy template to edit."),
+        HubAction::Edit(e) => {
+            use dungeon_sim::content::ContentEdit as E;
+            Tip::new(
+                "Edit",
+                match e {
+                    E::Hp(f) => format!("Multiply this enemy's health by {f:.2}."),
+                    E::Melee(f) => format!("Multiply its melee damage by {f:.2}."),
+                    E::Interval(_, d) => {
+                        format!("Change how often this ability fires by {d:+.1} s.")
+                    }
+                    E::Damage(_, f) => format!("Multiply this ability's damage by {f:.2}."),
+                    E::CastTime(_, d) => format!(
+                        "Change this ability's cast time by {d:+.2} s (longer = easier to interrupt)."
+                    ),
+                    E::Delay(_, d) => {
+                        format!("Change the ground warning before this ability lands by {d:+.1} s.")
+                    }
+                },
+            )
+        }
+        HubAction::EditSave => Tip::new(
+            "Save copy",
+            "Validate and save the edited dungeon as a new entry in the dungeon list.",
+        ),
+        HubAction::EditDiscard => Tip::new("Discard", "Throw away the edited copy."),
+        HubAction::Reload => Tip::new(
+            "Reload content",
+            "Re-read the dungeon files from disk and report any errors.",
+        ),
+    })
 }
 
 pub fn apply_action(action: HubAction, data: &mut GameData, ui: &mut HubUi) {
@@ -779,26 +960,39 @@ fn character_tab(p: &mut ChildSpawnerCommands, data: &GameData, ui: &HubUi) {
         15.0,
         class_color(sheet.class),
     );
-    label(
-        p,
-        format!(
-            "HP {:.0}   {} {:.0}   power +{:.0}%   armor {:.0} ({:.0}% vs equal level)\ncrit {:.1}%   hit {:.1}%   dodge {:.1}%   parry {:.1}%   block {:.1}%   resist {:.0}",
-            sheet.max_hp,
+    // One label per stat, each with a tooltip explaining the rule behind it.
+    let stats = [
+        ("hp", format!("HP {:.0}", sheet.max_hp)),
+        (
             sheet.resource.label(),
-            sheet.max_resource,
-            sheet.power_pct,
-            st.armor,
-            sheet.armor_dr * 100.0,
-            st.crit * 100.0,
-            st.hit * 100.0,
-            st.dodge * 100.0,
-            st.parry * 100.0,
-            st.block * 100.0,
-            st.resist
+            format!("{} {:.0}", sheet.resource.label(), sheet.max_resource),
         ),
-        13.0,
-        Color::WHITE,
-    );
+        ("power", format!("power +{:.0}%", sheet.power_pct)),
+        (
+            "armor",
+            format!(
+                "armor {:.0} ({:.0}% vs equal level)",
+                st.armor,
+                sheet.armor_dr * 100.0
+            ),
+        ),
+        ("crit", format!("crit {:.1}%", st.crit * 100.0)),
+        ("hit", format!("hit {:.1}%", st.hit * 100.0)),
+        ("dodge", format!("dodge {:.1}%", st.dodge * 100.0)),
+        ("parry", format!("parry {:.1}%", st.parry * 100.0)),
+        ("block", format!("block {:.1}%", st.block * 100.0)),
+        ("resist", format!("resist {:.0}", st.resist)),
+    ];
+    row(p, |r| {
+        for (key, text) in stats {
+            r.spawn((
+                Text::new(text),
+                text_font(13.0),
+                TextColor(Color::WHITE),
+                Tooltip::text(key.to_string(), describe::stat(key).unwrap_or("")),
+            ));
+        }
+    });
     let eq = pr.equipment(ui.wearer).cloned().unwrap_or_default();
     label(p, "Equipment", 14.0, Color::srgb(1.0, 0.9, 0.6));
     for slot in ItemSlot::ALL {
@@ -1529,7 +1723,8 @@ fn update_hub_text(
                     None => s.push_str("No dungeon selected (see the Dungeons tab)\n\n"),
                 }
                 s.push_str(
-                    "WASD move | RMB-drag / arrows: camera | wheel: zoom\n\
+                    "W/S move, A/D turn, Q/E strafe | RMB steer, LMB look\n\
+                     Wheel zoom, V camera follow | hover for tooltips\n\
                      Panel: click buttons, or 1-8 switch tabs, P hide\n\
                      F5: reload content files",
                 );

@@ -8,6 +8,8 @@
 //! * `--input-test`: enter the dungeon and drive the *real* keyboard input
 //!   systems with a scripted sequence (strafe, walk, Tab, 1/2/3), then print a
 //!   report of what the sim registered and exit.
+//! * `--tooltip-test`: hover a stat on the Character tab and a vendor item with
+//!   synthetic pointer moves; check the tooltip text and that it stays on screen.
 //! * `--frame-test`: play a Mender, target an enemy, then use synthetic mouse
 //!   events to hover a party frame and press 1 (mouseover heal), click another
 //!   frame, and report whether the heal, selection and click-through rules held.
@@ -28,6 +30,8 @@ pub struct DemoConfig {
     pub click_test: bool,
     /// Hover/click party frames in the dungeon with synthetic pointer events.
     pub frame_test: bool,
+    /// Hover hub elements and check the tooltip panel.
+    pub tooltip_test: bool,
     /// Edit a boss through the editor actions, save, and verify the reload.
     pub editor_test: bool,
     pub speed: f32,
@@ -69,6 +73,7 @@ pub fn parse_args() -> DemoConfig {
         hub_tour: args.iter().any(|a| a == "--hub-tour"),
         click_test: args.iter().any(|a| a == "--click-test"),
         frame_test: args.iter().any(|a| a == "--frame-test"),
+        tooltip_test: args.iter().any(|a| a == "--tooltip-test"),
         editor_test: args.iter().any(|a| a == "--editor-test"),
         speed: value("--speed").unwrap_or(1.0).clamp(0.1, 10.0),
         screenshot_every: value("--screenshots"),
@@ -95,6 +100,7 @@ impl Plugin for DemoPlugin {
                     hub_tour,
                     click_test,
                     editor_test,
+                    tooltip_test,
                 ),
             )
             .add_systems(
@@ -486,6 +492,7 @@ fn frame_test(
     mut run: ResMut<ActiveRun>,
     mut keys: ResMut<ButtonInput<KeyCode>>,
     frames: Query<(&crate::hud::HudClick, &bevy::ui::UiGlobalTransform)>,
+    slots: Query<(&crate::tooltip::Tooltip, &bevy::ui::UiGlobalTransform)>,
     mouseover: Res<crate::hud::Mouseover>,
     pc: Res<crate::controls::PlayerControl>,
     window: Single<(Entity, &Window)>,
@@ -513,6 +520,10 @@ fn frame_test(
     else {
         return;
     };
+    let slot_pos = slots
+        .iter()
+        .find(|(t, _)| matches!(t, crate::tooltip::Tooltip::Ability(0)))
+        .map(|(_, gt)| gt.translation / win.scale_factor());
     let frame_pos = |i: usize| {
         frames
             .iter()
@@ -612,6 +623,16 @@ fn frame_test(
                 pc.world_click.is_none()
             ));
             st.ok &= sel == Some(other);
+            if let Some(pos) = slot_pos {
+                send(pos, PointerAction::Move { delta: Vec2::ZERO });
+            }
+            st.step = 50;
+            st.t = 0.0;
+        }
+        50 if st.t > 0.8 => {
+            commands
+                .spawn(Screenshot::primary_window())
+                .observe(save_to_disk("screenshots/frame_test_tooltip.png"));
             let msg = format!(
                 "FRAME TEST {}\n{}",
                 if st.ok { "OK" } else { "FAILED" },
@@ -625,6 +646,149 @@ fn frame_test(
         }
         6 if st.t > 1.0 => {
             exit.write(AppExit::Success);
+        }
+        _ => {}
+    }
+}
+
+#[derive(Default)]
+struct TooltipTest {
+    t: f32,
+    step: u32,
+    log: Vec<String>,
+    ok: bool,
+}
+
+/// `--tooltip-test`: see the module docs.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn tooltip_test(
+    time: Res<Time>,
+    cfg: Res<DemoConfig>,
+    state: Res<State<AppState>>,
+    mut data: ResMut<GameData>,
+    mut ui: ResMut<crate::hub::HubUi>,
+    sources: Query<(
+        &crate::tooltip::Tooltip,
+        &bevy::ui::UiGlobalTransform,
+        Option<&crate::hub::HubAction>,
+    )>,
+    panel: Query<
+        (&Node, &bevy::ui::ComputedNode, &bevy::ui::UiGlobalTransform),
+        With<crate::tooltip::TooltipPanel>,
+    >,
+    title: Query<&Text, With<crate::tooltip::TooltipTitle>>,
+    window: Single<(Entity, &Window)>,
+    mut pointer: MessageWriter<bevy::picking::pointer::PointerInput>,
+    mut commands: Commands,
+    mut st: Local<TooltipTest>,
+    mut exit: MessageWriter<AppExit>,
+) {
+    use crate::hub::{HubAction, Tab, apply_action};
+    use crate::tooltip::Tooltip;
+    use bevy::camera::RenderTarget;
+    use bevy::picking::pointer::{Location, PointerAction, PointerId, PointerInput};
+    use bevy::window::WindowRef;
+    if !cfg.tooltip_test || *state.get() != AppState::Hub {
+        return;
+    }
+    st.t += time.delta_secs();
+    let (win_entity, win) = *window;
+    let Some(target) =
+        RenderTarget::Window(WindowRef::Entity(win_entity)).normalize(Some(win_entity))
+    else {
+        return;
+    };
+    let mut hover = |pos: Vec2| {
+        pointer.write(PointerInput::new(
+            PointerId::Mouse,
+            Location {
+                target: target.clone(),
+                position: pos,
+            },
+            PointerAction::Move { delta: Vec2::ZERO },
+        ));
+    };
+    let check = |st: &mut TooltipTest, what: &str, want: &str| {
+        let shown = panel.single().ok();
+        let title = title.single().map(|t| t.0.clone()).unwrap_or_default();
+        let (visible, inside) = match shown {
+            Some((node, cn, gt)) => {
+                let half = cn.size() * cn.inverse_scale_factor() * 0.5;
+                let c = gt.translation / win.scale_factor();
+                (
+                    node.display != Display::None,
+                    c.x - half.x >= 0.0
+                        && c.y - half.y >= 0.0
+                        && c.x + half.x <= win.width()
+                        && c.y + half.y <= win.height(),
+                )
+            }
+            None => (false, false),
+        };
+        let ok = visible && inside && title.contains(want);
+        st.log.push(format!(
+            "{what}: visible {visible}, on screen {inside}, title {title:?} {}",
+            if ok { "OK" } else { "FAILED" }
+        ));
+        st.ok &= ok;
+    };
+    match st.step {
+        0 if st.t > 2.0 => {
+            st.ok = true;
+            apply_action(HubAction::Tab(Tab::Character), &mut data, &mut ui);
+            st.step = 1;
+            st.t = 0.0;
+        }
+        1 if st.t > 0.5 => {
+            let pos = sources.iter().find_map(|(tip, gt, _)| match tip {
+                Tooltip::Text(t) if t.title == "armor" => Some(gt.translation / win.scale_factor()),
+                _ => None,
+            });
+            if let Some(pos) = pos {
+                hover(pos);
+                st.step = 2;
+                st.t = 0.0;
+            }
+        }
+        2 if st.t > 0.8 => {
+            check(&mut st, "armor stat", "armor");
+            commands
+                .spawn(Screenshot::primary_window())
+                .observe(save_to_disk("screenshots/tooltip_stat.png"));
+            apply_action(HubAction::Tab(Tab::Vendor), &mut data, &mut ui);
+            st.step = 3;
+            st.t = 0.0;
+        }
+        3 if st.t > 0.5 => {
+            let pos = sources.iter().find_map(|(_, gt, a)| match a {
+                Some(HubAction::Buy(_)) => Some(gt.translation / win.scale_factor()),
+                _ => None,
+            });
+            if let Some(pos) = pos {
+                hover(pos);
+                st.step = 4;
+                st.t = 0.0;
+            }
+        }
+        4 if st.t > 0.8 => {
+            check(&mut st, "vendor item", "");
+            commands
+                .spawn(Screenshot::primary_window())
+                .observe(save_to_disk("screenshots/tooltip_vendor.png"));
+            st.step = 5;
+            st.t = 0.0;
+        }
+        5 if st.t > 0.5 => {
+            let msg = format!(
+                "TOOLTIP TEST {}\n{}",
+                if st.ok { "OK" } else { "FAILED" },
+                st.log.join("\n")
+            );
+            info!("{msg}");
+            let _ = std::fs::create_dir_all("logs");
+            let _ = std::fs::write("logs/tooltip_test.txt", msg);
+            exit.write(AppExit::Success);
+            st.step = 6;
         }
         _ => {}
     }

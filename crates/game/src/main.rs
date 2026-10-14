@@ -14,6 +14,7 @@ mod hub;
 mod hud;
 mod overlay;
 mod results;
+mod tooltip;
 
 use bevy::prelude::*;
 use bevy::window::WindowResolution;
@@ -41,6 +42,7 @@ fn main() {
     .add_plugins((
         camera::CameraPlugin,
         controls::ControlsPlugin,
+        tooltip::TooltipPlugin,
         hub::HubPlugin,
         dungeon::DungeonPlugin,
         hud::HudPlugin,
