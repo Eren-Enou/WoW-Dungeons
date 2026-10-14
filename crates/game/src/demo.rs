@@ -160,7 +160,11 @@ fn demo_driver(
                 data.profile.player_class = c;
                 data.profile.auto_fill_party();
             }
-            if let Some(p) = cfg.profile.as_deref().and_then(dungeon_sim::AiProfile::parse) {
+            if let Some(p) = cfg
+                .profile
+                .as_deref()
+                .and_then(dungeon_sim::AiProfile::parse)
+            {
                 for c in data.profile.roster.iter_mut() {
                     c.profile = p;
                 }
