@@ -53,7 +53,7 @@ impl Plugin for DemoPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(self.0.clone())
             .init_resource::<DemoState>()
-            .add_systems(Update, (demo_driver, screenshots))
+            .add_systems(Update, (demo_driver, screenshots, demo_camera))
             .add_systems(
                 Update,
                 scripted_input
@@ -221,4 +221,26 @@ engaged enemies: {engaged}
         let _ = std::fs::write("logs/input_test.txt", report);
         exit.write(AppExit::Success);
     }
+}
+
+/// In `--demo`, swing the camera behind the player's heading so screenshots show the action.
+fn demo_camera(
+    time: Res<Time>,
+    cfg: Res<DemoConfig>,
+    run: Option<Res<ActiveRun>>,
+    mut orbit: ResMut<crate::camera::OrbitCamera>,
+) {
+    let (true, Some(run)) = (cfg.autoplay, run) else {
+        return;
+    };
+    let Some(p) = run.sim.player else { return };
+    let target = run.sim.actors[p].facing;
+    let mut diff = target - orbit.yaw;
+    while diff > std::f32::consts::PI {
+        diff -= std::f32::consts::TAU;
+    }
+    while diff < -std::f32::consts::PI {
+        diff += std::f32::consts::TAU;
+    }
+    orbit.yaw += diff * (1.5 * time.delta_secs()).min(1.0);
 }

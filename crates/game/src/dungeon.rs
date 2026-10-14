@@ -1,13 +1,13 @@
 //! Dungeon state: owns the running `Sim`, maps input to sim commands at a fixed
 //! timestep, and renders actors, walls, telegraphs and health bars.
 
-use crate::camera::{CameraFocus, MainCamera, OrbitCamera};
+use crate::camera::{CameraBlockers, CameraFocus, MainCamera, OrbitCamera};
 use crate::common::{AppState, GameData, LastResult, to_vec3};
 use crate::demo::DemoConfig;
 use crate::hub::class_color;
 use bevy::prelude::*;
 use dungeon_sim::content::EnemyRank;
-use dungeon_sim::{ActorId, DT, EnemyMode, EventKind, RunOutcome, RunSummary, Sim, Team, V2};
+use dungeon_sim::{ActorId, DT, EnemyMode, Event, EventKind, RunOutcome, RunSummary, Sim, V2};
 use std::collections::{HashMap, VecDeque};
 use std::f32::consts::FRAC_PI_2;
 
@@ -17,11 +17,22 @@ impl Plugin for DungeonPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             OnEnter(AppState::Dungeon),
-            (start_run, spawn_world, spawn_actors, crate::hud::spawn_hud).chain(),
+            (
+                start_run,
+                spawn_world,
+                spawn_actors,
+                crate::hud::spawn_hud,
+                crate::overlay::spawn_nameplates,
+            )
+                .chain(),
         )
-        .add_systems(OnExit(AppState::Dungeon), |mut c: Commands| {
-            c.remove_resource::<ActiveRun>()
-        })
+        .add_systems(
+            OnExit(AppState::Dungeon),
+            |mut c: Commands, mut blockers: ResMut<CameraBlockers>| {
+                c.remove_resource::<ActiveRun>();
+                blockers.0.clear();
+            },
+        )
         .add_systems(
             Update,
             (
@@ -29,7 +40,7 @@ impl Plugin for DungeonPlugin {
                 step_sim,
                 process_events,
                 sync_actors,
-                sync_bars,
+                fade_occluders,
                 sync_telegraphs,
                 draw_gizmos,
                 finish_run,
@@ -41,6 +52,8 @@ impl Plugin for DungeonPlugin {
     }
 }
 
+const WALL_HEIGHT: f32 = 3.2;
+const WALL_COLOR: Color = Color::srgb(0.32, 0.3, 0.34);
 /// Seconds between the run ending and the results screen.
 const END_DELAY: f32 = 3.0;
 const LOG_LINES: usize = 14;
@@ -51,6 +64,8 @@ pub struct ActiveRun {
     pub acc: f32,
     pub prev_pos: Vec<V2>,
     pub events_seen: usize,
+    /// Events produced since the previous frame (for effects and floating text).
+    pub fresh: Vec<Event>,
     pub log: VecDeque<String>,
     pub verbose_log: bool,
     pub banner: Option<(String, f32, Color)>,
@@ -83,15 +98,12 @@ pub struct ActorVisual {
     pub lie_y: f32,
 }
 
+/// A wall that fades out when it hides the player from the camera.
 #[derive(Component)]
-struct BarRoot {
-    id: ActorId,
-    height: f32,
-}
-
-#[derive(Component)]
-struct BarFill {
-    id: ActorId,
+struct Occluder {
+    material: Handle<StandardMaterial>,
+    min: Vec3,
+    max: Vec3,
 }
 
 #[derive(Component)]
@@ -139,6 +151,7 @@ fn start_run(
         acc: 0.0,
         prev_pos,
         events_seen: 0,
+        fresh: Vec::new(),
         log: VecDeque::new(),
         verbose_log: false,
         banner: None,
@@ -160,6 +173,7 @@ fn start_run(
 fn spawn_world(
     mut commands: Commands,
     run: Res<ActiveRun>,
+    mut blockers: ResMut<CameraBlockers>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
@@ -201,7 +215,7 @@ fn spawn_world(
             scoped.clone(),
         ));
     }
-    let wall_mat = materials.add(Color::srgb(0.32, 0.3, 0.34));
+    blockers.0.clear();
     for (a, b) in nav.wall_segments() {
         let len = a.dist(b);
         let mid = (a + b) * 0.5;
@@ -211,10 +225,23 @@ fn spawn_world(
         } else {
             (0.4, len + 0.4)
         };
+        let half = Vec3::new(sx * 0.5, WALL_HEIGHT * 0.5, sz * 0.5);
+        let center = Vec3::new(mid.x, WALL_HEIGHT * 0.5, mid.z);
+        blockers.0.push((center - half, center + half));
+        let material = materials.add(StandardMaterial {
+            base_color: WALL_COLOR,
+            alpha_mode: AlphaMode::Blend,
+            ..default()
+        });
         commands.spawn((
-            Mesh3d(meshes.add(Cuboid::new(sx, 1.2, sz))),
-            MeshMaterial3d(wall_mat.clone()),
-            Transform::from_xyz(mid.x, 0.6, mid.z),
+            Mesh3d(meshes.add(Cuboid::new(sx, WALL_HEIGHT, sz))),
+            MeshMaterial3d(material.clone()),
+            Occluder {
+                material,
+                min: center - half,
+                max: center + half,
+            },
+            Transform::from_translation(center),
             scoped.clone(),
         ));
     }
@@ -247,16 +274,10 @@ fn spawn_actors(
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     let scoped = DespawnOnExit(AppState::Dungeon);
-    let bar_bg = meshes.add(Cuboid::new(1.6, 0.18, 0.05));
-    let bar_bg_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.05, 0.05, 0.05),
-        unlit: true,
-        ..default()
-    });
     let nose = meshes.add(Cuboid::new(0.3, 0.3, 0.5));
     let nose_mat = materials.add(Color::srgb(0.9, 0.8, 0.3));
     for a in &run.sim.actors {
-        let (mesh, color, center_y, lie_y, height): (Mesh3d, Color, f32, f32, f32) =
+        let (mesh, color, center_y, lie_y, _height): (Mesh3d, Color, f32, f32, f32) =
             match (&a.enemy, a.class) {
                 (None, Some(class)) => (
                     Mesh3d(meshes.add(Capsule3d::new(0.5, 1.0))),
@@ -335,38 +356,6 @@ fn spawn_actors(
                 Transform::from_xyz(0.0, center_y + 0.4, 0.0),
             ));
         }
-        // Floating health bar.
-        let fill_color = match a.team {
-            Team::Party => Color::srgb(0.2, 0.85, 0.3),
-            Team::Enemy => Color::srgb(0.9, 0.2, 0.15),
-        };
-        commands
-            .spawn((
-                Transform::from_translation(to_vec3(a.pos, height + 0.5)),
-                Visibility::default(),
-                BarRoot {
-                    id: a.id,
-                    height: height + 0.5,
-                },
-                scoped.clone(),
-            ))
-            .with_children(|p| {
-                p.spawn((
-                    Mesh3d(bar_bg.clone()),
-                    MeshMaterial3d(bar_bg_mat.clone()),
-                    Transform::default(),
-                ));
-                p.spawn((
-                    Mesh3d(meshes.add(Cuboid::new(1.5, 0.12, 0.06))),
-                    MeshMaterial3d(materials.add(StandardMaterial {
-                        base_color: fill_color,
-                        unlit: true,
-                        ..default()
-                    })),
-                    Transform::from_xyz(0.0, 0.0, 0.0),
-                    BarFill { id: a.id },
-                ));
-            });
     }
 }
 
@@ -449,27 +438,46 @@ pub fn player_input(
         }
     }
     if keys.just_pressed(KeyCode::Tab) {
+        let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
         let me = run.sim.actors[player].pos;
-        let mut hostiles: Vec<(f32, ActorId)> = run
+        let fwd = V2::new(orbit.forward().x, orbit.forward().z);
+        // Engaged enemies first, then idle ones roughly in front of the camera; nearest first.
+        let mut hostiles: Vec<(bool, f32, ActorId)> = run
             .sim
             .enemies
             .iter()
             .copied()
-            .filter(|&e| {
+            .filter_map(|e| {
                 let a = &run.sim.actors[e];
-                a.alive && a.mode() != Some(EnemyMode::Resetting) && a.pos.dist(me) < 45.0
+                let d = a.pos.dist(me);
+                let engaged = a.is_engaged_enemy();
+                let dir = (a.pos - me).normalize_or_zero();
+                let in_front = dir.x * fwd.x + dir.z * fwd.z > -0.2;
+                let ok = a.alive
+                    && a.mode() != Some(EnemyMode::Resetting)
+                    && d < 45.0
+                    && (engaged || in_front);
+                ok.then_some((!engaged, d, e))
             })
-            .map(|e| (run.sim.actors[e].pos.dist(me), e))
             .collect();
-        hostiles.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        hostiles.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)).then(a.2.cmp(&b.2)));
         if !hostiles.is_empty() {
+            let n = hostiles.len();
             let current = run.sim.actors[player].target;
-            let idx = current
-                .and_then(|c| hostiles.iter().position(|(_, e)| *e == c))
-                .map(|i| (i + 1) % hostiles.len())
-                .unwrap_or(0);
-            run.sim.set_player_target(Some(hostiles[idx].1));
+            let idx = match current.and_then(|c| hostiles.iter().position(|h| h.2 == c)) {
+                Some(i) if shift => (i + n - 1) % n,
+                Some(i) => (i + 1) % n,
+                None => 0,
+            };
+            run.sim.set_player_target(Some(hostiles[idx].2));
         }
+    }
+    // T: assist - take the target of your current target (e.g. the tank's enemy).
+    if keys.just_pressed(KeyCode::KeyT)
+        && let Some(t) = run.sim.actors[player].target
+        && let Some(tt) = run.sim.actors[t].target
+    {
+        run.sim.set_player_target(Some(tt));
     }
     if mouse.just_pressed(MouseButton::Left)
         && let Some(cursor) = window.cursor_position()
@@ -528,14 +536,16 @@ fn step_sim(time: Res<Time>, mut run: ResMut<ActiveRun>, demo: Option<Res<DemoCo
 }
 
 /// Turn new sim events into log lines, banners and error messages.
-fn process_events(mut run: ResMut<ActiveRun>) {
+pub fn process_events(mut run: ResMut<ActiveRun>) {
     let start = run.events_seen;
     let end = run.sim.events.len();
+    run.fresh.clear();
     if start == end {
         return;
     }
     let player = run.sim.player;
     let events: Vec<_> = run.sim.events[start..end].to_vec();
+    run.fresh = events.clone();
     for e in &events {
         if e.is_notable() || run.verbose_log {
             let line = run.sim.describe(e);
@@ -658,42 +668,6 @@ fn sync_actors(
     }
 }
 
-fn sync_bars(
-    run: Res<ActiveRun>,
-    orbit: Res<OrbitCamera>,
-    mut roots: Query<(&BarRoot, &mut Transform, &mut Visibility), Without<BarFill>>,
-    mut fills: Query<(&BarFill, &mut Transform), Without<BarRoot>>,
-) {
-    let facing = Quat::from_rotation_y(orbit.yaw);
-    for (bar, mut t, mut vis) in &mut roots {
-        let a = &run.sim.actors[bar.id];
-        let scale = if bar.id == run.sim.boss { 1.8 } else { 1.0 };
-        t.translation = to_vec3(
-            run.interp_pos(bar.id),
-            bar.height
-                * if bar.id == run.sim.boss && run.sim.boss_phase() == 2 {
-                    1.2
-                } else {
-                    1.0
-                },
-        );
-        t.rotation = facing;
-        t.scale = Vec3::splat(scale);
-        *vis = if a.alive {
-            Visibility::Inherited
-        } else {
-            Visibility::Hidden
-        };
-    }
-    for (fill, mut t) in &mut fills {
-        let f = run.sim.actors[fill.id].hp_frac().clamp(0.001, 1.0);
-        t.scale.x = f;
-        // Local +X is screen-left (the bar faces back toward the camera), so anchor there.
-        t.translation.x = (1.0 - f) * 0.75;
-        t.translation.z = -0.03;
-    }
-}
-
 fn sync_telegraphs(
     mut commands: Commands,
     run: Res<ActiveRun>,
@@ -753,23 +727,11 @@ fn sync_telegraphs(
 fn draw_gizmos(run: Res<ActiveRun>, mut gizmos: Gizmos) {
     let flat = Quat::from_rotation_arc(Vec3::Z, Vec3::Y);
     if let Some(p) = run.sim.player {
-        let me = &run.sim.actors[p];
         gizmos.circle(
             Isometry3d::new(to_vec3(run.interp_pos(p), 0.05), flat),
             0.8,
             Color::srgb(0.3, 1.0, 0.4),
         );
-        if let Some(t) = me.target {
-            let a = &run.sim.actors[t];
-            let color = if a.is_enemy() {
-                Color::srgb(1.0, 0.25, 0.2)
-            } else {
-                Color::srgb(0.3, 0.8, 1.0)
-            };
-            let pos = to_vec3(run.interp_pos(t), 0.06);
-            gizmos.circle(Isometry3d::new(pos, flat), a.radius + 0.5, color);
-            gizmos.circle(Isometry3d::new(pos, flat), a.radius + 0.6, color);
-        }
     }
     for tg in &run.sim.telegraphs {
         gizmos.circle(
@@ -854,4 +816,31 @@ fn finish_run(
     });
     run.end_timer = None;
     next.set(AppState::Results);
+}
+
+/// Fade walls that sit between the camera and the player so the action stays visible.
+fn fade_occluders(
+    run: Res<ActiveRun>,
+    camera: Single<&GlobalTransform, With<MainCamera>>,
+    walls: Query<&Occluder>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    let Some(p) = run.sim.player else { return };
+    let cam = camera.translation();
+    let pos = run.interp_pos(p);
+    let points = [to_vec3(pos, 0.3), to_vec3(pos, 1.8)];
+    for w in &walls {
+        let blocks = points.iter().any(|&target| {
+            let d = target - cam;
+            let len = d.length();
+            crate::camera::ray_box(cam, d / len, w.min, w.max).is_some_and(|t| t < len)
+        });
+        let alpha = if blocks { 0.22 } else { 1.0 };
+        if let Some(m) = materials.get(&w.material)
+            && (m.base_color.alpha() - alpha).abs() > 0.01
+            && let Some(mut m) = materials.get_mut(&w.material)
+        {
+            m.base_color = WALL_COLOR.with_alpha(alpha);
+        }
+    }
 }

@@ -8,8 +8,10 @@ mod camera;
 mod common;
 mod demo;
 mod dungeon;
+mod fx;
 mod hub;
 mod hud;
+mod overlay;
 mod results;
 
 use bevy::prelude::*;
@@ -41,6 +43,8 @@ fn main() {
         dungeon::DungeonPlugin,
         hud::HudPlugin,
         results::ResultsPlugin,
+        overlay::OverlayPlugin,
+        fx::FxPlugin,
         demo::DemoPlugin(demo::parse_args()),
     ));
     if let Some(secs) = smoke_seconds {

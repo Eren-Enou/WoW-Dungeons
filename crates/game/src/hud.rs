@@ -13,7 +13,7 @@ impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             Update,
-            (update_texts, update_bars)
+            (update_texts, update_bars, danger_vignette)
                 .run_if(in_state(AppState::Dungeon))
                 .run_if(resource_exists::<ActiveRun>),
         );
@@ -43,6 +43,10 @@ enum HudBar {
     Cast,
     Cooldown(usize),
 }
+
+/// Full-screen red border shown while the player stands in a telegraph.
+#[derive(Component)]
+struct DangerVignette;
 
 /// Marks containers that hide when they have nothing to show.
 #[derive(Component, Clone, Copy)]
@@ -75,6 +79,28 @@ fn bar(width: f32, height: f32, fill: Color, kind: HudBar) -> impl Bundle {
 pub fn spawn_hud(mut commands: Commands, run: Res<ActiveRun>) {
     let scoped = DespawnOnExit(AppState::Dungeon);
     let panel_bg = BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55));
+
+    commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            width: percent(100),
+            height: percent(100),
+            border: UiRect::all(px(22)),
+            justify_content: JustifyContent::Center,
+            padding: UiRect::top(percent(18)),
+            display: Display::None,
+            ..default()
+        },
+        BorderColor::all(Color::srgba(1.0, 0.1, 0.0, 0.5)),
+        DangerVignette,
+        scoped.clone(),
+        children![(
+            Text::new("MOVE OUT!"),
+            text_font(34.0),
+            TextColor(Color::srgb(1.0, 0.25, 0.1)),
+            TextShadow::default(),
+        )],
+    ));
 
     // Party frames (top-left).
     commands
@@ -521,5 +547,31 @@ fn update_bars(
                 .is_some_and(|c| matches!(c.kind, CastKind::Ability(_))),
         };
         node.display = if show { Display::Flex } else { Display::None };
+    }
+}
+
+fn danger_vignette(
+    time: Res<Time>,
+    run: Res<ActiveRun>,
+    mut q: Single<(&mut Node, &mut BorderColor), With<DangerVignette>>,
+) {
+    let sim = &run.sim;
+    let in_danger = sim.player.is_some_and(|p| {
+        let a = &sim.actors[p];
+        a.alive
+            && sim
+                .telegraphs
+                .iter()
+                .any(|t| a.pos.dist(t.center) <= t.radius + a.radius)
+    });
+    let (node, border) = &mut *q;
+    node.display = if in_danger {
+        Display::Flex
+    } else {
+        Display::None
+    };
+    if in_danger {
+        let pulse = 0.35 + 0.3 * (time.elapsed_secs() * 10.0).sin().abs();
+        border.set_all(Color::srgba(1.0, 0.1, 0.0, pulse));
     }
 }
