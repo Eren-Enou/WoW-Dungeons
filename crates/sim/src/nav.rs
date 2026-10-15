@@ -950,6 +950,17 @@ impl Nav {
     pub fn locate(&self, p: V2, y: f32) -> Option<SurfaceId> {
         let mut best: Option<(f32, usize)> = None;
         for (i, s) in self.surfaces.iter().enumerate() {
+            // Cheap reject first: the walk area lies inside the bounds
+            // (1 mm slack covers polygon containment's 0.1 mm tolerance).
+            const SLACK: f32 = 1e-3;
+            let b = &s.bounds;
+            if p.x < b.min.x - SLACK
+                || p.x > b.max.x + SLACK
+                || p.z < b.min.z - SLACK
+                || p.z > b.max.z + SLACK
+            {
+                continue;
+            }
             if s.walk.contains(p) {
                 let d = (s.height_at(p) - y).abs();
                 if best.is_none_or(|(bd, _)| d < bd - 1e-4) {
@@ -966,6 +977,14 @@ impl Nav {
     pub fn project(&self, p: V2, y: f32) -> (V3, SurfaceId) {
         let mut best = (f32::INFINITY, V3::at(p, y), 0usize);
         for (i, s) in self.surfaces.iter().enumerate() {
+            // The score is at least the horizontal distance to the surface's
+            // bounds; a surface that can't beat the best so far is skipped
+            // without clamping (same result, far fewer polygon clamps).
+            let dx = (s.bounds.min.x - p.x).max(p.x - s.bounds.max.x).max(0.0);
+            let dz = (s.bounds.min.z - p.z).max(p.z - s.bounds.max.z).max(0.0);
+            if (dx * dx + dz * dz).sqrt() >= best.0 {
+                continue;
+            }
             let q = s.walk.clamp(p);
             let h = s.height_at(q);
             let score = q.dist(p) + 4.0 * (h - y).abs();

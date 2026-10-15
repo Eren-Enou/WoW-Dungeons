@@ -7,6 +7,13 @@ use std::fmt::Write;
 
 pub fn summary(c: &Content) -> String {
     let d = &c.dungeon;
+    // Time the navigation build (the cost paid when a dungeon loads).
+    let t0 = std::time::Instant::now();
+    let reps = 5;
+    for _ in 0..reps {
+        std::hint::black_box(c.nav());
+    }
+    let build_ms = t0.elapsed().as_secs_f64() * 1000.0 / reps as f64;
     let nav = c.nav();
     let mut s = String::new();
     let _ = writeln!(
@@ -44,7 +51,7 @@ pub fn summary(c: &Content) -> String {
         .count();
     let _ = writeln!(
         s,
-        "navigation: {} surfaces, {} links ({} one-way drops), {} wall segments",
+        "navigation: {} surfaces, {} links ({} one-way drops), {} wall segments; built in {build_ms:.1} ms",
         nav.surfaces.len(),
         nav.links.len(),
         drops,
