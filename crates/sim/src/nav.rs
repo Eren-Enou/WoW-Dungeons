@@ -1015,7 +1015,18 @@ impl Nav {
     /// solid surface volumes?
     pub fn line_of_sight(&self, a: V3, b: V3) -> bool {
         let (a2, b2) = (a.xz(), b.xz());
+        // Cheap reject: only geometry whose box overlaps the segment's box.
+        let (lo_x, hi_x) = (a2.x.min(b2.x), a2.x.max(b2.x));
+        let (lo_z, hi_z) = (a2.z.min(b2.z), a2.z.max(b2.z));
+        let outside =
+            |min: V2, max: V2| max.x < lo_x || min.x > hi_x || max.z < lo_z || min.z > hi_z;
         for w in &self.walls {
+            if outside(
+                V2::new(w.a.x.min(w.b.x), w.a.z.min(w.b.z)),
+                V2::new(w.a.x.max(w.b.x), w.a.z.max(w.b.z)),
+            ) {
+                continue;
+            }
             if let Some((t, u)) = seg_intersect(a2, b2, w.a, w.b) {
                 let y = a.y + (b.y - a.y) * t;
                 let bottom = w.bottom0 + (w.bottom1 - w.bottom0) * u;
@@ -1025,6 +1036,10 @@ impl Nav {
             }
         }
         for s in &self.surfaces {
+            // Solid volumes entirely below both ends can't be in the way.
+            if s.max_y() < a.y.min(b.y) - 0.05 || outside(s.def.rect.min, s.def.rect.max) {
+                continue;
+            }
             let Some((t0, t1)) = s.def.rect.clip(a2, b2) else {
                 continue;
             };
