@@ -1,15 +1,182 @@
 # Progress
 
-Status: **0.6 (Dungeon Forge foundation) implemented and verified** with unit
-tests, multi-layout simulation matrices, automated graphical runs and a test
-of the packaged ZIP. 0.6 adds the blueprint and kit formats, the deterministic
-generator, components, validation, the CLI, a generated dungeon you can play
-from the hub, and GLB props with fallback. No human has played 0.2–0.6 yet.
-The scripts for that are PLAYTEST_FORGE.md, PLAYTEST_0_5.md,
-PLAYTEST_NAVIGATION.md and PLAYTEST_0_3.md.
+Status: **0.7 (meaningful dungeon variety and encounter design) implemented
+and verified** with unit tests, regression comparisons against the 0.6 build,
+multi-layout simulation matrices, automated graphical runs and a test of the
+packaged ZIP. 0.7 adds:
+* kit components (spatial vocabulary per theme);
+* blueprint identity;
+* Encounter Recipes 2.0 with a placement scorer;
+* patrols and line-of-sight pulses in the simulation, with cover AI;
+* a second kit and dungeon (The Hollow Reliquary);
+* `dungeon-forge report`;
+* a designer-overrides proof of concept.
+
+Earlier versions have been playtested by the maintainer; no written notes are
+in the repository. 0.7 is not covered by a recorded human playtest.
+(Correction: the 0.6 status said no human had played 0.2–0.6; that was
+wrong. The "Not verified" lists below mean "not covered by a recorded
+playtest".)
 
 Environment: Windows 11 Pro, Rust 1.99.0, Bevy 0.20.0 (pinned `=0.20.0`,
 Cargo.lock committed), NVIDIA RTX 2070 SUPER (Vulkan).
+
+## 0.7 — meaningful dungeon variety and encounter design
+
+Review, plan, formats, measurements and continuation plan:
+DUNGEON_FORGE_0_7.md.
+
+Starting point: commit 1ed653a (0.6.0). Commits:
+
+| commit | content |
+|---|---|
+| 6f758a6 | Phase A: architecture review and plan |
+| 3217c15 | Phase B (sim): patrols, line-of-sight pulses, cover AI |
+| 56c3742 | Phase D (AI): cover that holds, nav trouble log, parked-DPS retarget |
+| e8447b1 | Phases B–E (forge): spatial variety, Recipes 2.0, crypt kit, report |
+| 3ac0db2 | content: regenerated Emberforge, The Hollow Reliquary |
+| e7e07f4 | Phase F: designer overrides proof of concept |
+
+The version bump (0.7.0) and docs commit follow these.
+
+### Checks (run 2026-10-15 after the last code change)
+- `cargo fmt --all -- --check`: clean.
+- `cargo check --workspace`: clean.
+- `cargo clippy --workspace --all-targets -- -D warnings`: clean.
+- `cargo test --workspace --release`:
+  - `dungeon_forge` 18 passed;
+  - `dungeon_sim` 161 passed, 1 ignored (`diag_replay`);
+  - `dungeon_game` 15 passed;
+  - 0 failed.
+- `cargo build --release --workspace`: succeeded.
+
+### Acceptance (0.7)
+1. **Architecture review before implementation**: DUNGEON_FORGE_0_7.md
+   Phase A (commit 6f758a6).
+2. **Data-driven design identity**: blueprint `[identity]` with promised
+   challenges. Validation fails when nothing delivers one (test). The checks
+   report what was delivered.
+3. **A second, distinct kit through the same pipeline**: the crypt
+   (`assets/forge/kits/crypt.toml`) and The Hollow Reliquary. It differs in:
+   - grid pitch, corridor widths and room shapes (pillared naves);
+   - chasm (void), lighting and props;
+   - recipes: screen, patrol, line of sight, council, wailing guardian;
+   - route structure (axial, cloister loop, burial cells).
+
+   The test `the_two_kits_build_different_dungeons` checks this.
+4. **Spatial variety**:
+   - per-side room extents, corner cuts, jitter and aspect;
+   - bends (longer passages);
+   - pillared rooms;
+   - straightness, side rooms and several alternate routes.
+
+   Navigation guarantees hold: structure and space checks pass on every
+   seed. 0.6 → 0.7 Emberforge distinct room footprints went from 8.1 to
+   12.1 per layout, and non-rectangular rooms from 5.0 to 10.3.
+5. **Encounter Recipes 2.0**:
+   - tags, formations, placement preferences, space requirements and
+     patrols;
+   - deterministic placement scoring that rejects bad spots;
+   - a failure names the recipe and room (test).
+6. **AI improvements from reproducible failures**, each measured before and
+   after (DUNGEON_FORGE_0_7.md, "AI"):
+   - cover flicker;
+   - idle parked damage dealers;
+   - cover versus cleave-cone detours (Guardian deaths 51 → 29, wipes
+     7 → 4).
+
+   No teleporting. Handwritten dungeons: 843 → 846 wins over 1120 runs;
+   every other simulation change is hash-identical to 0.6.
+7. **Analysis tools**: `dungeon-forge report`:
+   - per-encounter deaths, killing blows, wipes, resets and clear times;
+   - optional completion;
+   - dithers and stuck recoveries per room;
+   - duration by layout;
+   - JSON output and SVG overlays.
+8. **Improved volcanic dungeon, a crypt dungeon, multiple layouts and a
+   comparative evaluation**: the 10-layout table in DUNGEON_FORGE_0_7.md.
+   Three layouts of each blueprint are shipped.
+9. **Designer modifications**: `--overrides` proof of concept with stale
+   and invalid detection (test).
+10. **Visual identity**:
+    - an original candle-stand GLB (`crypt_candelabrum.glb`), row in
+      PROVENANCE.md;
+    - pillar candles, cold light, void bridges.
+11. **Regression**: authored dungeons still load and play. The comparison
+    against 0.6 is above.
+12. **Verification and docs**: this file, DUNGEON_FORGE_0_7.md, README,
+    TASKS, CHANGELOG, CLAUDE.md, RULES.md ("Patrols, line-of-sight pulses and
+    cover"), and PLAYTEST_FORGE.md (0.7 section).
+
+### Headless (release)
+- **Handwritten dungeons against 0.6**: 7 dungeons × 8 configurations
+  (4 classes, 10 players, Aggressive, Conservative, Heroic) × 20 seeds.
+  - 843 → 846 wins, 1458 → 1457 deaths.
+  - 538 of 1120 runs are hash-identical. The others change through the
+    parked-DPS retarget only: with it disabled, 0 of 280 differ.
+  - Ashen Spire with a Striker player: 0 → 9 deaths in 3 of 20 runs, still
+    20/20 wins.
+- **Shipped generated dungeons**: 10 runs per configuration; Balanced,
+  Aggressive and Conservative; stuck time 0 everywhere.
+
+  | | 5p Normal | 5p Heroic | 10p Normal | 10p Heroic |
+  |---|---|---|---|---|
+  | Emberforge (L3) | 30/30 | 0/30 (also 0 in 0.6) | 30/30 | 30/30 |
+  | Hollow Reliquary (L4) | 25/30 | 3/30 | 30/30 | 29/30 |
+
+- **Ten layouts each** (4 classes × 3 runs, Balanced, Normal): Emberforge
+  120/120 (0.6: 120/120); Reliquary 112/120. Every crypt loss is at the
+  Hollow Guardian.
+- **Generation**: 10/10 seeds for both blueprints, 10 distinct route shapes
+  each. Emberforge 11 ms per dungeon (1.5 attempts); Reliquary 33 ms
+  (1.7 attempts).
+- **Navigation build**: Emberforge 0.5 ms (34 surfaces); Reliquary 6.8 ms
+  (83 surfaces, pillared halls).
+- **Performance** (ms/tick):
+
+  | Dungeon | 5 players | 10 players |
+  |---|---|---|
+  | Reliquary | 0.022 | 0.034 |
+  | Emberforge | 0.017 | — |
+
+### Graphical (automated, screenshots inspected)
+- `--area-tour` of the Hollow Reliquary:
+  - entrance, branch hall, entry bend corridor;
+  - Bone Colonnade (encounter space);
+  - Narrow Stair ramp and the Hollow Choir stair (elevation);
+  - the Sepulchre of the Guardian (arena).
+- `--area-tour` of the Emberforge Vaults:
+  - entrance, branch hall, slant passage;
+  - Furnace Hall, the Watchers' Shelf ledge, the Flue bridge;
+  - Molten Sanctum.
+- `--nav-debug` tours of both: pillar holes and strip pieces match the
+  walls; ledge and ramp outlines are correct.
+- `--demo --dungeon hollow_reliquary`: Victory in 465.7 s, back to the hub.
+- `--input-test` (moved 29.8 m), `--frame-test`, `--tooltip-test`,
+  `--click-test` and `--hub-tour` all pass. The Dungeons tab lists "The
+  Hollow Reliquary (level 4+)".
+- **Packaged 0.7.0 ZIP** (30.1 MB), extracted to a scratch folder and run from
+  there:
+  - the crypt's area tour renders with the candle-stand GLBs (no fallback
+    warnings);
+  - the packaged headless runner clears it.
+
+### Bugs found and fixed during 0.7
+- **Crypt generation failed on every seed**: the loop shortcut was
+  impossible on a straight axis, and the crawler pack didn't fit burial
+  cells. Fixed with a BFS cloister walk through bend rooms, a compact ring
+  and a far placement. Space failures now name the recipe and room.
+- **Council named after one abbot** → uses the recipe's name.
+- **Loop shortcut ending at a bend room** → bends are excluded as loop ends.
+- **Cover flicker; idle parked DPS; cover rewritten by cone detours**: see
+  "AI" in DUNGEON_FORGE_0_7.md.
+
+### Not verified (needs a human)
+- Whether the two dungeons feel different to play; whether pillars, the wail
+  and the patrols read on screen; pacing and fairness of the Hollow
+  Guardian (the hardest fight in the simulation).
+- Whether the report and overrides are clear to another designer.
+- Props and lighting on other GPUs; the package on other machines.
 
 ## 0.6 — Dungeon Forge foundation
 

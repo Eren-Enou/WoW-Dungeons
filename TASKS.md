@@ -3,25 +3,28 @@
 Prioritized, actionable work. Completed milestones are summarized at the bottom;
 details and evidence live in PROGRESS.md.
 
-## Next up (after 0.6)
+## Next up (after 0.7)
 
-1. **Human playtests** (need a person): PLAYTEST_FORGE.md (generated dungeon
-   and tools) and PLAYTEST_0_5.md (Cinderdeep), then PLAYTEST_NAVIGATION.md
-   and PLAYTEST_0_3.md.
-2. **Milestone 0.7: encounter composition and AI validation** (continuation
-   plan in DUNGEON_FORGE_0_6.md):
-   - recipes v2: patrols, councils, add waves, and size fields with room-fit
-     checks;
-   - space-aware pack placement (scored candidates);
-   - a difficulty budget calibrated by `dungeon-forge test`, labelled as
-     AI-calibrated;
-   - `dungeon-forge report` (stuck and dither heatmaps, deaths per encounter);
-   - a second kit (crypt or fungal).
-3. **AI movement follow-ups**:
-   - melee converging on one attack spot, and high dithering in melee-heavy,
-     cautious parties (100–215 per run on generated layouts);
+1. **Recorded human playtest of 0.7** (PLAYTEST_FORGE.md, 0.7 section):
+   - do the Emberforge Vaults and the Hollow Reliquary feel different?
+   - do pillars, the Guardian's wail and the patrols read on screen?
+   - is the Hollow Guardian fair?
+
+   Write the notes into the repository this time. Earlier versions were
+   played, but no notes were kept.
+2. **AI follow-ups measured in 0.7** (DUNGEON_FORGE_0_7.md, "AI"):
+   - the remaining Hollow Guardian deaths (wails and bone shards; 4 wipes in
+     60 runs; layouts 4 and 6 lose more, not yet diagnosed);
+   - cover that accounts for the next wail;
+   - don't count cover moves as dithers (they inflate the crypt's 71 per
+     run);
+   - melee converging on one flank spot;
    - first frontal sweeps catching arriving melee;
    - threat failures from healer-caster packs at the pull.
+3. **Designer overrides beyond the proof of concept**:
+   - re-run the structure checks after geometry edits;
+   - key overrides to room roles rather than seeded names;
+   - `test`/`report` with `--overrides`.
 4. **Milestone 0.8: presentation** (plan in ASSET_PIPELINE_RESEARCH.md):
    - per-component GLB prefabs with procedural fallback;
    - theme definitions, decoration anchors and original Blender art with
@@ -29,8 +32,8 @@ details and evidence live in PROGRESS.md.
    - a package size budget.
 5. **Forge quality**:
    - free-form (non-grid) placement for more organic caves;
-   - merging designer edits into regenerated files;
-   - room-level culling if frame time ever needs it.
+   - room-level culling if frame time ever needs it;
+   - a third kit only after the two read as different in play.
 6. **Cinderdeep tuning from human feedback** (Normal may be too easy at level
    5); a camera rule for very large bosses.
 7. **Decor and props blocking sight**: decide whether large scenery should
@@ -51,6 +54,19 @@ details and evidence live in PROGRESS.md.
 
 ## Done
 
+- 0.7: meaningful dungeon variety and encounter design:
+  - kit components (pitch, widths, room shapes, pillared halls, chasm);
+  - blueprint identity with promised challenges;
+  - Recipes 2.0 with a placement scorer;
+  - patrols and line-of-sight pulses with cover AI;
+  - the crypt kit and The Hollow Reliquary;
+  - the improved Emberforge;
+  - `dungeon-forge report` (JSON, SVG overlays);
+  - an overrides proof of concept;
+  - parked-DPS retarget;
+  - corrected playtest statements.
+
+  See DUNGEON_FORGE_0_7.md.
 - 0.6: Dungeon Forge foundation:
   - blueprint and kit formats;
   - deterministic grid generator with bounded attempts and diagnostics;

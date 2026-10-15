@@ -1,6 +1,6 @@
 # Playtest script — 0.5, The Cinderdeep Hollows
 
-No human has played 0.5 yet. This script is for the first session; it takes
+A structured session for 0.5. (Correction, 0.7: earlier versions have been playtested by the maintainer; no written notes are in the repository.) It takes
 about 45–60 minutes. Everything in DUNGEON_0_5.md "Verification" was checked
 by automated runs only.
 

@@ -1,4 +1,4 @@
-# Combat, AI and progression rules (0.2)
+# Combat, AI and progression rules (0.2–0.7)
 
 Authoritative implementation:
 `crates/sim/src/stats.rs` (formulas), `sim.rs` (rules), `ai.rs` (behaviour),
@@ -346,3 +346,32 @@ Formats and the generator: DUNGEON_FORGE_0_6.md.
 * **Generated rewards**: marks per clear 8 + 2·L, marks per wipe 1, XP per
   clear 200 + 200·L. Difficulties: Normal; Heroic (HP ×1.5, damage ×1.35,
   +2 levels, rewards ×2, rarity +1); Raid (10) (×2.6, ×1.6, +1, ×1.5, +1).
+
+## Patrols, line-of-sight pulses and cover (0.7) [orig]
+
+Formats and the generator: DUNGEON_FORGE_0_7.md. Both mechanics are opt-in
+through data; dungeons that don't use them behave exactly as before.
+
+* **Patrols**: a mob spawn may list `patrol` points (up to 8). The route is
+  the spawn point followed by the points; while its pack is idle the mob walks
+  it back and forth at 45% of its speed. Aggro checks use where it is now.
+  When the pack is pulled, each patrolling mob's home becomes the spot where
+  it was caught, so a reset walks it back there and it resumes the route.
+  Every point must be placeable and every leg walkable (checked on load).
+* **Line-of-sight pulses**: `los_blockable = true` on a `pulse` ability. It
+  hits only party members the caster can see when it lands (eye to chest or
+  eye to eye, through the same walls that block casting).
+* **Cover (companion AI)**: while an engaged enemy is casting a
+  line-of-sight pulse that can see a companion (tanks included), the
+  companion moves to the nearest reachable spot within about 20 m that the
+  caster cannot see, still hidden 0.7 m to either side. It prefers spots it can
+  reach without crossing a frontal cleave cone, keeps its chosen spot while it
+  still hides it. It stops casting while it moves; once hidden it stays put
+  and fights from there (out of sight of the caster) until the cast ends.
+* **Parked damage dealers retarget**: a damage dealer standing where it chose
+  to stand that cannot hit its target (melee: out of reach; ranged: no line of
+  sight) and has not attacked anything for 3 s switches to the nearest
+  engaged, uncontrolled enemy that is attacking a tank and that it can hit.
+* **Generated pillared rooms**: pillars are holes in the walkable floor,
+  walled round, so they block movement and sight. Floor strips around them
+  overlap by 3 m.

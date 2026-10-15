@@ -6,9 +6,10 @@ The plan written before implementation is
 [PLAYTEST_FORGE.md](PLAYTEST_FORGE.md). Asset research:
 [ASSET_PIPELINE_RESEARCH.md](ASSET_PIPELINE_RESEARCH.md).
 
-**No human has played a generated dungeon yet.** Everything below was
-verified by tests, simulated parties and automated graphical runs on the
-development machine (Windows 11, RTX 2070 SUPER).
+**Automated verification only.** Everything below was verified by tests,
+simulated parties and automated graphical runs on the development machine
+(Windows 11, RTX 2070 SUPER); it is not covered by a recorded human playtest.
+(Correction, 0.7: earlier versions have been playtested by the maintainer; no written notes are in the repository.)
 
 ## Commits
 
@@ -338,8 +339,8 @@ calls per tick at 0.2 µs). Navigation build times are at most 1.4 ms
 
 ## Known limitations
 
-* **Not played by a human.** Pacing, difficulty and readability of generated
-  layouts are unverified.
+* **No recorded human playtest.** Pacing, difficulty and readability of
+  generated layouts are not covered by written playtest notes.
 * **Grid look**: rooms sit on a 36 m grid with axis-aligned exits, so layouts
   read as "rooms and corridors", not organic caves. Angled corridors and
   octagons soften this. Free-form placement is future work.

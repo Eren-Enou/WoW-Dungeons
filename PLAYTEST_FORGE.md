@@ -1,12 +1,13 @@
-# Playtest script — Dungeon Forge (0.6)
+# Playtest script — Dungeon Forge (0.6–0.7)
 
-No human has played a generated dungeon yet. This session (about 45 minutes)
+A structured session for generated dungeons. (Correction, 0.7: earlier versions have been playtested by the maintainer; no written notes are in the repository.)
+This session (about 45 minutes)
 checks that a dungeon built by Dungeon Forge plays like a real dungeon, and
 that the tools make sense to another developer.
 
 ## Part 1 — play the generated dungeon (25 min)
 
-From the packaged build (`DungeonSandbox-0.6.0-windows-x64.zip`, see
+From the packaged build (`DungeonSandbox-0.7.0-windows-x64.zip`, see
 RELEASE_BUILD.md) or from source, with a fresh save at the dungeon's level:
 
 ```powershell
@@ -66,6 +67,39 @@ Open `forge_out/s21.svg` in a browser.
   clear enough to fix it?
 * Run a short simulation check:
   `cargo run --release -p dungeon_forge -- test assets/forge/blueprints/emberforge_vaults.toml --seed 21 --runs 5`.
+
+## Part 4 — 0.7: the Hollow Reliquary against the Emberforge (25 min)
+
+0.7 aims for two generated dungeons that feel designed for different
+experiences, not reskins. Play the crypt at its level:
+
+```powershell
+$env:DUNGEON_SAVE_DIR = "$env:TEMP\forge07-playtest"
+.\dungeon-sandbox.exe --start-level 4
+```
+
+**Dungeons** → *The Hollow Reliquary (level 4+)* → *Normal*. Answer as you go:
+
+| Moment | Question |
+|---|---|
+| First hall with pillars | Do the pillars read as solid? Did you or a companion get caught on one? |
+| Warden's Screen (a shield-bearer in front of two casters) | Was it clear you had to get round him to stop the heals? |
+| Sentinel Patrol | Did you see the two sentinels walking? Could you time the pull? |
+| Bone Archers | Did pulling them round a pillar (breaking line of sight) work, or did you just fight them where they stood? |
+| The Twin Abbots | Could you tell which one heals? Did the fight need a kill order? |
+| The Hollow Guardian | When it began to wail, was it clear you had to hide behind a pillar? Did the companions hide too? Were deaths your fault, the companions', or unfair? |
+| Afterwards | Compared with the Emberforge Vaults (play it again if it's been a while): did the crypt feel like a different *kind* of dungeon (space, fights, atmosphere), or a recolour? |
+
+Also try one of the other crypt layouts by copying
+`assets/content/variants/forge/hollow_reliquary_s10.toml` (the longest) into
+`assets/content/dungeons/`; it appears as a separate entry.
+
+Optional (needs Rust): see where simulated parties struggle and compare with
+what you felt:
+
+```bash
+cargo run --release -p dungeon_forge -- report assets/content/dungeons/08_hollow_reliquary.toml --runs 5 --classes striker,mender --svg forge_out/maps
+```
 
 ## What to send back
 

@@ -96,6 +96,24 @@ rather than by hand: Emberkin raiders, a guarded caster, Forgewarden Hask
 beside a lava pit and Cindermaw, the Furnace Wyrm, in a braziered arena.
 Look for the second route between two rooms, a raised ledge that drops (one
 way) further in, a bridge over lava and an optional elite in a side cell.
+In 0.7 the caverns are irregular, longer passages wind between them, and a
+pack of ash hounds patrols one hall: watch its route before you pull.
+
+THE HOLLOW RELIQUARY (new in 0.7, level 4+)
+-------------------------------------------
+A second Dungeon Forge dungeon, from a different kit: the buried monastery of
+the Hushed. Narrow doors open into long naves with solid stone pillars that
+block movement and line of sight. Fights to expect:
+- Warden's Screen: a shield-bearer with a frontal cleave guarding two healers.
+  Get round him and interrupt the heals.
+- Sentinel Patrol: two halberd sentinels pacing a nave.
+- Bone Archers: they shoot across the hall. Pull them round a pillar so they
+  have to come to you.
+- The Twin Abbots: one heals, the other chants. Split your interrupts and
+  pick a kill order.
+- The Hollow Guardian: when it begins to wail, get a pillar between you and
+  it. The wail only hits those it can see.
+Your companions take cover from the wail on their own.
 
 Difficulty: Normal, Heroic (harder, better loot) and Raid (10). The Sandbox tab
 can make any dungeon easier or harder without editing files.

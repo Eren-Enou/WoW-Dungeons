@@ -84,8 +84,8 @@ connection.
 # Results (what was built and verified)
 
 Everything below was run on the development machine (Windows 11, release
-build). **No human has played the Cinderdeep Hollows yet**; the script for
-that is [PLAYTEST_0_5.md](PLAYTEST_0_5.md).
+build). It is not covered by a recorded human playtest; the script for
+that is [PLAYTEST_0_5.md](PLAYTEST_0_5.md). (Correction, 0.7: earlier versions have been playtested by the maintainer; no written notes are in the repository.)
 
 ## Commits
 
@@ -357,8 +357,8 @@ Ranges show the results before and after the separation commit.
 
 ## Known limitations
 
-* Not played by a human. Time-to-clear, difficulty and readability for a
-  person are unverified.
+* No recorded human playtest. Time-to-clear, difficulty and readability
+  for a person are not covered by written notes.
 * Melee converging on the same spot can still overlap. Dithering is reduced,
   not gone.
 * Ignarax is large. With the camera close, the model can fill much of the view
