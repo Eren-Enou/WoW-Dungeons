@@ -18,7 +18,7 @@ design decision for this project.
   comes from one SplitMix64 RNG seeded per run. Same seed + content + inputs ⇒
   the same event log (checked by hashing the formatted log).
 * Tick order: combat flags → blackboard + AI decisions → player cast → movement →
-  proximity aggro → auras (HoT/DoT ticks, expiry) → casts & cooldowns →
+  heights (ramps, falls) → proximity aggro → auras (HoT/DoT ticks, expiry) → casts & cooldowns →
   auto-attacks → enemy phases / enrage / abilities → telegraphs → hazards →
   regeneration → resets → progress → rally.
 
@@ -76,7 +76,10 @@ plus HP, a resource, a power multiplier and a threat multiplier.
 
 Validation order: dead → incapacitated → casting → cooldown → 1 s global cooldown
 → resource → silenced (magic school) → target → effect-specific (immune, nothing
-to dispel, Weakened Soul) → range. Range is edge-to-edge. Cast-time spells start
+to dispel, Weakened Soul) → range → line of sight (0.4). Range is edge-to-edge
+horizontally, combined with any height difference beyond 1 m (see Navigation).
+Line of sight is needed for every ability aimed at someone other than yourself
+and for auto attacks. Cast-time spells start
 the GCD immediately and resolve at the end of the cast (target must still be
 valid, range + 3 m leeway); resource and cooldown are paid on completion. The
 player's casts are cancelled by moving.
@@ -118,13 +121,21 @@ breaks incapacitation. Purify removes the first harmful, dispellable aura.
 
 ## Encounters
 
-* Each encounter is a pack. Proximity (`aggro_radius`) or any hostile action
-  engages the whole pack; the trigger goes on every threat table first and
+* Each encounter is a pack. Proximity (`aggro_radius`, 3D distance) or any
+  hostile action engages the whole pack. Across floors (more than 1 m of height
+  difference) proximity only counts if the enemy can see you, so walking over a
+  pack on a bridge does not pull it [0.4]; the trigger goes on every threat table first and
   other living party members within 30 m join at zero threat [orig].
-* **Reset / leash**: an engaged enemy with no living threat entries, or more than
-  `leash_radius` from home, resets its pack: living mobs heal to full, clear
+* **Reset / leash**: an engaged enemy with nobody left it can reach on foot or
+  see, or more than `leash_radius` (3D) from home, resets its pack: living mobs heal to full, clear
   threat/auras/casts, return to phase 1 with fresh ability timers, become immune
-  and walk home at 1.5× speed. Summoned adds despawn. Dead mobs stay dead.
+  and walk home at 1.5× speed. Summoned adds despawn. Dead mobs stay dead. An
+  enemy whose home became unreachable (it followed someone down a one-way drop)
+  settles where it stands instead of teleporting [0.4].
+* Enemies ignore threat-table entries they can neither reach nor see when picking
+  a target [0.4].
+* **Ground effects** (rings, hazards, cleaves, AoE abilities) hit only within
+  1.5 m of their own elevation: a ring on a bridge misses the floor below [0.4].
 * **Enemy abilities** (data-driven, `kind`):
   `bolt` (spell at a target), `cleave` (unavoidable physical around the caster,
   optionally `frontal` = front 180° only), `ring` (ground telegraph(s) that
@@ -211,8 +222,53 @@ Each companion then decides independently:
 | Support | 0.45 s | 85% | 40 | 50% | 70% | 1.6 s | 0.6 m | yes, dispels first |
 | Mechanics | 0.2 s | 90% | 40 | 50% | 60% | 1.8 s | 1.8 m | yes |
 
-## Navigation shortcut
+## Navigation (0.4, layered 2.5D) [orig]
 
-Walkable floor = overlapping axis-aligned rectangles from the content file; the
-rectangle graph is BFS-searched and actors steer through overlap centres,
-sliding along walls. No actor-actor collision; walls don't block line of sight.
+Full design: NAVIGATION_0_4.md.
+
+* **Surfaces**: `[[dungeon.areas]]` are axis-aligned footprints with a height:
+  flat at `y` (default 0), or a ramp from `y` at the `min` edge to `y_to` at the
+  `max` edge along `axis` (`"z"` default, or `"x"`); `stairs = true` only changes
+  the drawing. `under = "open"` makes a thin deck (0.4 m) you can walk and see
+  under; otherwise the area is solid rock down to the lowest floor. `walls`
+  (default true) and `wall_height` (default 3.2 m) shape the outline.
+  `unreachable = true` marks an intentionally unreachable area.
+* **Connections**: two areas connect only where their footprints (shrunk by the
+  0.4 m wall margin) overlap **and** their heights agree within `max_step`
+  (0.5 m). For a ramp only the level strip of the overlap is the doorway.
+  Overlap alone never connects. One-way drops are authored in
+  `[[dungeon.links]]` (`from`, `to`, `kind = "drop"`, a `min`/`max` zone over the
+  edge); the drop must be more than `max_step` and at most `max_drop` (8 m).
+  `kind = "walk"` links may be declared to assert a connection exists.
+* **Validation**: every pair of overlapping areas must be level with each other,
+  stacked at least `headroom` (2.5 m) apart with the upper one `open`, or a ramp
+  overlapping the floor it joins by at most 2 m. Ramps may not be steeper than
+  `max_slope` (0.6 rise/run). Every area must be reachable from the entrance
+  unless marked unreachable. Entrance, mob and hazard positions take an optional
+  `y`; without it all floors under the point must be level, otherwise the
+  position is ambiguous and rejected. Limits live in `[dungeon.nav]`.
+  Old maps (no heights) load unchanged: everything at 0, overlaps connect.
+* **Routing**: shortest paths over directed portals (Floyd–Warshall at load,
+  3D distances, +2 cost per drop). Actors steer to the point of the next
+  portal nearest to the following waypoint. Waypoints closer than 0.1 m are
+  skipped.
+* **Movement**: a step stays on the current surface if it lands inside it; it
+  leaves only through a portal it crosses, or off the edge inside a drop zone.
+  Elevation follows the surface (ramps interpolate); after a drop the actor falls
+  at 12 m/s. No actor-actor collision.
+* **Robustness**: an AI actor that tries to move but makes < 20% headway, or
+  stands at a waypoint while its reachable goal is > 1 m away, for 1 s is stuck:
+  it steers to the current portal (or surface) centre for 0.8 s. Two reversals
+  of direction within ~0.7 s commit it to its previous goal for 0.75 s, unless
+  it or that goal is in a ground effect. A companion whose goal is unreachable
+  stays with the leader.
+* **Range and sight**: `reach(a, b, r)` ⇔ `h² + v² ≤ r²` with `h` = horizontal
+  edge-to-edge distance and `v` = height difference minus 1 m. Line of sight is a
+  segment from the eyes (85% of body height) to the target's chest or eyes,
+  blocked by wall faces (from their floor up to `wall_height`) and by any
+  surface's solid volume (deck or rock).
+* **AI and sight**: a cast without line of sight becomes "walk toward the
+  target"; ranged spots are searched (angles around the preferred direction, at
+  100/70/45% distance) for one that sees the enemy and is seen by the first
+  healer (healers: sees the tank); ranged DPS out of the healer's sight move
+  before casting; healers who lose the tank stop damage casts and move.

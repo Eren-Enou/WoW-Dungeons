@@ -4,8 +4,9 @@ An original Rust + Bevy 0.20 third-person dungeon RPG inspired by the
 *mechanical feel* of classic tab-target MMORPG dungeons: one player, four
 autonomous companions (tank / healer / DPS) with selectable AI personalities,
 a WoW-Classic-style combat model (armor, hit tables, rage/energy/mana,
-interrupts, crowd control), three data-driven dungeons and a 10-player raid
-with multi-phase bosses, levels, loot with rarities, and a sandbox for editing
+interrupts, crowd control), four data-driven dungeons and a 10-player raid
+with multi-phase bosses, layered navigation with ramps, bridges, drops and
+line of sight, levels, loot with rarities, and a sandbox for editing
 encounters without recompiling. Classic MMO controls, clickable party/raid
 frames with mouseover healing, threat-coloured nameplates and tooltips
 generated from the real rules. All assets are primitive meshes; all names, maps and numbers are
@@ -45,6 +46,7 @@ profile) also works; dependencies are optimised even in debug.
 | Dungeon | F / Esc | start auto-attack / clear target |
 | Dungeon | L | toggle verbose combat log |
 | Dungeon | Backspace | leave the dungeon (counts as a failed run) |
+| Dungeon | N / Shift+N | navigation debug overlay / plus walls and walk areas |
 | Results | Enter | back to the hub |
 
 In the dungeon, enemy nameplates are coloured by threat from your point of view
@@ -52,6 +54,11 @@ In the dungeon, enemy nameplates are coloured by threat from your point of view
 yellow = close to pulling, red = attacking you). The action bar shows range,
 cooldown (dark curtain), global cooldown (thin top bar) and resource shortfall
 with the time until affordable.
+
+Levels have height (0.4): ramps, stairs, bridges, stacked walkways and one-way
+drops (orange strips at the edge). Abilities and auto attacks need line of
+sight, so walls and floors block casts and heals ("no line of sight"), and an
+enemy on another floor can't be hit or pulled through it.
 
 ### Classes
 
@@ -80,6 +87,12 @@ RULES.md documents every formula.
 * **The Cinder Court** (raid, 10 players, level 10): gate guards, Twinmaw the
   Behemoth (tank swaps) and the Cinder Regent.
 
+* **Cavern Traverse** (level 2+, 0.4): a graybox navigation proving ground with
+  a winding passage, a ramp to a high walkway, a rope bridge over an underpass,
+  a gallery stacked above it, a one-way drop into the Magma Basin, a narrow
+  tunnel, a lava pit and a fire vent. See
+  [PLAYTEST_NAVIGATION.md](PLAYTEST_NAVIGATION.md).
+
 Each has Normal, Heroic and Raid (10) difficulties; the Party tab switches
 between a 5-person party and a 10-person raid group. The Sandbox tab adjusts
 enemy health, damage, ability speed and telegraph time without editing files;
@@ -107,6 +120,37 @@ content file 'assets/content/dungeons/01_sunken_vault.toml' has 2 problem(s):
 Enemy ability kinds: `bolt`, `cleave` (optionally `frontal`), `ring`, `pulse`,
 `summon`, `debuff` (dot / damage_taken / healing_taken), `heal_ally`. See
 RULES.md for every field.
+
+Heights (0.4, all optional; old files load unchanged at height 0):
+
+```toml
+[[dungeon.areas]]
+name = "Ash Ramp"
+min = [14.0, 47.0]
+max = [20.0, 61.0]
+y = 0.0          # height (at the min edge for a ramp)
+y_to = 5.0       # makes it a ramp; axis = "z" (default) or "x"; stairs = true draws steps
+
+[[dungeon.areas]]
+name = "Rope Bridge"
+min = [19.0, 68.0]
+max = [47.0, 72.0]
+y = 5.0
+under = "open"   # a deck you can walk under (default "solid" = rock down to the floor)
+walls = false
+
+[[dungeon.links]]  # one-way drop: zone straddles the upper area's edge
+from = "Hanging Gallery"
+to = "Magma Basin"
+kind = "drop"
+min = [40.0, 96.5]
+max = [46.0, 99.5]
+```
+
+Areas connect only where they overlap **and** are level with each other.
+Mob and hazard positions take an optional `y` (required when floors are
+stacked there). The full rules are in RULES.md ("Navigation"); the design is in
+[NAVIGATION_0_4.md](NAVIGATION_0_4.md).
 
 Environment overrides: `DUNGEON_CONTENT=<dir or file>`,
 `DUNGEON_SAVE_DIR=<dir>` (default `./saves`).
@@ -153,7 +197,12 @@ cargo run -- --demo --dungeon gloomroot_warrens --level 6 --speed 4 --screenshot
   size and every companion's AI profile for `--demo`. Threat alerts are also
   written to the log ("threat alert at ...").
 
-Manual playtest scenarios for 0.3: [PLAYTEST_0_3.md](PLAYTEST_0_3.md).
+* `--nav-debug` starts with the navigation overlay on; `--zoom D` sets an
+  overview camera distance for screenshots, e.g.
+  `--demo --dungeon cavern_traverse --nav-debug --zoom 30 --screenshots 3`.
+
+Manual playtest scenarios: [PLAYTEST_0_3.md](PLAYTEST_0_3.md) (combat UX) and
+[PLAYTEST_NAVIGATION.md](PLAYTEST_NAVIGATION.md) (0.4 navigation).
 
 Set `DUNGEON_SAVE_DIR` to a temp folder for these runs so they don't touch your
 real profile.
@@ -171,7 +220,8 @@ cargo build --release --workspace
 ## Layout
 
 ```
-crates/sim    dungeon_sim: stats & formulas, combat, auras, AI + blackboard, nav,
+crates/sim    dungeon_sim: stats & formulas, combat, auras, AI + blackboard,
+              layered 2.5D navigation + line of sight,
               content schema, items, profile/progression, headless runner
 crates/game   dungeon_game: Bevy app (hub, dungeon renderer, HUD, overlays, effects,
               results, camera, controls, tooltips, demo/test automation)

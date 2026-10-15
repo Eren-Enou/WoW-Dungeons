@@ -121,9 +121,13 @@ A step stays on the current surface if it lands inside it. Leaving it is only
 possible through a link whose portal the step crosses (walk) or inside a drop
 zone (drop). Otherwise the actor slides along the edge. Elevation follows the
 surface height (ramps interpolate); after a drop the actor falls at a finite
-speed. Stuck detection: an AI actor with a goal that makes no progress for
-1.5 s steers to the current portal centre for a second (no teleporting); the
-time spent stuck is recorded in the metrics.
+speed. Stuck detection: an AI actor that makes (almost) no
+headway for 1 s, or stands at a waypoint while its reachable goal is still far,
+steers to the current portal (or surface) centre for 0.8 s; it never teleports.
+Dithering (two direction reversals within ~0.7 s, i.e. two AI goals fighting
+over a boundary) commits the actor to its previous goal for 0.75 s, except
+when it or that goal is in a ground effect. Stuck time, unreachable-goal time
+and dithers are reported by the headless runner.
 
 ### Spatial combat
 
@@ -151,3 +155,162 @@ supports, walls (following ramps), drop-zone markers and lava from the same
 camera blockers. A toggleable debug overlay (`N`) draws surfaces coloured by
 height with labels, portals and drop arrows, each companion's path and current
 waypoint, unreachable goals and stuck actors.
+
+## 4. Where it lives
+
+| Piece | File |
+|---|---|
+| `V3`, horizontal `V2` | `crates/sim/src/math.rs` |
+| Surfaces, links, validation, routing, movement, line of sight | `crates/sim/src/nav.rs` |
+| Schema (`areas` fields, `links`, `nav`, `lava`, optional `y`), `Content::place` | `crates/sim/src/content.rs` |
+| Actor `y` / `surface` / `NavState`, `reach`, `has_los`, `in_effect`, steering, falls, stuck and dither handling, aggro / leash / pursuit | `crates/sim/src/sim.rs` |
+| AI goals in 3D, danger zones per floor, line-of-sight-aware positioning | `crates/sim/src/ai.rs` |
+| Level geometry built from the `Nav` (floors, rock, decks, ramps, stairs, walls, drop strips, lava) | `crates/game/src/dungeon.rs` (`spawn_level_geometry`) |
+| Camera under ceilings | `crates/game/src/camera.rs` (`ceiling_pitch`) |
+| Debug overlay (N / Shift+N) | `crates/game/src/navdebug.rs` |
+| Test dungeon | `assets/content/dungeons/05_cavern_traverse.toml` |
+
+## 5. Verification
+
+All numbers below come from commands run on 2026-10-14 (Windows 11, release
+build). "nav stuck / unreachable / dithers" are per-run totals summed over the
+party.
+
+### Tests
+* `nav.rs` (17 tests):
+  * stacked floors don't connect;
+  * solid-over-floor and too-close-vertically layouts are rejected, with the fix in the message;
+  * ramps work both ways, with interpolated height and hand-overs within a step;
+  * too-steep ramps are rejected;
+  * a one-way drop goes down but not up, and edges block everywhere else;
+  * an unreachable platform is reported;
+  * the shorter of two routes is chosen;
+  * a winding corridor is followed with no direction reversals;
+  * thin boundaries are crossed exactly once;
+  * walls block movement and sight;
+  * floors block sight between levels, and rock under a ledge hides the floor behind it;
+  * walls open at connections and drop zones, and follow ramps;
+  * projection prefers the nearby level;
+  * bad links give actionable errors;
+  * routing is deterministic.
+* Simulation (`tests.rs` / `content.rs`):
+  * legacy dungeons stay flat and fully connected;
+  * Cavern areas connect by height, not by overlap;
+  * no melee, casts or aggro through the bridge;
+  * walls block casts;
+  * rings stay on their floor;
+  * the drop falls at 12 m/s and is one-way;
+  * enemies give up on targets they can neither reach nor see;
+  * full autopilot traversals of the Cavern with 5 members (3 seeds) and 10 members (2 seeds). They check **every tick** that nobody leaves the floor, moves faster than they can run (plus a drop landing), rises more than a step or falls faster than 12 m/s;
+  * deterministic replay;
+  * the Cavern round-trips through TOML;
+  * ambiguous or wrong elevations are reported.
+* Camera: `camera_dips_under_a_bridge_instead_of_entering_the_player`.
+
+### Cavern Traverse (headless, Balanced unless noted)
+
+| group | seeds | wins | deaths | nav stuck | unreachable | dithers |
+|---|---|---|---|---|---|---|
+| 5, level 2 | 100 | 100% | 0.00 | 0.0 s | 0.0 s | 7.3 |
+| 10, level 2 | 100 | 100% | 0.00 | 0.0 s | 0.0 s | 9.5 |
+| 25, level 4 | 20 | 100% | 0.00 | 0.0 s | 0.7 s | 7.8 |
+| 40, level 6 | 10 | 100% | 0.00 | 0.0 s | 3.0 s | 4.2 |
+| 5, Aggressive | 100 | 100% | - | 0.0 s | 0.0 s | 3.7 |
+| 5, Conservative | 100 | 100% | - | 0.0 s | 0.0 s | 9.1 |
+| 5, Heroic, level 4 | 50 | 100% | - | 0.0 s | 0.0 s | 8.9 |
+
+Deterministic replay: OK in every batch.
+
+### Existing dungeons, 0.3 vs 0.4 (Balanced, same seeds)
+
+| dungeon | 0.3 | 0.4 |
+|---|---|---|
+| Sunken Vault | 100% (30 seeds) | 100% (100 seeds) |
+| Gloomroot Warrens | 97% (100 seeds) | 99% (100 seeds) |
+| Ashen Spire | 98% (300 seeds) | 97% (100 seeds), 97% (300 seeds) during tuning |
+| Cinder Court (10) | 100% (20 seeds) | 100% (30 seeds) |
+
+Line of sight changed the old dungeons: before 0.4, heals and spells went
+through walls. With the first 0.4 AI the Ashen Spire fell to 94% (300 seeds).
+An ablation run showed the whole gap was line of sight: with it disabled,
+0.4 cleared 299/300.
+
+The fixes changed AI positioning, not the rules:
+* ranged spots must see the enemy and be seen by the healer;
+* ranged DPS move back into the healer's sight before casting;
+* healers move instead of smiting when the tank is out of sight;
+* a healer now keeps one consistent goal near corners. Before, she flipped between two goals every tick at a sight boundary.
+
+### Benchmarks (release, `--bench`, ms per 20 Hz tick)
+
+| group | Warrens L6, 0.3 | Warrens L6, 0.4 | Cavern, 0.4 |
+|---|---|---|---|
+| 5 | 0.003 | 0.004 | 0.005 |
+| 10 | 0.005 | 0.007 | 0.010 |
+| 25 | 0.013 | 0.022 | 0.028 |
+| 40 | 0.023 | 0.049 | 0.059 |
+
+0.4 costs 1.3-2.1x the 0.3 tick and is still ~1,000x real time at 40
+characters. The extra cost comes from the AI's line-of-sight questions, which
+grow with group size (healers check everyone), and from per-tick route
+queries.
+* A bounding-box reject made line of sight about 20% cheaper.
+* A per-tick sight cache was measured (13% fewer calls, no measurable time saved) and dropped.
+* Routing tables are built once at load (a few hundred links at most).
+
+### Graphical
+`--demo --dungeon cavern_traverse --nav-debug --zoom 30 --screenshots N`
+produced screenshots of the elevated walkway, the fight on the rope bridge,
+the underpass with the bridge overhead, the lava hollow and the basin. The
+overlay showed surfaces, portals and labels. The screenshots exposed a camera
+collapse under the hanging gallery, fixed by `ceiling_pitch`. The 0.3 checks
+(`--input-test`, `--frame-test`, `--tooltip-test`, `--click-test`,
+`--hub-tour`, `--editor-test`) still pass.
+
+## 6. Schema compatibility
+
+* Old content needs no changes and means the same thing. Every new field is
+  optional; the defaults are height 0, solid, walled and reachable.
+* The editor writes the new fields only when they differ from the defaults.
+* A 0.3 build cannot read files that use the new fields; it rejects them with
+  "unknown field".
+* Saves are unaffected (positions are not saved).
+
+## 7. Known limitations
+
+* Footprints are axis-aligned rectangles. Curves and diagonal passages are
+  built from several rectangles. Ramps run only along x or z.
+* Two ramps that overlap with slopes in different directions connect only if
+  they are level across the whole overlap.
+* No actor-actor collision; a crowd can stand inside each other in a doorway.
+* Walls are thin faces at footprint edges. There is no separate ceiling, so
+  sight upward is blocked only by other surfaces' volumes. Bodies never block
+  sight.
+* The drop landing spot is the step clamped onto the lower floor (up to about
+  1.1 m sideways). There is no jumping, climbing, swimming or knock-back.
+* Dither commitment hides conflicts between AI goals rather than resolving
+  them. The old dungeons still record 7-175 dithers per run, with no
+  measurable harm. Cinder Court is highest: 10 members plus tank swaps.
+* At 25-40 members, a few seconds of unreachable goals occur per run, summed
+  over the group. These are formation spots projected next to the leader; the
+  fallback (stay with the leader) handles them.
+* Enemies can follow the party down a one-way drop. If their home is above,
+  they settle where they stand when they reset.
+* Rendering:
+  * Ramps are a smooth deck over rock steps, and walled ramps get stepped 1 m wall pieces.
+  * The demo camera forces its yaw to the character's facing. In very narrow passages the camera ends up close and the player's own model hides.
+
+## 8. Extension points (toward a Ragefire-style cave)
+
+* **Polygons**: `Surface` hides its footprint behind `walk.contains`, `clamp`,
+  `clip` and `height_at`. Convex polygons could replace rectangles without
+  touching routing or the sim.
+* **More link kinds**: `LinkKind` and `Nav::attempt` are the places to add
+  ledges you can only jump down from (with a landing arc), one-way doors, or
+  ladders (a link with a fixed traversal time).
+* **Spatial hash**: if big caves have many walls, bucket walls and surfaces in a
+  grid inside `line_of_sight`.
+* **Crowd separation**: a soft separation term in `Sim::steer` would spread
+  groups in doorways without changing routing.
+* **Authoring**: the overlay already shows names and heights. An editor mode
+  could drag `min`/`max` and reuse `Nav::build` for live validation.

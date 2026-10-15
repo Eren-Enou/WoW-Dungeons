@@ -1167,6 +1167,7 @@ fn slot_status(st: &AbilityState, resource: &str) -> (String, Color) {
     }
     let blocker = match st.result {
         Err(CastError::NoTarget) => Some("no target"),
+        Err(CastError::NoLineOfSight) => Some("no line of sight"),
         Err(CastError::InvalidTarget) => Some("invalid target"),
         Err(CastError::Silenced) => Some("silenced"),
         Err(CastError::Incapacitated) => Some("stunned"),

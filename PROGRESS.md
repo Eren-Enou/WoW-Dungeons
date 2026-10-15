@@ -1,11 +1,79 @@
 # Progress
 
-Status: **0.3 (combat UX, controls and gameplay polish) implemented and verified
-through unit tests and automated graphical runs.** No human has played 0.2 or
-0.3 yet; PLAYTEST_0_3.md is the script for that.
+Status: **0.4 (three-dimensional navigation and dungeon environments)
+implemented and verified with unit and simulation tests, multi-seed headless
+batches and automated graphical runs.** No human has played 0.2–0.4 yet. The
+scripts for that are PLAYTEST_NAVIGATION.md and PLAYTEST_0_3.md.
 
 Environment: Windows 11 Pro, Rust 1.99.0, Bevy 0.20.0 (pinned `=0.20.0`,
 Cargo.lock committed), NVIDIA RTX 2070 SUPER (Vulkan).
+
+## 0.4 — three-dimensional navigation and dungeon environments
+
+Design, full results, benchmarks and limitations: NAVIGATION_0_4.md.
+
+Starting point: commit 9a66d86 (0.3 complete). Commits:
+
+| commit | content |
+|---|---|
+| 97031ff | review of 0.3 navigation and the chosen design |
+| ebd8cb7 | Phase A: navigation module and tests |
+| aec93a1 | Phase B: simulation integration, spatial combat, LOS-aware AI, renderer port |
+| 6656ec8 | Phase D: Cavern Traverse, navigation metrics, traversal tests |
+| 4a4d115 | Phase C: debug overlay, camera under ceilings |
+| 415b2ca | Phase E: cheaper line of sight |
+
+The documentation commit follows these.
+
+### Checks (run 2026-10-14 after the last code change)
+- `cargo fmt --all -- --check` — clean.
+- `cargo check --workspace` — clean.
+- `cargo clippy --workspace --all-targets -- -D warnings` — clean.
+- `cargo test --workspace` — **142 passed** in `dungeon_sim`, **15** in
+  `dungeon_game`, 0 failed.
+- `cargo build --release --workspace` — succeeded.
+
+### Headless (Balanced, release)
+- Cavern Traverse:
+  - 5 players: 100/100 wins;
+  - 10 players: 100/100;
+  - 25 players: 20/20;
+  - 40 players: 10/10;
+  - Aggressive and Conservative profiles: 100/100 each;
+  - Heroic: 50/50;
+  - level 1 with each player class: 97–100% (30 seeds each).
+  - 0.0 s stuck in every batch, deterministic replay OK.
+- Existing dungeons, compared with 0.3 on the same seeds:
+  - Vault: 100% (0.3: 100%);
+  - Warrens: 99% (0.3: 97%);
+  - Ashen Spire: 97% (0.3: 98%);
+  - Cinder Court: 30/30 (0.3: 20/20).
+- Benchmarks at 25 players: 0.022 ms/tick (0.3: 0.013); at 40 players: 0.049 ms/tick (0.3: 0.023).
+
+### Graphical (automated)
+- The Cavern demo with `--nav-debug --zoom 30` was screenshotted on:
+  - the walkway, 5 m up;
+  - the bridge fight;
+  - the underpass beneath the deck;
+  - the lava hollow;
+  - the basin, 3 m below the entrance.
+- The screenshots exposed a camera collapse under the gallery, now fixed.
+- `--input-test`, `--frame-test`, `--tooltip-test`, `--click-test`,
+  `--hub-tour` and `--editor-test` pass, and Sunken Vault demo screenshots look as in 0.3.
+
+### Bugs found and fixed during 0.4
+- **Healer flip-flopping at a corner.** At a line-of-sight boundary the healer alternated between two goals every tick. Fix: one consistent goal, plus a general dither commitment that never overrides dodging.
+- **Stalled in a doorway.** A waypoint 0.046 m away read as "arrived" mid-route, and the leader stood in a doorway forever. Fix: skip waypoints closer than 0.1 m, and count "arrived but the goal is far" as stuck.
+- **Double-speed falls.** Heights were settled twice per tick.
+- **Ranged DPS out of the healer's sight.** In the Spire boss fight, ranged DPS parked in a stair corridor that the healer couldn't see.
+
+### Not verified (needs a human)
+- How climbing, bridges, drops and the camera under ceilings feel with real
+  input.
+- Whether the AI's movement looks natural to a player.
+- Whether line of sight around corners in the old dungeons feels fair.
+- A human-controlled run of the Cavern. Its traversal is verified only for AI
+  parties and scripted player movement in tests.
 
 ## 0.3 — combat UX, controls and gameplay polish
 

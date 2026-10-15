@@ -58,7 +58,7 @@ pub fn ability(def: &AbilityDef, power_mult: f32, resource: ResourceKind) -> Tip
     lines.push(head.join(" | "));
     lines.push(
         match def.target {
-            TargetRule::Enemy => "Target: your selected enemy.",
+            TargetRule::Enemy => "Target: your selected enemy (in line of sight).",
             TargetRule::Ally => {
                 "Target: the ally under your mouse, else your selected ally, else yourself."
             }

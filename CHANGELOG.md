@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.4 — three-dimensional navigation and dungeon environments
+
+Design, verification, benchmarks and limits: NAVIGATION_0_4.md.
+
+### Navigation
+- Layered 2.5D navigation replaces overlapping flat rectangles:
+  - areas have a height, can be ramps (`y_to`, `axis`, `stairs`) or open decks you can walk under;
+  - they connect only where they overlap **and** are level;
+  - one-way drops are authored in `[[dungeon.links]]`;
+  - unreachable platforms are allowed;
+  - limits live in `[dungeon.nav]`.
+- Validation rejects a solid area over another, a vertical gap between step and headroom, too-steep ramps, bad links, unreachable areas and ambiguous positions. Every error names the areas and the fix.
+- Old maps load unchanged (everything at height 0).
+- Routing: weighted shortest paths over portals, precomputed at load; steering uses a portal funnel.
+- Movement leaves a surface only through a portal or off a drop edge. Ramps interpolate height, and drops fall at 12 m/s.
+- Stuck detection with recovery (no teleporting), dither detection, and companions that stay with the leader when a goal is unreachable.
+- New metrics in the headless runner: `nav stuck`, `unreachable` and `dithers`.
+
+### Spatial combat
+- Actors carry an elevation and the surface they stand on.
+- Range combines horizontal distance with height difference, so there is no melee through floors.
+- Line of sight against walls and floors is required for targeted abilities and auto attacks (new error: "Target not in line of sight", shown on the action bar).
+- Rings, hazards, cleaves and AoE hit only their own floor.
+- Aggro across floors needs sight; leash is 3D.
+- Enemies ignore targets they can neither reach nor see, and evade if nobody is left.
+
+### AI
+- Goals are 3D.
+- Ranged spots are searched for sight of the enemy and of the healer.
+- Ranged DPS move back into the healer's sight before casting.
+- Healers move instead of smiting when the tank is out of sight.
+- Result: the Warrens rose from 97% to 99% wins and the Ashen Spire is at 97% (98% before), with line of sight now enforced.
+
+### Environments and tools
+- **Cavern Traverse**, an original graybox test dungeon: winding passage, fork and dead end, ramp to a high walkway, rope bridge over an underpass, a gallery stacked above it, an 8 m one-way drop into the Magma Basin, narrow tunnel, lava pit, fire vent, unreachable perch.
+- The renderer builds floors, rock, decks, ramps, stairs, walls that follow ramps, drop strips and lava from the simulation's `Nav`.
+- Camera: lowers its pitch under bridges and low ceilings, and hides your own model when pulled within 2 m.
+- Navigation debug overlay (**N**; **Shift+N** for walls and walk areas): surfaces by height with labels, portals, drops, every companion's path / waypoint / goal, unreachable goals, stuck actors.
+- New flags: `--nav-debug`, `--zoom D`.
+
 ## 0.3 — combat UX, controls and gameplay polish
 
 "Make the game better to play before making it bigger." No new dungeons,
