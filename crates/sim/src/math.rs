@@ -1,4 +1,6 @@
-//! Minimal 2D vector on the ground plane (x, z). The sim never needs height.
+//! Minimal vectors. `V2` is a point/direction on the horizontal plane (x, z),
+//! used for steering, facing and footprints; `V3` adds the elevation `y` and is
+//! used wherever height matters (world positions, goals, line of sight).
 
 use serde::{Deserialize, Serialize};
 use std::ops::{Add, AddAssign, Mul, Neg, Sub};
@@ -98,5 +100,41 @@ impl Neg for V2 {
     type Output = V2;
     fn neg(self) -> V2 {
         V2::new(-self.x, -self.z)
+    }
+}
+
+/// A world position: horizontal `x`/`z` plus elevation `y` (metres, up).
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub struct V3 {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+}
+
+impl V3 {
+    pub const fn new(x: f32, y: f32, z: f32) -> Self {
+        V3 { x, y, z }
+    }
+
+    /// Horizontal point `p` at elevation `y`.
+    pub const fn at(p: V2, y: f32) -> Self {
+        V3 { x: p.x, y, z: p.z }
+    }
+
+    /// Horizontal component.
+    pub const fn xz(self) -> V2 {
+        V2 {
+            x: self.x,
+            z: self.z,
+        }
+    }
+
+    pub fn dist(self, o: V3) -> f32 {
+        let (dx, dy, dz) = (self.x - o.x, self.y - o.y, self.z - o.z);
+        (dx * dx + dy * dy + dz * dz).sqrt()
+    }
+
+    pub fn is_finite(self) -> bool {
+        self.x.is_finite() && self.y.is_finite() && self.z.is_finite()
     }
 }
