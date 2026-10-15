@@ -1,0 +1,117 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 184.5 122.5" width="900" height="598" font-family="sans-serif">
+<rect x="0" y="0" width="184.5" height="122.5" fill="#14110f"/>
+<polygon points="89.50,59.50 97.50,59.50 97.50,51.50 89.50,51.50" fill="#c4420f" opacity="0.85"/>
+<polygon points="35.00,62.50 46.50,62.50 46.50,48.50 35.00,48.50" fill="#c4420f" opacity="0.85"/>
+<polygon points="68.50,63.00 68.50,48.00 65.00,44.50 50.00,44.50 46.50,48.00 46.50,63.00 50.00,66.50 65.00,66.50" fill="rgb(200,90,60)" stroke="#2a2420" stroke-width="0.25"><title>Hall of Bellows (y -5.5)</title></polygon>
+<polygon points="35.00,63.00 35.00,48.00 29.00,42.00 14.00,42.00 8.00,48.00 8.00,63.00 14.00,69.00 29.00,69.00" fill="rgb(200,90,60)" stroke="#2a2420" stroke-width="0.25"><title>Molten Sanctum (y -5.5)</title></polygon>
+<polygon points="50.50,98.50 64.50,98.50 64.50,84.50 50.50,84.50" fill="rgb(200,90,60)" stroke="#2a2420" stroke-width="0.25"><title>Ash Closet (y -5.5)</title></polygon>
+<polygon points="33.50,58.50 48.00,58.50 48.00,52.50 33.50,52.50" fill="rgb(200,90,60)" stroke="#ffe08a" stroke-width="0.25" stroke-dasharray="1,0.6"><title>Hall of Bellows - Molten Sanctum bridge (y -5.5)</title></polygon>
+<polygon points="55.25,86.00 59.75,86.00 59.75,65.00 55.25,65.00" fill="rgb(200,90,60)" stroke="#2a2420" stroke-width="0.25"><title>Hall of Bellows - Ash Closet passage (y -5.5)</title></polygon>
+<polygon points="141.00,27.50 141.00,11.50 137.50,8.00 121.50,8.00 118.00,11.50 118.00,27.50 121.50,31.00 137.50,31.00" fill="rgb(165,111,113)" stroke="#2a2420" stroke-width="0.25"><title>Anvil Court (y -2.5)</title></polygon>
+<polygon points="121.50,63.50 137.50,63.50 137.50,47.50 121.50,47.50" fill="rgb(165,111,113)" stroke="#2a2420" stroke-width="0.25"><title>Bellows Room (y -2.5)</title></polygon>
+<polygon points="81.50,67.50 89.50,67.50 89.50,43.50 81.50,43.50" fill="rgb(165,111,113)" stroke="#2a2420" stroke-width="0.25"><title>Spill Chamber (west) (y -2.5)</title></polygon>
+<polygon points="97.50,67.50 105.50,67.50 105.50,43.50 97.50,43.50" fill="rgb(165,111,113)" stroke="#2a2420" stroke-width="0.25"><title>Spill Chamber (east) (y -2.5)</title></polygon>
+<polygon points="88.00,51.50 99.00,51.50 99.00,43.50 88.00,43.50" fill="rgb(165,111,113)" stroke="#2a2420" stroke-width="0.25"><title>Spill Chamber (north) (y -2.5)</title></polygon>
+<polygon points="88.00,67.50 99.00,67.50 99.00,59.50 88.00,59.50" fill="rgb(165,111,113)" stroke="#2a2420" stroke-width="0.25"><title>Spill Chamber (south) (y -2.5)</title></polygon>
+<polygon points="127.00,49.00 132.00,49.00 132.00,29.50 127.00,29.50" fill="rgb(165,111,113)" stroke="#2a2420" stroke-width="0.25"><title>Anvil Court - Bellows Room passage (y -2.5)</title></polygon>
+<polygon points="104.00,58.00 123.00,58.00 123.00,53.00 104.00,53.00" fill="rgb(165,111,113)" stroke="#2a2420" stroke-width="0.25"><title>Bellows Room - Spill Chamber passage (y -2.5)</title></polygon>
+<polygon points="67.00,58.50 83.00,58.50 83.00,52.50 67.00,52.50" fill="rgb(182,100,86)" stroke="#2a2420" stroke-width="0.25"><title>Spill Chamber - Hall of Bellows stair (y -5.5 to -2.5)</title></polygon>
+<polygon points="121.50,99.50 137.50,99.50 137.50,83.50 121.50,83.50" fill="rgb(154,118,131)" stroke="#2a2420" stroke-width="0.25"><title>Charred Vault (y -1.5)</title></polygon>
+<polygon points="127.00,85.00 132.00,85.00 132.00,62.00 127.00,62.00" fill="rgb(160,115,122)" stroke="#2a2420" stroke-width="0.25"><title>Charred Vault - Bellows Room ramp (y -2.5 to -1.5)</title></polygon>
+<polygon points="156.50,100.50 174.50,100.50 174.50,82.50 156.50,82.50" fill="rgb(148,122,140)" stroke="#2a2420" stroke-width="0.25"><title>Cinder Nook (y -1.0)</title></polygon>
+<polygon points="136.00,94.00 158.00,94.00 158.00,89.00 136.00,89.00" fill="rgb(151,120,135)" stroke="#2a2420" stroke-width="0.25"><title>Cinder Nook - Charred Vault ramp (y -1.5 to -1.0)</title></polygon>
+<polygon points="158.00,63.00 173.00,63.00 173.00,48.00 158.00,48.00" fill="rgb(137,129,158)" stroke="#2a2420" stroke-width="0.25"><title>Emberwatch Door (y 0.0)</title></polygon>
+<polygon points="176.50,27.00 176.50,12.00 173.00,8.50 158.00,8.50 154.50,12.00 154.50,27.00 158.00,30.50 173.00,30.50" fill="rgb(137,129,158)" stroke="#2a2420" stroke-width="0.25"><title>Furnace Hall (y 0.0)</title></polygon>
+<polygon points="162.50,49.50 168.50,49.50 168.50,29.00 162.50,29.00" fill="rgb(137,129,158)" stroke="#2a2420" stroke-width="0.25"><title>Emberwatch Door - Furnace Hall passage (y 0.0)</title></polygon>
+<polygon points="139.50,22.25 156.00,22.25 156.00,16.75 139.50,16.75" fill="rgb(151,120,135)" stroke="#2a2420" stroke-width="0.25"><title>Furnace Hall - Anvil Court ramp (y -2.5 to 0.0)</title></polygon>
+<polygon points="163.25,84.00 167.75,84.00 167.75,61.50 163.25,61.50" fill="rgb(142,125,149)" stroke="#2a2420" stroke-width="0.25"><title>Emberwatch Door - Cinder Nook stair (y -1.0 to 0.0)</title></polygon>
+<polygon points="88.50,24.50 98.50,24.50 98.50,14.50 88.50,14.50" fill="rgb(120,140,185)" stroke="#2a2420" stroke-width="0.25"><title>Flue Overlook (y 1.5)</title></polygon>
+<polygon points="97.00,21.75 119.50,21.75 119.50,17.25 97.00,17.25" fill="rgb(142,125,149)" stroke="#2a2420" stroke-width="0.25"><title>Anvil Court - Flue Overlook ramp (y -2.5 to 1.5)</title></polygon>
+<polygon points="91.50,43.50 95.50,43.50 95.50,23.00 91.50,23.00" fill="rgb(120,140,185)" stroke="#2a2420" stroke-width="0.25"><title>Flue Overlook - Spill Chamber ledge (y 1.5)</title></polygon>
+<circle cx="175.10" cy="45.90" r="1.10" fill="#4a403a"/>
+<circle cx="155.70" cy="45.70" r="1.30" fill="#4a403a"/>
+<circle cx="155.60" cy="65.40" r="1.40" fill="#4a403a"/>
+<circle cx="175.10" cy="65.10" r="1.10" fill="#4a403a"/>
+<circle cx="178.80" cy="6.20" r="1.30" fill="#4a403a"/>
+<circle cx="152.10" cy="6.10" r="1.40" fill="#4a403a"/>
+<circle cx="152.40" cy="32.60" r="1.10" fill="#4a403a"/>
+<circle cx="178.60" cy="32.60" r="1.10" fill="#4a403a"/>
+<circle cx="143.40" cy="5.60" r="1.40" fill="#4a403a"/>
+<circle cx="115.90" cy="5.90" r="1.10" fill="#4a403a"/>
+<circle cx="115.90" cy="33.10" r="1.10" fill="#4a403a"/>
+<circle cx="143.30" cy="33.30" r="1.30" fill="#4a403a"/>
+<circle cx="139.60" cy="45.40" r="1.10" fill="#4a403a"/>
+<circle cx="119.40" cy="45.40" r="1.10" fill="#4a403a"/>
+<circle cx="119.20" cy="65.80" r="1.30" fill="#4a403a"/>
+<circle cx="139.90" cy="65.90" r="1.40" fill="#4a403a"/>
+<circle cx="93.50" cy="55.50" r="1.00" fill="#4a403a"/>
+<circle cx="107.60" cy="41.40" r="1.10" fill="#4a403a"/>
+<circle cx="79.20" cy="41.20" r="1.30" fill="#4a403a"/>
+<circle cx="79.10" cy="69.90" r="1.40" fill="#4a403a"/>
+<circle cx="107.60" cy="69.60" r="1.10" fill="#4a403a"/>
+<circle cx="70.80" cy="42.20" r="1.30" fill="#4a403a"/>
+<circle cx="44.10" cy="42.10" r="1.40" fill="#4a403a"/>
+<circle cx="44.40" cy="68.60" r="1.10" fill="#4a403a"/>
+<circle cx="70.60" cy="68.60" r="1.10" fill="#4a403a"/>
+<circle cx="37.40" cy="39.60" r="1.40" fill="#4a403a"/>
+<circle cx="5.90" cy="39.90" r="1.10" fill="#4a403a"/>
+<circle cx="5.90" cy="71.10" r="1.10" fill="#4a403a"/>
+<circle cx="37.30" cy="71.30" r="1.30" fill="#4a403a"/>
+<circle cx="176.60" cy="80.40" r="1.10" fill="#4a403a"/>
+<circle cx="154.40" cy="80.40" r="1.10" fill="#4a403a"/>
+<circle cx="154.20" cy="102.80" r="1.30" fill="#4a403a"/>
+<circle cx="176.90" cy="102.90" r="1.40" fill="#4a403a"/>
+<circle cx="139.60" cy="81.40" r="1.10" fill="#4a403a"/>
+<circle cx="119.20" cy="81.20" r="1.30" fill="#4a403a"/>
+<circle cx="119.10" cy="101.90" r="1.40" fill="#4a403a"/>
+<circle cx="139.60" cy="101.60" r="1.10" fill="#4a403a"/>
+<circle cx="66.80" cy="82.20" r="1.30" fill="#4a403a"/>
+<circle cx="48.10" cy="82.10" r="1.40" fill="#4a403a"/>
+<circle cx="48.40" cy="100.60" r="1.10" fill="#4a403a"/>
+<circle cx="66.60" cy="100.60" r="1.10" fill="#4a403a"/>
+<circle cx="100.90" cy="12.10" r="1.40" fill="#4a403a"/>
+<circle cx="86.40" cy="12.40" r="1.10" fill="#4a403a"/>
+<circle cx="86.40" cy="26.60" r="1.10" fill="#4a403a"/>
+<circle cx="100.80" cy="26.80" r="1.30" fill="#4a403a"/>
+<circle cx="40.75" cy="50.00" r="1.00" fill="#4a403a"/>
+<circle cx="40.75" cy="61.00" r="1.00" fill="#4a403a"/>
+<line x1="93.50" y1="42.70" x2="93.50" y2="44.30" stroke="#ffd23f" stroke-width="1.2"/><circle cx="93.50" cy="44.30" r="1.2" fill="#ffd23f"/>
+<polyline points="165.50,55.50 165.50,19.50 129.50,19.50 129.50,55.50 93.50,55.50 57.50,55.50 21.50,55.50" fill="none" stroke="#7fe0ff" stroke-width="0.8" stroke-dasharray="2,1.5" opacity="0.8"/>
+<text x="165.50" y="50.50" font-size="2.2" fill="#f4ede4" text-anchor="middle">Emberwatch Door (+0.0)</text>
+<text x="165.50" y="11.00" font-size="2.2" fill="#f4ede4" text-anchor="middle">Furnace Hall (+0.0)</text>
+<text x="129.50" y="10.50" font-size="2.2" fill="#f4ede4" text-anchor="middle">Anvil Court (-2.5)</text>
+<text x="129.50" y="50.00" font-size="2.2" fill="#f4ede4" text-anchor="middle">Bellows Room (-2.5)</text>
+<text x="93.50" y="46.00" font-size="2.2" fill="#f4ede4" text-anchor="middle">Spill Chamber (-2.5)</text>
+<text x="57.50" y="47.00" font-size="2.2" fill="#f4ede4" text-anchor="middle">Hall of Bellows (-5.5)</text>
+<text x="21.50" y="44.50" font-size="2.2" fill="#f4ede4" text-anchor="middle">Molten Sanctum (-5.5)</text>
+<text x="165.50" y="85.00" font-size="2.2" fill="#f4ede4" text-anchor="middle">Cinder Nook (-1.0)</text>
+<text x="129.50" y="86.00" font-size="2.2" fill="#f4ede4" text-anchor="middle">Charred Vault (-1.5)</text>
+<text x="57.50" y="87.00" font-size="2.2" fill="#f4ede4" text-anchor="middle">Ash Closet (-5.5)</text>
+<text x="93.50" y="17.00" font-size="2.2" fill="#f4ede4" text-anchor="middle">Flue Overlook (+1.5)</text>
+<circle cx="166.70" cy="18.00" r="0.8" fill="#f2f2f2" stroke="#000" stroke-width="0.3"><title>Emberkin Raiders</title></circle>
+<circle cx="164.30" cy="18.00" r="0.8" fill="#f2f2f2" stroke="#000" stroke-width="0.3"><title>Emberkin Raiders</title></circle>
+<circle cx="165.50" cy="14.40" r="0.8" fill="#f2f2f2" stroke="#000" stroke-width="0.3"><title>Emberkin Raiders</title></circle>
+<circle cx="165.50" cy="14.40" r="0.8" fill="#f2f2f2" stroke="#000" stroke-width="0.3"><title>Emberkin Raiders</title></circle>
+<circle cx="127.85" cy="19.50" r="1.1" fill="#ffcc33" stroke="#000" stroke-width="0.3"><title>Pyrecaller's Guard</title></circle>
+<circle cx="127.85" cy="19.50" r="0.8" fill="#f2f2f2" stroke="#000" stroke-width="0.3"><title>Pyrecaller's Guard</title></circle>
+<circle cx="124.25" cy="19.50" r="1.1" fill="#ffcc33" stroke="#000" stroke-width="0.3"><title>Pyrecaller's Guard</title></circle>
+<circle cx="85.50" cy="55.50" r="1.8" fill="#ff4fd8" stroke="#000" stroke-width="0.3"><title>Forgewarden Hask</title></circle>
+<circle cx="56.00" cy="54.30" r="0.8" fill="#f2f2f2" stroke="#000" stroke-width="0.3"><title>Ash Hound Pack</title></circle>
+<circle cx="56.00" cy="56.70" r="0.8" fill="#f2f2f2" stroke="#000" stroke-width="0.3"><title>Ash Hound Pack</title></circle>
+<circle cx="52.40" cy="55.50" r="0.8" fill="#f2f2f2" stroke="#000" stroke-width="0.3"><title>Ash Hound Pack</title></circle>
+<circle cx="57.50" cy="93.60" r="1.1" fill="#ffcc33" stroke="#55ff88" stroke-width="0.3"><title>Obsidian Sentinel</title></circle>
+<circle cx="19.48" cy="55.50" r="1.8" fill="#ff4fd8" stroke="#000" stroke-width="0.3"><title>Cindermaw, the Furnace Wyrm</title></circle>
+<circle cx="165.50" cy="60.50" r="1.6" fill="#3cff6e"/>
+<text x="2" y="112.5" font-size="2.4" fill="#ddd">The Emberforge Vaults (layout 6) - high 1.5 m</text>
+<rect x="2.0" y="114.5" width="4" height="2.5" fill="rgb(120,140,185)"/>
+<rect x="6.0" y="114.5" width="4" height="2.5" fill="rgb(128,134,171)"/>
+<rect x="10.0" y="114.5" width="4" height="2.5" fill="rgb(137,128,157)"/>
+<rect x="14.0" y="114.5" width="4" height="2.5" fill="rgb(146,123,143)"/>
+<rect x="18.0" y="114.5" width="4" height="2.5" fill="rgb(155,117,129)"/>
+<rect x="22.0" y="114.5" width="4" height="2.5" fill="rgb(164,112,115)"/>
+<rect x="26.0" y="114.5" width="4" height="2.5" fill="rgb(173,106,101)"/>
+<rect x="30.0" y="114.5" width="4" height="2.5" fill="rgb(182,101,87)"/>
+<rect x="34.0" y="114.5" width="4" height="2.5" fill="rgb(191,95,73)"/>
+<rect x="38.0" y="114.5" width="4" height="2.5" fill="rgb(200,90,60)"/>
+<text x="44" y="116.8" font-size="2.2" fill="#ddd">low -5.5 m | green: entrance | white/yellow/pink: trash/elite/boss (green ring: optional) | yellow line: one-way drop | dashed: open deck | blue dashes: main route</text>
+</svg>

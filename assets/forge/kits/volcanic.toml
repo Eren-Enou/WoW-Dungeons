@@ -1,0 +1,559 @@
+# Dungeon Forge kit: Volcanic (original).
+#
+# A theme library for generated dungeons: the Emberkin, a forge-cult of
+# salamander-folk, and the things that crawl out of their furnaces. Numbers are
+# authored for `reference_level`; generated dungeons scale HP and damage to the
+# blueprint's level. Templates use the ordinary dungeon schema (RULES.md).
+#
+# Recipes are reusable encounters: which mobs, where they stand relative to the
+# party's approach (front / back / flank / center), what room they need and
+# which hazards come with them.
+
+[kit]
+id = "volcanic"
+name = "Volcanic"
+reference_level = 5
+
+[palette]
+theme = { floor = [0.22, 0.20, 0.19], wall = [0.29, 0.25, 0.23], light = [1.0, 0.6, 0.35], fog = [0.06, 0.035, 0.03], ambient = [0.5, 0.42, 0.4], rough_walls = true }
+tint_shallow = [0.25, 0.25, 0.28]
+tint_deep = [0.33, 0.19, 0.13]
+light_shallow = [0.6, 0.75, 1.0]
+light_deep = [1.0, 0.5, 0.22]
+decor = ["stalagmite", "pillar", "boulder", "stalagmite"]
+
+[palette.names]
+entrance = ["Ashgate Landing", "Soot Gate", "Emberwatch Door"]
+chamber = ["Smoke Hollow", "Clinker Chamber", "Bellows Room", "Cinder Nook", "Slag Cellar", "Charred Vault", "Tinder Room", "Flue Junction"]
+hall = ["Furnace Hall", "Hall of Bellows", "Ingot Gallery", "Anvil Court", "Quench Hall"]
+arena = ["The Crucible", "Heart of the Forge", "Molten Sanctum"]
+pit = ["Slag Pit", "Pouring Floor", "Spill Chamber"]
+side = ["Toolwright's Cell", "Ash Closet", "Shuttered Kiln", "Coal Bunker"]
+overlook = ["Chimney Ledge", "Flue Overlook", "Watchers' Shelf"]
+
+# ------------------------------------------------------------------ recipes --
+
+[recipes.melee_pack]
+name = "Emberkin Raiders"
+tests = "a straightforward pack: hold threat on several targets, interrupt one caster"
+room = "hall"
+mobs = [
+  { template = "raider", place = "front", count = 2 },
+  { template = "raider", place = "back" },
+  { template = "flamebinder", place = "back" },
+]
+
+[recipes.guarded_caster]
+name = "Pyrecaller's Guard"
+tests = "melee screen a healer-caster: reach it, interrupt or crowd-control its heals"
+room = "hall"
+mobs = [
+  { template = "bulwark", place = "front" },
+  { template = "raider", place = "front" },
+  { template = "pyrecaller", place = "back" },
+]
+
+[recipes.frontal_pack]
+name = "Ash Hound Pack"
+tests = "frontal cleaves: the tank turns them away, everyone else stays behind"
+room = "hall"
+mobs = [
+  { template = "ashhound", place = "front", count = 2 },
+  { template = "shieldwall", place = "back" },
+]
+
+[recipes.interrupt_pack]
+name = "Searer Circle"
+tests = "two party-wide pulses: assign interrupts"
+room = "hall"
+mobs = [
+  { template = "raider", place = "front" },
+  { template = "searer", place = "back", count = 2 },
+]
+
+[recipes.hazard_pack]
+name = "Hulk and Sparks"
+tests = "fight beside a lava pit while vents pulse on the approach"
+room = "pit"
+mobs = [
+  { template = "magma_hulk", place = "center" },
+  { template = "spark", place = "flank", count = 2 },
+]
+hazards = [
+  { name = "Fire Vent", place = "approach", radius = 2.5, damage = 120.0, school = "fire", on = 2.0, off = 3.0 },
+]
+
+[recipes.optional_elite]
+name = "Obsidian Sentinel"
+tests = "a single tough elite with a frontal slam, off the main route"
+room = "chamber"
+mobs = [
+  { template = "sentinel", place = "center" },
+]
+
+[recipes.forgewarden]
+name = "Forgewarden Hask"
+tests = "summoned adds and rings beside a lava pit"
+room = "pit"
+mobs = [
+  { template = "forgewarden", place = "center" },
+]
+
+[recipes.final_cindermaw]
+name = "Cindermaw"
+tests = "multi-phase final boss: frontal breath, interruptible spit, rings and adds, then a pulse race"
+room = "arena"
+mobs = [
+  { template = "cindermaw", place = "center" },
+]
+
+# ---------------------------------------------------------------- templates --
+
+[templates.raider]
+name = "Emberkin Raider"
+rank = "trash"
+level = 5
+hp = 1000.0
+melee_damage = 70.0
+attack_interval = 2.0
+aggro_radius = 10.0
+speed = 6.5
+radius = 0.6
+armor = 90.0
+
+[templates.flamebinder]
+name = "Emberkin Flamebinder"
+rank = "trash"
+level = 5
+hp = 800.0
+melee_damage = 30.0
+attack_interval = 2.0
+aggro_radius = 10.0
+speed = 6.0
+radius = 0.6
+
+[[templates.flamebinder.abilities]]
+name = "Binding Flame"       # interruptible bolt
+kind = "bolt"
+interval = 7.0
+initial = 2.0
+cast_time = 1.5
+interruptible = true
+target = "random"
+damage = 170.0
+school = "fire"
+
+[templates.bulwark]
+name = "Emberkin Bulwark"
+rank = "elite"
+level = 5
+hp = 3000.0
+melee_damage = 100.0
+attack_interval = 2.4
+aggro_radius = 11.0
+speed = 6.0
+radius = 1.0
+armor = 150.0
+parry = 0.05
+
+[[templates.bulwark.abilities]]
+name = "Cinder Sweep"
+kind = "cleave"
+interval = 9.0
+initial = 5.0
+damage = 110.0
+radius = 5.0
+
+[templates.pyrecaller]
+name = "Emberkin Pyrecaller"
+rank = "elite"
+level = 5
+hp = 2100.0
+melee_damage = 36.0
+attack_interval = 2.2
+aggro_radius = 11.0
+speed = 6.0
+radius = 0.7
+
+[[templates.pyrecaller.abilities]]
+name = "Kindle Wounds"       # heals the most hurt Emberkin: interrupt it
+kind = "heal_ally"
+interval = 10.0
+initial = 5.0
+cast_time = 2.0
+interruptible = true
+amount = 650.0
+
+[[templates.pyrecaller.abilities]]
+name = "Pyre Bolt"
+kind = "bolt"
+interval = 6.0
+initial = 3.0
+cast_time = 2.0
+interruptible = true
+target = "random"
+damage = 190.0
+school = "fire"
+
+[templates.ashhound]
+name = "Ash Hound"
+rank = "trash"
+level = 5
+hp = 1250.0
+melee_damage = 70.0
+attack_interval = 1.8
+aggro_radius = 11.0
+speed = 7.0
+radius = 0.8
+armor = 100.0
+
+[[templates.ashhound.abilities]]
+name = "Scorching Maw"       # frontal
+kind = "cleave"
+interval = 6.0
+initial = 3.0
+damage = 160.0
+radius = 4.5
+frontal = true
+
+[templates.shieldwall]
+name = "Emberkin Shieldwall"
+rank = "trash"
+level = 5
+hp = 1500.0
+melee_damage = 75.0
+attack_interval = 2.0
+aggro_radius = 10.0
+speed = 6.0
+radius = 0.8
+armor = 180.0
+block = 0.1
+
+[[templates.shieldwall.abilities]]
+name = "Shield Bash"         # frontal
+kind = "cleave"
+interval = 7.0
+initial = 4.0
+damage = 140.0
+radius = 4.0
+frontal = true
+
+[templates.searer]
+name = "Emberkin Searer"
+rank = "elite"
+level = 5
+hp = 2200.0
+melee_damage = 40.0
+attack_interval = 2.2
+aggro_radius = 11.0
+speed = 6.0
+radius = 0.7
+
+[[templates.searer.abilities]]
+name = "Searing Wave"        # party-wide: interrupt it
+kind = "pulse"
+interval = 12.0
+initial = 4.0
+cast_time = 2.5
+interruptible = true
+damage = 150.0
+school = "fire"
+
+[templates.magma_hulk]
+name = "Magma Hulk"
+rank = "elite"
+level = 6
+hp = 4800.0
+melee_damage = 115.0
+attack_interval = 2.3
+aggro_radius = 11.0
+speed = 6.0
+radius = 1.3
+armor = 180.0
+
+[[templates.magma_hulk.abilities]]
+name = "Slag Fist"           # frontal
+kind = "cleave"
+interval = 8.0
+initial = 5.0
+damage = 220.0
+radius = 5.0
+frontal = true
+
+[templates.spark]
+name = "Cinder Spark"
+rank = "trash"
+level = 5
+hp = 620.0
+melee_damage = 25.0
+attack_interval = 2.0
+aggro_radius = 11.0
+speed = 7.0
+radius = 0.5
+
+[[templates.spark.abilities]]
+name = "Spit Ember"
+kind = "bolt"
+interval = 4.5
+initial = 1.5
+cast_time = 1.2
+target = "random"
+damage = 100.0
+school = "fire"
+
+[templates.sentinel]
+name = "Obsidian Sentinel"
+rank = "elite"
+level = 6
+hp = 6000.0
+melee_damage = 140.0
+attack_interval = 2.6
+aggro_radius = 10.0
+speed = 5.5
+radius = 1.4
+armor = 260.0
+
+[[templates.sentinel.abilities]]
+name = "Glassfall Slam"      # frontal
+kind = "cleave"
+interval = 9.0
+initial = 5.0
+damage = 260.0
+radius = 5.5
+frontal = true
+
+[[templates.sentinel.abilities]]
+name = "Shard Burst"
+kind = "ring"
+interval = 12.0
+initial = 6.0
+delay = 2.5
+radius = 3.5
+damage = 300.0
+school = "arcane"
+target = "random_non_tank"
+
+[templates.cinderling]
+name = "Cinderling"
+rank = "trash"
+level = 5
+hp = 450.0
+melee_damage = 40.0
+attack_interval = 1.6
+aggro_radius = 25.0
+speed = 7.0
+radius = 0.5
+
+[templates.forgewarden]
+name = "Forgewarden Hask"
+rank = "boss"
+level = 6
+hp = 19000.0
+melee_damage = 200.0
+attack_interval = 2.0
+attack_range = 2.5
+aggro_radius = 13.0
+speed = 6.5
+radius = 1.7
+armor = 160.0
+resist = 10.0
+parry = 0.08
+enrage_seconds = 300.0
+
+[[templates.forgewarden.phases]]
+hp_below = 0.5
+damage_multiplier = 1.15
+announce = "Hask pulls the sluice chain! Sparks rain and cinderlings crawl from the pit!"
+summon = [{ template = "cinderling", count = 2 }]
+
+[[templates.forgewarden.abilities]]
+name = "Hammerfall"          # frontal: the tank turns him away
+kind = "cleave"
+interval = 9.0
+initial = 6.0
+damage = 250.0
+radius = 6.0
+frontal = true
+
+[[templates.forgewarden.abilities]]
+name = "Branding Iron"       # dispellable burn on a non-tank
+kind = "debuff"
+interval = 8.0
+initial = 4.0
+target = "random_non_tank"
+aura = { name = "Branding Iron", effect = "dot", value = 40.0, duration = 12.0, max_stacks = 3, dispellable = true, school = "fire" }
+
+[[templates.forgewarden.abilities]]
+name = "Call Cinderlings"
+kind = "summon"
+interval = 22.0
+initial = 6.0
+template = "cinderling"
+count = 2
+phases = [2]
+
+[[templates.forgewarden.abilities]]
+name = "Spark Shower"        # phase 2: spread out round the pit
+kind = "ring"
+interval = 11.0
+initial = 3.0
+delay = 2.5
+radius = 4.0
+damage = 420.0
+school = "fire"
+target = "random"
+count = 2
+phases = [2]
+
+[templates.magma_spawn]
+name = "Magma Spawn"
+rank = "trash"
+level = 6
+hp = 850.0
+melee_damage = 65.0
+attack_interval = 1.8
+aggro_radius = 25.0
+speed = 6.5
+radius = 0.7
+
+[templates.cindermaw]
+name = "Cindermaw, the Furnace Wyrm"
+rank = "boss"
+level = 7
+hp = 30000.0
+melee_damage = 245.0
+attack_interval = 2.0
+attack_range = 3.0
+aggro_radius = 15.0
+speed = 6.0
+radius = 2.2
+armor = 200.0
+resist = 15.0
+parry = 0.06
+enrage_seconds = 420.0
+
+[[templates.cindermaw.phases]]
+hp_below = 0.65
+announce = "Cindermaw beats its wings - cinders rain and spawn crawl from the vents!"
+
+[[templates.cindermaw.phases]]
+hp_below = 0.25
+damage_multiplier = 1.2
+announce = "Cindermaw roars from the furnace of its chest - brace for every roar!"
+
+[[templates.cindermaw.abilities]]
+name = "Furnace Breath"      # frontal: only the tank in front
+kind = "cleave"
+interval = 8.0
+initial = 5.0
+damage = 290.0
+radius = 7.0
+frontal = true
+
+[[templates.cindermaw.abilities]]
+name = "Molten Spit"         # interruptible, on a non-tank
+kind = "bolt"
+interval = 10.0
+initial = 6.0
+cast_time = 2.0
+interruptible = true
+target = "random_non_tank"
+damage = 400.0
+school = "fire"
+phases = [1, 2]
+
+[[templates.cindermaw.abilities]]
+name = "Wake the Vents"
+kind = "summon"
+interval = 25.0
+initial = 1.0
+template = "magma_spawn"
+count = 2
+phases = [2, 3]
+
+[[templates.cindermaw.abilities]]
+name = "Rain of Cinders"     # two rings: spread
+kind = "ring"
+interval = 9.0
+initial = 3.0
+delay = 2.5
+radius = 5.0
+damage = 480.0
+school = "fire"
+target = "random"
+count = 2
+phases = [2, 3]
+
+[[templates.cindermaw.abilities]]
+name = "Furnace Roar"        # phase 3: uninterruptible party damage
+kind = "pulse"
+interval = 10.0
+initial = 3.0
+cast_time = 2.0
+damage = 200.0
+school = "fire"
+phases = [3]
+
+# --------------------------------------------------------------------- loot --
+# `source` here is a role: final_boss, boss (first required non-final boss),
+# optional (first optional encounter) or pack (first required pack).
+
+[[loot]]
+id = "raider_wraps"
+name = "Raider's Ashen Wraps"
+slot = "legs"
+rarity = "common"
+role = "melee"
+stats = { stamina = 8, power = 4 }
+weight = 2
+source = "pack"
+
+[[loot]]
+id = "sentinel_shard"
+name = "Sentinel's Obsidian Shard"
+slot = "trinket"
+rarity = "uncommon"
+role = "any"
+stats = { stamina = 10, armor = 50 }
+weight = 2
+source = "optional"
+
+[[loot]]
+id = "hask_hammer"
+name = "Hask's Forging Hammer"
+slot = "main_hand"
+rarity = "rare"
+role = "melee"
+stats = { power = 9, crit = 1.0, stamina = 6 }
+weight = 2
+source = "boss"
+
+[[loot]]
+id = "branding_hood"
+name = "Brander's Hood"
+slot = "head"
+rarity = "uncommon"
+role = "caster"
+stats = { power = 6, hit = 1.0 }
+weight = 2
+source = "boss"
+
+[[loot]]
+id = "wyrmscale_vest"
+name = "Wyrmscale Vest"
+slot = "chest"
+rarity = "rare"
+role = "any"
+stats = { stamina = 16, armor = 90 }
+weight = 2
+source = "final_boss"
+
+[[loot]]
+id = "furnace_heart"
+name = "Furnace Heart"
+slot = "trinket"
+rarity = "rare"
+role = "caster"
+stats = { power = 10, crit = 1.0 }
+weight = 2
+source = "final_boss"

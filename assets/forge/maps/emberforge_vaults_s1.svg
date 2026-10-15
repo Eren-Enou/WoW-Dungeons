@@ -1,0 +1,110 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 181.5 127.5" width="900" height="632" font-family="sans-serif">
+<rect x="0" y="0" width="181.5" height="127.5" fill="#14110f"/>
+<polygon points="83.50,62.00 92.50,62.00 92.50,53.00 83.50,53.00" fill="#c4420f" opacity="0.85"/>
+<polygon points="99.50,64.25 112.00,64.25 112.00,50.75 99.50,50.75" fill="#c4420f" opacity="0.85"/>
+<polygon points="76.50,69.00 83.50,69.00 83.50,46.00 76.50,46.00" fill="rgb(200,90,60)" stroke="#2a2420" stroke-width="0.25"><title>Slag Pit (west) (y -6.0)</title></polygon>
+<polygon points="92.50,69.00 99.50,69.00 99.50,46.00 92.50,46.00" fill="rgb(200,90,60)" stroke="#2a2420" stroke-width="0.25"><title>Slag Pit (east) (y -6.0)</title></polygon>
+<polygon points="82.00,53.00 94.00,53.00 94.00,46.00 82.00,46.00" fill="rgb(200,90,60)" stroke="#2a2420" stroke-width="0.25"><title>Slag Pit (north) (y -6.0)</title></polygon>
+<polygon points="82.00,69.00 94.00,69.00 94.00,62.00 82.00,62.00" fill="rgb(200,90,60)" stroke="#2a2420" stroke-width="0.25"><title>Slag Pit (south) (y -6.0)</title></polygon>
+<polygon points="136.00,66.00 136.00,49.00 132.50,45.50 115.50,45.50 112.00,49.00 112.00,66.00 115.50,69.50 132.50,69.50" fill="rgb(200,90,60)" stroke="#2a2420" stroke-width="0.25"><title>Hall of Bellows (y -6.0)</title></polygon>
+<polygon points="115.00,30.50 133.00,30.50 133.00,12.50 115.00,12.50" fill="rgb(200,90,60)" stroke="#2a2420" stroke-width="0.25"><title>Smoke Hollow (y -6.0)</title></polygon>
+<polygon points="173.50,29.00 173.50,14.00 167.50,8.00 152.50,8.00 146.50,14.00 146.50,29.00 152.50,35.00 167.50,35.00" fill="rgb(200,90,60)" stroke="#2a2420" stroke-width="0.25"><title>The Crucible (y -6.0)</title></polygon>
+<polygon points="116.00,101.50 132.00,101.50 132.00,85.50 116.00,85.50" fill="rgb(200,90,60)" stroke="#2a2420" stroke-width="0.25"><title>Coal Bunker (y -6.0)</title></polygon>
+<polygon points="98.00,60.25 113.50,60.25 113.50,54.75 98.00,54.75" fill="rgb(200,90,60)" stroke="#ffe08a" stroke-width="0.25" stroke-dasharray="1,0.6"><title>Slag Pit - Hall of Bellows bridge (y -6.0)</title></polygon>
+<polygon points="121.50,47.00 126.50,47.00 126.50,29.00 121.50,29.00" fill="rgb(200,90,60)" stroke="#2a2420" stroke-width="0.25"><title>Hall of Bellows - Smoke Hollow passage (y -6.0)</title></polygon>
+<polygon points="131.50,24.50 148.00,24.50 148.00,18.50 131.50,18.50" fill="rgb(200,90,60)" stroke="#2a2420" stroke-width="0.25"><title>Smoke Hollow - The Crucible passage (y -6.0)</title></polygon>
+<polygon points="121.75,87.00 126.25,87.00 126.25,68.00 121.75,68.00" fill="rgb(200,90,60)" stroke="#2a2420" stroke-width="0.25"><title>Hall of Bellows - Coal Bunker passage (y -6.0)</title></polygon>
+<polygon points="79.00,102.50 97.00,102.50 97.00,84.50 79.00,84.50" fill="rgb(182,100,86)" stroke="#2a2420" stroke-width="0.25"><title>Slag Cellar (y -4.5)</title></polygon>
+<polygon points="85.50,86.00 90.50,86.00 90.50,67.50 85.50,67.50" fill="rgb(191,95,73)" stroke="#2a2420" stroke-width="0.25"><title>Slag Cellar - Slag Pit ramp (y -6.0 to -4.5)</title></polygon>
+<polygon points="64.00,102.00 64.00,85.00 60.50,81.50 43.50,81.50 40.00,85.00 40.00,102.00 43.50,105.50 60.50,105.50" fill="rgb(165,111,113)" stroke="#2a2420" stroke-width="0.25"><title>Furnace Hall (y -3.0)</title></polygon>
+<polygon points="64.50,66.00 64.50,49.00 60.50,45.00 43.50,45.00 39.50,49.00 39.50,66.00 43.50,70.00 60.50,70.00" fill="rgb(165,111,113)" stroke="#2a2420" stroke-width="0.25"><title>Quench Hall (y -3.0)</title></polygon>
+<polygon points="51.50,83.00 57.50,68.50 52.50,68.50 46.50,83.00" fill="rgb(165,111,113)" stroke="#2a2420" stroke-width="0.25"><title>Furnace Hall - Quench Hall slant (y -3.0)</title></polygon>
+<polygon points="63.00,60.25 78.00,60.25 78.00,54.75 63.00,54.75" fill="rgb(182,100,86)" stroke="#2a2420" stroke-width="0.25"><title>Quench Hall - Slag Pit ramp (y -6.0 to -3.0)</title></polygon>
+<polygon points="62.50,96.00 80.50,96.00 80.50,91.00 62.50,91.00" fill="rgb(174,106,100)" stroke="#2a2420" stroke-width="0.25"><title>Furnace Hall - Slag Cellar ramp (y -4.5 to -3.0)</title></polygon>
+<polygon points="8.00,101.50 24.00,101.50 24.00,85.50 8.00,85.50" fill="rgb(131,132,167)" stroke="#2a2420" stroke-width="0.25"><title>Soot Gate (y 0.0)</title></polygon>
+<polygon points="22.50,96.00 41.50,96.00 41.50,91.00 22.50,91.00" fill="rgb(148,122,140)" stroke="#2a2420" stroke-width="0.25"><title>Soot Gate - Furnace Hall stair (y -3.0 to 0.0)</title></polygon>
+<polygon points="11.00,62.50 21.00,62.50 21.00,52.50 11.00,52.50" fill="rgb(120,140,185)" stroke="#2a2420" stroke-width="0.25"><title>Chimney Ledge (y 1.0)</title></polygon>
+<polygon points="13.75,87.00 18.25,87.00 18.25,61.00 13.75,61.00" fill="rgb(125,136,176)" stroke="#2a2420" stroke-width="0.25"><title>Soot Gate - Chimney Ledge ramp (y 0.0 to 1.0)</title></polygon>
+<polygon points="19.50,59.50 39.50,59.50 39.50,55.50 19.50,55.50" fill="rgb(120,140,185)" stroke="#2a2420" stroke-width="0.25"><title>Chimney Ledge - Quench Hall ledge (y 1.0)</title></polygon>
+<circle cx="26.10" cy="83.40" r="1.10" fill="#4a403a"/>
+<circle cx="5.70" cy="83.20" r="1.30" fill="#4a403a"/>
+<circle cx="5.60" cy="103.90" r="1.40" fill="#4a403a"/>
+<circle cx="26.10" cy="103.60" r="1.10" fill="#4a403a"/>
+<circle cx="66.30" cy="79.20" r="1.30" fill="#4a403a"/>
+<circle cx="37.60" cy="79.10" r="1.40" fill="#4a403a"/>
+<circle cx="37.90" cy="107.60" r="1.10" fill="#4a403a"/>
+<circle cx="66.10" cy="107.60" r="1.10" fill="#4a403a"/>
+<circle cx="66.90" cy="42.60" r="1.40" fill="#4a403a"/>
+<circle cx="37.40" cy="42.90" r="1.10" fill="#4a403a"/>
+<circle cx="37.40" cy="72.10" r="1.10" fill="#4a403a"/>
+<circle cx="66.80" cy="72.30" r="1.30" fill="#4a403a"/>
+<circle cx="88.00" cy="57.50" r="1.10" fill="#4a403a"/>
+<circle cx="101.60" cy="43.90" r="1.10" fill="#4a403a"/>
+<circle cx="74.40" cy="43.90" r="1.10" fill="#4a403a"/>
+<circle cx="74.20" cy="71.30" r="1.30" fill="#4a403a"/>
+<circle cx="101.90" cy="71.40" r="1.40" fill="#4a403a"/>
+<circle cx="138.10" cy="43.40" r="1.10" fill="#4a403a"/>
+<circle cx="109.70" cy="43.20" r="1.30" fill="#4a403a"/>
+<circle cx="109.60" cy="71.90" r="1.40" fill="#4a403a"/>
+<circle cx="138.10" cy="71.60" r="1.10" fill="#4a403a"/>
+<circle cx="135.30" cy="10.20" r="1.30" fill="#4a403a"/>
+<circle cx="112.60" cy="10.10" r="1.40" fill="#4a403a"/>
+<circle cx="112.90" cy="32.60" r="1.10" fill="#4a403a"/>
+<circle cx="135.10" cy="32.60" r="1.10" fill="#4a403a"/>
+<circle cx="175.90" cy="5.60" r="1.40" fill="#4a403a"/>
+<circle cx="144.40" cy="5.90" r="1.10" fill="#4a403a"/>
+<circle cx="144.40" cy="37.10" r="1.10" fill="#4a403a"/>
+<circle cx="175.80" cy="37.30" r="1.30" fill="#4a403a"/>
+<circle cx="99.10" cy="82.40" r="1.10" fill="#4a403a"/>
+<circle cx="76.90" cy="82.40" r="1.10" fill="#4a403a"/>
+<circle cx="76.70" cy="104.80" r="1.30" fill="#4a403a"/>
+<circle cx="99.40" cy="104.90" r="1.40" fill="#4a403a"/>
+<circle cx="134.10" cy="83.40" r="1.10" fill="#4a403a"/>
+<circle cx="113.70" cy="83.20" r="1.30" fill="#4a403a"/>
+<circle cx="113.60" cy="103.90" r="1.40" fill="#4a403a"/>
+<circle cx="134.10" cy="103.60" r="1.10" fill="#4a403a"/>
+<circle cx="23.30" cy="50.20" r="1.30" fill="#4a403a"/>
+<circle cx="8.60" cy="50.10" r="1.40" fill="#4a403a"/>
+<circle cx="8.90" cy="64.60" r="1.10" fill="#4a403a"/>
+<circle cx="23.10" cy="64.60" r="1.10" fill="#4a403a"/>
+<circle cx="105.75" cy="62.75" r="1.00" fill="#4a403a"/>
+<circle cx="105.75" cy="52.25" r="1.00" fill="#4a403a"/>
+<line x1="38.70" y1="57.50" x2="40.30" y2="57.50" stroke="#ffd23f" stroke-width="1.2"/><circle cx="40.30" cy="57.50" r="1.2" fill="#ffd23f"/>
+<polyline points="16.00,93.50 52.00,93.50 52.00,57.50 88.00,57.50 124.00,57.50 124.00,21.50 160.00,21.50" fill="none" stroke="#7fe0ff" stroke-width="0.8" stroke-dasharray="2,1.5" opacity="0.8"/>
+<text x="16.00" y="88.00" font-size="2.2" fill="#f4ede4" text-anchor="middle">Soot Gate (+0.0)</text>
+<text x="52.00" y="84.00" font-size="2.2" fill="#f4ede4" text-anchor="middle">Furnace Hall (-3.0)</text>
+<text x="52.00" y="47.50" font-size="2.2" fill="#f4ede4" text-anchor="middle">Quench Hall (-3.0)</text>
+<text x="88.00" y="48.50" font-size="2.2" fill="#f4ede4" text-anchor="middle">Slag Pit (-6.0)</text>
+<text x="124.00" y="48.00" font-size="2.2" fill="#f4ede4" text-anchor="middle">Hall of Bellows (-6.0)</text>
+<text x="124.00" y="15.00" font-size="2.2" fill="#f4ede4" text-anchor="middle">Smoke Hollow (-6.0)</text>
+<text x="160.00" y="10.50" font-size="2.2" fill="#f4ede4" text-anchor="middle">The Crucible (-6.0)</text>
+<text x="88.00" y="87.00" font-size="2.2" fill="#f4ede4" text-anchor="middle">Slag Cellar (-4.5)</text>
+<text x="124.00" y="88.00" font-size="2.2" fill="#f4ede4" text-anchor="middle">Coal Bunker (-6.0)</text>
+<text x="16.00" y="55.00" font-size="2.2" fill="#f4ede4" text-anchor="middle">Chimney Ledge (+1.0)</text>
+<circle cx="53.80" cy="94.70" r="0.8" fill="#f2f2f2" stroke="#000" stroke-width="0.3"><title>Emberkin Raiders</title></circle>
+<circle cx="53.80" cy="92.30" r="0.8" fill="#f2f2f2" stroke="#000" stroke-width="0.3"><title>Emberkin Raiders</title></circle>
+<circle cx="57.40" cy="93.50" r="0.8" fill="#f2f2f2" stroke="#000" stroke-width="0.3"><title>Emberkin Raiders</title></circle>
+<circle cx="57.40" cy="93.50" r="0.8" fill="#f2f2f2" stroke="#000" stroke-width="0.3"><title>Emberkin Raiders</title></circle>
+<circle cx="52.00" cy="55.55" r="1.1" fill="#ffcc33" stroke="#000" stroke-width="0.3"><title>Pyrecaller's Guard</title></circle>
+<circle cx="52.00" cy="55.55" r="0.8" fill="#f2f2f2" stroke="#000" stroke-width="0.3"><title>Pyrecaller's Guard</title></circle>
+<circle cx="52.00" cy="51.95" r="1.1" fill="#ffcc33" stroke="#000" stroke-width="0.3"><title>Pyrecaller's Guard</title></circle>
+<circle cx="96.00" cy="57.50" r="1.8" fill="#ff4fd8" stroke="#000" stroke-width="0.3"><title>Forgewarden Hask</title></circle>
+<circle cx="125.80" cy="58.70" r="0.8" fill="#f2f2f2" stroke="#000" stroke-width="0.3"><title>Ash Hound Pack</title></circle>
+<circle cx="125.80" cy="56.30" r="0.8" fill="#f2f2f2" stroke="#000" stroke-width="0.3"><title>Ash Hound Pack</title></circle>
+<circle cx="129.40" cy="57.50" r="0.8" fill="#f2f2f2" stroke="#000" stroke-width="0.3"><title>Ash Hound Pack</title></circle>
+<circle cx="124.00" cy="95.90" r="1.1" fill="#ffcc33" stroke="#55ff88" stroke-width="0.3"><title>Obsidian Sentinel</title></circle>
+<circle cx="162.02" cy="21.50" r="1.8" fill="#ff4fd8" stroke="#000" stroke-width="0.3"><title>Cindermaw, the Furnace Wyrm</title></circle>
+<circle cx="10.50" cy="93.50" r="1.6" fill="#3cff6e"/>
+<text x="2" y="117.5" font-size="2.4" fill="#ddd">The Emberforge Vaults - high 1.0 m</text>
+<rect x="2.0" y="119.5" width="4" height="2.5" fill="rgb(120,140,185)"/>
+<rect x="6.0" y="119.5" width="4" height="2.5" fill="rgb(128,134,171)"/>
+<rect x="10.0" y="119.5" width="4" height="2.5" fill="rgb(137,128,157)"/>
+<rect x="14.0" y="119.5" width="4" height="2.5" fill="rgb(146,123,143)"/>
+<rect x="18.0" y="119.5" width="4" height="2.5" fill="rgb(155,117,129)"/>
+<rect x="22.0" y="119.5" width="4" height="2.5" fill="rgb(164,112,115)"/>
+<rect x="26.0" y="119.5" width="4" height="2.5" fill="rgb(173,106,101)"/>
+<rect x="30.0" y="119.5" width="4" height="2.5" fill="rgb(182,101,87)"/>
+<rect x="34.0" y="119.5" width="4" height="2.5" fill="rgb(191,95,73)"/>
+<rect x="38.0" y="119.5" width="4" height="2.5" fill="rgb(200,90,60)"/>
+<text x="44" y="121.8" font-size="2.2" fill="#ddd">low -6.0 m | green: entrance | white/yellow/pink: trash/elite/boss (green ring: optional) | yellow line: one-way drop | dashed: open deck | blue dashes: main route</text>
+</svg>

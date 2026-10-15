@@ -1,0 +1,16 @@
+[package]
+name = "dungeon_forge"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Dungeon Forge: blueprint-driven, deterministic dungeon generation and validation for Dungeon Sandbox"
+
+[[bin]]
+name = "dungeon-forge"
+path = "src/main.rs"
+
+[dependencies]
+dungeon_sim = { path = "../sim" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
