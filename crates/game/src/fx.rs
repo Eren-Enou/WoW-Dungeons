@@ -156,9 +156,9 @@ fn spawn_fx(
     let sim = &run.sim;
     let chest = |id: usize| {
         let a = &sim.actors[id];
-        to_vec3(a.pos, if a.is_enemy() { a.radius * 1.6 } else { 1.2 })
+        to_vec3(a.pos, a.y + if a.is_enemy() { a.radius * 1.6 } else { 1.2 })
     };
-    let feet = |id: usize| to_vec3(sim.actors[id].pos, 0.1);
+    let feet = |id: usize| to_vec3(sim.actors[id].pos, sim.actors[id].y + 0.1);
     for e in &run.fresh {
         match &e.kind {
             EventKind::Damage {
@@ -335,7 +335,7 @@ fn target_marker(
             let a = &sim.actors[id];
             let pulse = 1.0 + (time.elapsed_secs() * 5.0).sin() * 0.06;
             let r = (a.radius + 0.6) * pulse;
-            t.translation = to_vec3(run.interp_pos(id), 0.08);
+            t.translation = run.world(id, 0.08);
             t.scale = Vec3::new(r, 0.3, r);
             if let Some(mut m) = materials.get_mut(&mat.0) {
                 let c = if a.is_enemy() {

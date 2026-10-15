@@ -11,7 +11,6 @@ pub mod items;
 pub mod math;
 pub mod metrics;
 pub mod nav;
-pub mod nav2;
 pub mod profile;
 pub mod rng;
 pub mod runner;

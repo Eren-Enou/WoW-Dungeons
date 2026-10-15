@@ -175,7 +175,7 @@ fn update_nameplates(
         } else {
             2.5
         };
-        let world = to_vec3(run.interp_pos(plate.id), height);
+        let world = run.world(plate.id, height);
         let near = player_pos.is_none_or(|p| p.dist(a.pos) < 55.0);
         let visible = a.alive && near;
         match project(cam, cam_gt, world).filter(|_| visible) {
@@ -368,7 +368,7 @@ fn spawn_floating_text(mut commands: Commands, run: Res<ActiveRun>) {
             },
             Pickable::IGNORE,
             FloatingText {
-                world: to_vec3(a.pos, height),
+                world: to_vec3(a.pos, a.y + height),
                 age: 0.0,
                 life: 1.1,
                 rise: 1.6,

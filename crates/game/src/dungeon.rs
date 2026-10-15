@@ -63,13 +63,14 @@ const END_DELAY: f32 = 3.0;
 const LOG_LINES: usize = 11;
 /// How long a failed-action message stays on screen.
 const ERROR_SECS: f32 = 1.5;
-const WALL_HEIGHT: f32 = 3.2;
 
 #[derive(Resource)]
 pub struct ActiveRun {
     pub sim: Sim,
     pub acc: f32,
     pub prev_pos: Vec<V2>,
+    /// Elevations at the previous tick (interpolated like positions).
+    pub prev_y: Vec<f32>,
     pub events_seen: usize,
     /// Events produced since the previous frame (for effects and floating text).
     pub fresh: Vec<Event>,
@@ -96,6 +97,17 @@ impl ActiveRun {
         let b = self.sim.actors[id].pos;
         let a = self.prev_pos.get(id).copied().unwrap_or(b);
         a + (b - a) * self.alpha()
+    }
+
+    pub fn interp_y(&self, id: ActorId) -> f32 {
+        let b = self.sim.actors[id].y;
+        let a = self.prev_y.get(id).copied().unwrap_or(b);
+        a + (b - a) * self.alpha()
+    }
+
+    /// Interpolated world position of an actor, `h` metres above its feet.
+    pub fn world(&self, id: ActorId, h: f32) -> Vec3 {
+        to_vec3(self.interp_pos(id), self.interp_y(id) + h)
     }
 
     fn set_banner(&mut self, text: impl Into<String>, secs: f32, color: Color) {
@@ -174,12 +186,14 @@ fn start_run(
     pc.state.facing = 0.0;
     pc.state.yaw = 0.0;
     let prev_pos = sim.actors.iter().map(|a| a.pos).collect();
+    let prev_y = sim.actors.iter().map(|a| a.y).collect();
     let required = sim.encounters.iter().filter(|e| !e.optional).count();
     let boss_name = sim.actors[sim.boss].name.clone();
     let mut run = ActiveRun {
         sim,
         acc: 0.0,
         prev_pos,
+        prev_y,
         events_seen: 0,
         fresh: Vec::new(),
         log: VecDeque::new(),
@@ -212,7 +226,6 @@ fn spawn_world(
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     let scoped = DespawnOnExit(AppState::Dungeon);
-    let theme = run.sim.content.dungeon.theme;
     commands.insert_resource(GlobalAmbientLight {
         color: Color::srgb(0.6, 0.65, 0.8),
         brightness: 220.0,
@@ -227,62 +240,21 @@ fn spawn_world(
         Transform::from_xyz(10.0, 30.0, -20.0).looking_at(Vec3::ZERO, Vec3::Y),
         scoped.clone(),
     ));
-    let nav = &run.sim.nav;
-    for (i, r) in nav.areas.iter().enumerate() {
-        let size = r.max - r.min;
-        let c = r.center();
-        let tint = if i % 2 == 0 { 0.0 } else { 0.03 };
-        let [fr, fg, fb] = theme.floor;
-        commands.spawn((
-            Mesh3d(meshes.add(Cuboid::new(size.x, 0.2, size.z))),
-            MeshMaterial3d(materials.add(Color::srgb(fr + tint, fg + tint, fb))),
-            Transform::from_xyz(c.x, -0.1 - i as f32 * 0.001, c.z),
-            scoped.clone(),
-        ));
-        commands.spawn((
-            PointLight {
-                color: rgb(theme.light),
-                intensity: 600_000.0,
-                range: 35.0,
-                shadow_maps_enabled: false,
-                ..default()
-            },
-            Transform::from_xyz(c.x, 7.0, c.z),
-            scoped.clone(),
-        ));
-    }
-    blockers.0.clear();
-    for (a, b) in nav.wall_segments() {
-        let len = a.dist(b);
-        let mid = (a + b) * 0.5;
-        let horizontal = (a.z - b.z).abs() < 1e-3;
-        let (sx, sz) = if horizontal {
-            (len + 0.4, 0.4)
-        } else {
-            (0.4, len + 0.4)
-        };
-        let half = Vec3::new(sx * 0.5, WALL_HEIGHT * 0.5, sz * 0.5);
-        let center = Vec3::new(mid.x, WALL_HEIGHT * 0.5, mid.z);
-        blockers.0.push((center - half, center + half));
-        let material = materials.add(StandardMaterial {
-            base_color: run.wall_color,
-            alpha_mode: AlphaMode::Blend,
-            ..default()
-        });
-        commands.spawn((
-            Mesh3d(meshes.add(Cuboid::new(sx, WALL_HEIGHT, sz))),
-            MeshMaterial3d(material.clone()),
-            Occluder {
-                material,
-                min: center - half,
-                max: center + half,
-            },
-            Transform::from_translation(center),
-            scoped.clone(),
-        ));
-    }
+    spawn_level_geometry(
+        &mut commands,
+        &run,
+        &mut blockers,
+        &mut meshes,
+        &mut materials,
+    );
     // Exit portal at the entrance.
     let entrance = run.sim.content.dungeon.entrance;
+    let entrance_y = run.sim.content.dungeon.entrance_y.unwrap_or_else(|| {
+        let nav = &run.sim.nav;
+        nav.locate(entrance, 0.0)
+            .map(|s| nav.height(s, entrance))
+            .unwrap_or(0.0)
+    });
     commands.spawn((
         Mesh3d(meshes.add(Torus::new(1.2, 1.6))),
         MeshMaterial3d(materials.add(StandardMaterial {
@@ -290,8 +262,10 @@ fn spawn_world(
             emissive: LinearRgba::rgb(1.5, 0.5, 3.0),
             ..default()
         })),
-        Transform::from_translation(to_vec3(entrance, 1.8) + Vec3::new(0.0, 0.0, -5.0))
-            .with_rotation(Quat::from_rotation_x(FRAC_PI_2)),
+        Transform::from_translation(
+            to_vec3(entrance, entrance_y + 1.8) + Vec3::new(0.0, 0.0, -5.0),
+        )
+        .with_rotation(Quat::from_rotation_x(FRAC_PI_2)),
         scoped.clone(),
     ));
     // A dais under every boss.
@@ -301,7 +275,7 @@ fn spawn_world(
             commands.spawn((
                 Mesh3d(meshes.add(Cylinder::new(a.radius + 3.0, 0.15))),
                 MeshMaterial3d(materials.add(Color::srgb(0.2, 0.12, 0.25))),
-                Transform::from_translation(to_vec3(a.pos, 0.02)),
+                Transform::from_translation(to_vec3(a.pos, a.y + 0.02)),
                 scoped.clone(),
             ));
         }
@@ -319,10 +293,261 @@ fn spawn_world(
         commands.spawn((
             Mesh3d(disc.clone()),
             MeshMaterial3d(material.clone()),
-            Transform::from_translation(to_vec3(h.cfg.pos, 0.035))
+            Transform::from_translation(to_vec3(h.pos.xz(), h.pos.y + 0.035))
                 .with_rotation(Quat::from_rotation_x(-FRAC_PI_2))
                 .with_scale(Vec3::new(h.cfg.radius, h.cfg.radius, 1.0)),
             HazardVisual { index: i, material },
+            scoped.clone(),
+        ));
+    }
+}
+
+/// Build floors, ramps, stairs, bridges, rock supports, walls, drop markers and
+/// lava from the simulation's `Nav`, so what you see is what the sim walks on.
+fn spawn_level_geometry(
+    commands: &mut Commands,
+    run: &ActiveRun,
+    blockers: &mut CameraBlockers,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+) {
+    use dungeon_sim::nav::{Axis, LinkKind, SLAB};
+    let scoped = DespawnOnExit(AppState::Dungeon);
+    let nav = &run.sim.nav;
+    let theme = run.sim.content.dungeon.theme;
+    let [fr, fg, fb] = theme.floor;
+    // Floors get lighter with height so levels read at a glance.
+    let (lo, hi) = nav
+        .surfaces
+        .iter()
+        .fold((f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), s| {
+            (lo.min(s.min_y()), hi.max(s.max_y()))
+        });
+    let shade = |y: f32| {
+        let t = if hi > lo { (y - lo) / (hi - lo) } else { 0.0 };
+        Color::srgb(fr + 0.14 * t, fg + 0.12 * t, fb + 0.08 * t)
+    };
+    let rock = materials.add(Color::srgb(fr * 0.55, fg * 0.55, fb * 0.6));
+    let mut boxes: Vec<(Vec3, Vec3, Handle<StandardMaterial>, bool)> = Vec::new();
+    blockers.0.clear();
+    for (i, s) in nav.surfaces.iter().enumerate() {
+        let r = s.def.rect;
+        let size = r.size();
+        let c = r.center();
+        let tint = if i % 2 == 0 { 0.0 } else { 0.025 };
+        let top_mat = materials.add(if s.def.open_under {
+            Color::srgb(0.42, 0.3, 0.2)
+        } else {
+            let base = shade(s.max_y());
+            base.mix(&Color::srgb(fr + tint, fg + tint, fb), 0.3)
+        });
+        let base = if s.def.open_under {
+            None
+        } else {
+            Some(nav.base_y)
+        };
+        if !s.is_ramp() {
+            let y = s.def.y;
+            let bottom = base.unwrap_or(y - SLAB);
+            // Top slab (slight per-area offset avoids z-fighting on overlaps).
+            let top_bottom = y - 0.2;
+            boxes.push((
+                Vec3::new(r.min.x, top_bottom - i as f32 * 0.001, r.min.z),
+                Vec3::new(r.max.x, y - i as f32 * 0.001, r.max.z),
+                top_mat.clone(),
+                false,
+            ));
+            if bottom < top_bottom - 0.01 {
+                boxes.push((
+                    Vec3::new(r.min.x, bottom, r.min.z),
+                    Vec3::new(r.max.x, top_bottom, r.max.z),
+                    if s.def.open_under {
+                        top_mat.clone()
+                    } else {
+                        rock.clone()
+                    },
+                    false,
+                ));
+            }
+            blockers.0.push((
+                Vec3::new(r.min.x, bottom, r.min.z),
+                Vec3::new(r.max.x, y - 0.05, r.max.z),
+            ));
+        } else {
+            // Ramps and stairs: steps of at most 0.5 m along the slope; a ramp
+            // also gets a smooth sloped deck on top.
+            let len = match s.def.axis {
+                Axis::Z => size.z,
+                Axis::X => size.x,
+            };
+            let n = ((len / 0.5).ceil() as usize).max(1);
+            let step = len / n as f32;
+            for k in 0..n {
+                let a0 = k as f32 * step;
+                let a1 = a0 + step;
+                let (min, max) = match s.def.axis {
+                    Axis::Z => (
+                        V2::new(r.min.x, r.min.z + a0),
+                        V2::new(r.max.x, r.min.z + a1),
+                    ),
+                    Axis::X => (
+                        V2::new(r.min.x + a0, r.min.z),
+                        V2::new(r.min.x + a1, r.max.z),
+                    ),
+                };
+                let mid = (min + max) * 0.5;
+                let h = s.height_at(mid);
+                let top = if s.def.stairs { h } else { h - 0.15 };
+                let bottom = base.unwrap_or(top - SLAB);
+                boxes.push((
+                    Vec3::new(min.x, bottom, min.z),
+                    Vec3::new(max.x, top, max.z),
+                    if s.def.stairs {
+                        top_mat.clone()
+                    } else {
+                        rock.clone()
+                    },
+                    false,
+                ));
+                blockers.0.push((
+                    Vec3::new(min.x, bottom, min.z),
+                    Vec3::new(max.x, top - 0.1, max.z),
+                ));
+            }
+            if !s.def.stairs {
+                let y0 = s.height_at(r.min);
+                let y1 = s.height_at(r.max);
+                let rise = y1 - y0;
+                let (deck, rot) = match s.def.axis {
+                    Axis::Z => {
+                        let l = (len * len + rise * rise).sqrt();
+                        (
+                            Cuboid::new(size.x, 0.12, l),
+                            Quat::from_rotation_x(-(rise / len).atan()),
+                        )
+                    }
+                    Axis::X => {
+                        let l = (len * len + rise * rise).sqrt();
+                        (
+                            Cuboid::new(l, 0.12, size.z),
+                            Quat::from_rotation_z((rise / len).atan()),
+                        )
+                    }
+                };
+                commands.spawn((
+                    Mesh3d(meshes.add(deck)),
+                    MeshMaterial3d(top_mat.clone()),
+                    Transform::from_xyz(c.x, (y0 + y1) * 0.5 - 0.04, c.z).with_rotation(rot),
+                    scoped.clone(),
+                ));
+            }
+        }
+        commands.spawn((
+            PointLight {
+                color: rgb(theme.light),
+                intensity: 600_000.0,
+                range: 35.0,
+                shadow_maps_enabled: false,
+                ..default()
+            },
+            Transform::from_xyz(c.x, s.max_y() + 7.0, c.z),
+            scoped.clone(),
+        ));
+    }
+    for (min, max, mat, _) in boxes {
+        let size = max - min;
+        commands.spawn((
+            Mesh3d(meshes.add(Cuboid::new(size.x, size.y, size.z))),
+            MeshMaterial3d(mat),
+            Transform::from_translation((min + max) * 0.5),
+            scoped.clone(),
+        ));
+    }
+    // Walls follow the floor they stand on (in short pieces along ramps).
+    for w in &nav.walls {
+        let len = w.a.dist(w.b);
+        let pieces = if (w.bottom0 - w.bottom1).abs() > 0.05 {
+            (len / 1.0).ceil().max(1.0) as usize
+        } else {
+            1
+        };
+        for k in 0..pieces {
+            let f0 = k as f32 / pieces as f32;
+            let f1 = (k + 1) as f32 / pieces as f32;
+            let a = w.a + (w.b - w.a) * f0;
+            let b = w.a + (w.b - w.a) * f1;
+            let bottom = w.bottom0 + (w.bottom1 - w.bottom0) * (f0 + f1) * 0.5;
+            let plen = a.dist(b);
+            let mid = (a + b) * 0.5;
+            let horizontal = (a.z - b.z).abs() < 1e-3;
+            let (sx, sz) = if horizontal {
+                (plen + 0.4, 0.4)
+            } else {
+                (0.4, plen + 0.4)
+            };
+            let half = Vec3::new(sx * 0.5, w.height * 0.5, sz * 0.5);
+            let center = Vec3::new(mid.x, bottom + w.height * 0.5, mid.z);
+            blockers.0.push((center - half, center + half));
+            let material = materials.add(StandardMaterial {
+                base_color: run.wall_color,
+                alpha_mode: AlphaMode::Blend,
+                ..default()
+            });
+            commands.spawn((
+                Mesh3d(meshes.add(Cuboid::new(sx, w.height, sz))),
+                MeshMaterial3d(material.clone()),
+                Occluder {
+                    material,
+                    min: center - half,
+                    max: center + half,
+                },
+                Transform::from_translation(center),
+                scoped.clone(),
+            ));
+        }
+    }
+    // One-way drops: an orange strip on the edge you can step off.
+    let drop_mat = materials.add(StandardMaterial {
+        base_color: Color::srgba(1.0, 0.55, 0.1, 0.55),
+        emissive: LinearRgba::rgb(0.6, 0.25, 0.0),
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        ..default()
+    });
+    for l in nav.links.iter().filter(|l| l.kind == LinkKind::Drop) {
+        let p = l.portal;
+        let size = p.size();
+        commands.spawn((
+            Mesh3d(meshes.add(Cuboid::new(size.x.max(0.2), 0.04, size.z.max(0.2)))),
+            MeshMaterial3d(drop_mat.clone()),
+            Transform::from_xyz(p.center().x, l.entry.y + 0.03, p.center().z),
+            scoped.clone(),
+        ));
+    }
+    // Lava pools (decorative; not walkable).
+    let lava = materials.add(StandardMaterial {
+        base_color: Color::srgb(1.0, 0.35, 0.05),
+        emissive: LinearRgba::rgb(4.0, 1.0, 0.1),
+        ..default()
+    });
+    for l in &run.sim.content.dungeon.lava {
+        let size = l.max - l.min;
+        let c = (l.min + l.max) * 0.5;
+        commands.spawn((
+            Mesh3d(meshes.add(Cuboid::new(size.x, 0.1, size.z))),
+            MeshMaterial3d(lava.clone()),
+            Transform::from_xyz(c.x, l.y - 0.05, c.z),
+            scoped.clone(),
+        ));
+        commands.spawn((
+            PointLight {
+                color: Color::srgb(1.0, 0.45, 0.1),
+                intensity: 400_000.0,
+                range: 14.0,
+                shadow_maps_enabled: false,
+                ..default()
+            },
+            Transform::from_xyz(c.x, l.y + 1.5, c.z),
             scoped.clone(),
         ));
     }
@@ -399,7 +624,7 @@ fn spawn_new_actors(
         let mut e = commands.spawn((
             mesh,
             MeshMaterial3d(material.clone()),
-            Transform::from_translation(to_vec3(a.pos, center_y))
+            Transform::from_translation(to_vec3(a.pos, a.y + center_y))
                 .with_rotation(Quat::from_rotation_y(a.facing)),
             ActorVisual {
                 id: a.id,
@@ -563,7 +788,7 @@ pub fn player_input(
 pub fn pick_actor(sim: &Sim, ray: Ray3d, filter: impl Fn(&Actor) -> bool) -> Option<ActorId> {
     let mut best: Option<(f32, ActorId)> = None;
     for a in sim.actors.iter().filter(|a| a.alive && filter(a)) {
-        let center = to_vec3(a.pos, if a.is_enemy() { a.radius * 1.6 } else { 1.0 });
+        let center = to_vec3(a.pos, a.y + if a.is_enemy() { a.radius * 1.6 } else { 1.0 });
         let r = a.radius + 0.6;
         let oc = ray.origin - center;
         let b = oc.dot(*ray.direction);
@@ -588,6 +813,8 @@ fn step_sim(time: Res<Time>, mut run: ResMut<ActiveRun>, demo: Option<Res<DemoCo
     while run.acc >= DT && steps < max_steps {
         let positions: Vec<V2> = run.sim.actors.iter().map(|a| a.pos).collect();
         run.prev_pos = positions;
+        let ys: Vec<f32> = run.sim.actors.iter().map(|a| a.y).collect();
+        run.prev_y = ys;
         run.sim.step();
         run.acc -= DT;
         steps += 1;
@@ -602,6 +829,11 @@ fn step_sim(time: Res<Time>, mut run: ResMut<ActiveRun>, demo: Option<Res<DemoCo
             .map(|a| a.pos)
             .collect();
         run.prev_pos.extend(extra);
+        let extra: Vec<f32> = run.sim.actors[run.prev_y.len()..]
+            .iter()
+            .map(|a| a.y)
+            .collect();
+        run.prev_y.extend(extra);
     }
     let dt = time.delta_secs();
     if let Some((_, t, _)) = run.banner.as_mut() {
@@ -826,12 +1058,11 @@ fn sync_actors(
         } else {
             Visibility::Inherited
         };
-        let pos = run.interp_pos(vis.id);
         if a.alive {
-            t.translation = to_vec3(pos, vis.center_y);
+            t.translation = run.world(vis.id, vis.center_y);
             t.rotation = Quat::from_rotation_y(a.facing);
         } else {
-            t.translation = to_vec3(pos, vis.lie_y);
+            t.translation = run.world(vis.id, vis.lie_y);
             t.rotation = Quat::from_rotation_y(a.facing) * Quat::from_rotation_x(FRAC_PI_2);
         }
         let is_boss = a.rank() == Some(EnemyRank::Boss);
@@ -915,7 +1146,7 @@ fn sync_telegraphs(
                     unlit: true,
                     ..default()
                 })),
-                Transform::from_translation(to_vec3(tg.center, y))
+                Transform::from_translation(to_vec3(tg.center, tg.y + y))
                     .with_rotation(Quat::from_rotation_x(-FRAC_PI_2))
                     .with_scale(Vec3::new(0.01, 0.01, 1.0)),
                 TelegraphVisual { id: tg.id, inner },
@@ -962,21 +1193,21 @@ fn draw_gizmos(run: Res<ActiveRun>, mouseover: Res<crate::hud::Mouseover>, mut g
     if let Some(m) = mouseover.0 {
         let a = &run.sim.actors[m];
         gizmos.circle(
-            Isometry3d::new(to_vec3(run.interp_pos(m), 0.06), flat),
+            Isometry3d::new(run.world(m, 0.06), flat),
             a.radius + 0.55,
             Color::srgb(0.45, 0.8, 1.0),
         );
     }
     if let Some(p) = run.sim.player {
         gizmos.circle(
-            Isometry3d::new(to_vec3(run.interp_pos(p), 0.05), flat),
+            Isometry3d::new(run.world(p, 0.05), flat),
             0.8,
             Color::srgb(0.3, 1.0, 0.4),
         );
     }
     for tg in &run.sim.telegraphs {
         gizmos.circle(
-            Isometry3d::new(to_vec3(tg.center, 0.08), flat),
+            Isometry3d::new(to_vec3(tg.center, tg.y + 0.08), flat),
             tg.radius,
             Color::srgb(1.0, 0.2, 0.0),
         );
@@ -984,7 +1215,7 @@ fn draw_gizmos(run: Res<ActiveRun>, mouseover: Res<crate::hud::Mouseover>, mut g
     for h in &run.sim.hazards {
         if !run.sim.encounters[h.encounter].cleared {
             gizmos.circle(
-                Isometry3d::new(to_vec3(h.cfg.pos, 0.07), flat),
+                Isometry3d::new(to_vec3(h.pos.xz(), h.pos.y + 0.07), flat),
                 h.cfg.radius,
                 if h.active {
                     Color::srgb(1.0, 0.4, 0.0)
@@ -997,7 +1228,7 @@ fn draw_gizmos(run: Res<ActiveRun>, mouseover: Res<crate::hud::Mouseover>, mut g
     // Frontal cleave cones on engaged enemies that have one.
     for &e in &run.sim.board.frontal {
         let a = &run.sim.actors[e];
-        let pos = to_vec3(run.interp_pos(e), 0.1);
+        let pos = run.world(e, 0.1);
         let r = a.radius + 6.0;
         for k in -4..=4 {
             let ang = a.facing + k as f32 * std::f32::consts::FRAC_PI_8;
@@ -1015,7 +1246,7 @@ fn draw_gizmos(run: Res<ActiveRun>, mouseover: Res<crate::hud::Mouseover>, mut g
                 && a.pos.dist(me) < es.aggro_radius + 10.0
             {
                 gizmos.circle(
-                    Isometry3d::new(to_vec3(a.pos, 0.04), flat),
+                    Isometry3d::new(to_vec3(a.pos, a.y + 0.04), flat),
                     es.aggro_radius,
                     Color::srgba(1.0, 0.8, 0.2, 0.25),
                 );
@@ -1093,8 +1324,7 @@ fn fade_occluders(
 ) {
     let Some(p) = run.sim.player else { return };
     let cam = camera.translation();
-    let pos = run.interp_pos(p);
-    let points = [to_vec3(pos, 0.3), to_vec3(pos, 1.8)];
+    let points = [run.world(p, 0.3), run.world(p, 1.8)];
     for w in &walls {
         let blocks = points.iter().any(|&target| {
             let d = target - cam;

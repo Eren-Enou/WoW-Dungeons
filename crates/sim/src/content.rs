@@ -5,8 +5,8 @@
 //! problem with the path of the offending field.
 
 use crate::items::{ItemSlot, ItemStats, Rarity, RoleAffinity};
-use crate::math::V2;
-use crate::nav::{Nav, Rect};
+use crate::math::{V2, V3};
+use crate::nav::{Axis, LinkDef, LinkKind, Nav, NavParams, Rect, SurfaceDef, SurfaceId};
 use crate::stats::School;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -49,12 +49,128 @@ pub struct DungeonConfig {
     #[serde(default = "one")]
     pub damage_multiplier: f32,
     pub entrance: V2,
+    /// Elevation of the entrance; needed only when several floors lie under it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entrance_y: Option<f32>,
     /// Enemies further than this from their spawn point give up and reset.
     pub leash_radius: f32,
-    /// Walkable floor, as overlapping axis-aligned rectangles.
+    /// Walkable surfaces: axis-aligned rectangles, optionally raised or sloped.
+    /// Areas at the same height that overlap are connected; nothing else is.
     pub areas: Vec<AreaConfig>,
+    /// Authored connections (one-way drops).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub links: Vec<LinkConfig>,
+    /// Navigation limits (step, slope, drop, headroom).
+    #[serde(default, skip_serializing_if = "NavConfig::is_default")]
+    pub nav: NavConfig,
+    /// Decorative lava pools (not walkable).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lava: Vec<LavaConfig>,
     #[serde(default)]
     pub theme: Theme,
+}
+
+fn is_zero(v: &f32) -> bool {
+    *v == 0.0
+}
+
+fn is_false(v: &bool) -> bool {
+    !*v
+}
+
+fn is_true(v: &bool) -> bool {
+    *v
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AxisConfig {
+    X,
+    #[default]
+    Z,
+}
+
+impl AxisConfig {
+    fn is_default(&self) -> bool {
+        *self == AxisConfig::Z
+    }
+}
+
+/// What is below a raised area.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UnderConfig {
+    /// Rock down to the lowest floor (blocks sight and movement below).
+    #[default]
+    Solid,
+    /// A thin deck you can walk and see under (bridges, walkways).
+    Open,
+}
+
+impl UnderConfig {
+    fn is_solid(&self) -> bool {
+        *self == UnderConfig::Solid
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LinkKindConfig {
+    /// One-way: step off the `from` area's edge inside the zone and fall.
+    Drop,
+    /// Assert that two areas connect by walking (they must already be level
+    /// where they overlap); a typo or height mistake becomes an error.
+    Walk,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LinkConfig {
+    pub from: String,
+    pub to: String,
+    pub kind: LinkKindConfig,
+    /// Drop zone (required for drops): covers the edge of `from` and the floor
+    /// of `to` right beside or below it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min: Option<V2>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<V2>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct NavConfig {
+    pub max_step: f32,
+    pub max_slope: f32,
+    pub max_drop: f32,
+    pub headroom: f32,
+}
+
+impl Default for NavConfig {
+    fn default() -> Self {
+        let p = NavParams::default();
+        NavConfig {
+            max_step: p.max_step,
+            max_slope: p.max_slope,
+            max_drop: p.max_drop,
+            headroom: p.headroom,
+        }
+    }
+}
+
+impl NavConfig {
+    fn is_default(&self) -> bool {
+        *self == NavConfig::default()
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LavaConfig {
+    pub min: V2,
+    pub max: V2,
+    #[serde(default)]
+    pub y: f32,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
@@ -127,6 +243,27 @@ pub struct AreaConfig {
     pub name: String,
     pub min: V2,
     pub max: V2,
+    /// Floor height (at the `min` edge for a ramp). Default 0.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub y: f32,
+    /// Makes the area a ramp: height at the `max` edge along `axis`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub y_to: Option<f32>,
+    #[serde(default, skip_serializing_if = "AxisConfig::is_default")]
+    pub axis: AxisConfig,
+    /// Draw a ramp as steps.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub stairs: bool,
+    /// Outline gets walls (default true; bridges and ledges usually false).
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub walls: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wall_height: Option<f32>,
+    #[serde(default, skip_serializing_if = "UnderConfig::is_solid")]
+    pub under: UnderConfig,
+    /// Intentionally unreachable from the entrance (e.g. a sniper perch).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub unreachable: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
@@ -353,6 +490,9 @@ impl EncounterConfig {
 pub struct MobSpawn {
     pub template: String,
     pub pos: V2,
+    /// Elevation; needed only when several floors lie under `pos`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub y: Option<f32>,
 }
 
 /// An environmental hazard that pulses on and off while its encounter is alive.
@@ -361,6 +501,9 @@ pub struct MobSpawn {
 pub struct HazardConfig {
     pub name: String,
     pub pos: V2,
+    /// Elevation; needed only when several floors lie under `pos`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub y: Option<f32>,
     pub radius: f32,
     /// Damage per second to party members inside while active.
     pub damage: f32,
@@ -561,14 +704,127 @@ impl Content {
             .expect("builtin content is valid")
     }
 
+    /// The navigation for this (validated) content.
     pub fn nav(&self) -> Nav {
-        Nav::new(
-            self.dungeon
-                .areas
-                .iter()
-                .map(|a| Rect::new(a.min, a.max))
-                .collect(),
-        )
+        self.build_nav()
+            .expect("content was validated when it was loaded")
+    }
+
+    /// Build and validate the navigation from `dungeon.areas` / `dungeon.links`.
+    pub fn build_nav(&self) -> Result<Nav, Vec<String>> {
+        let d = &self.dungeon;
+        let defs = d
+            .areas
+            .iter()
+            .map(|a| SurfaceDef {
+                name: a.name.clone(),
+                rect: Rect::new(a.min, a.max),
+                y: a.y,
+                y_to: a.y_to,
+                axis: match a.axis {
+                    AxisConfig::X => Axis::X,
+                    AxisConfig::Z => Axis::Z,
+                },
+                stairs: a.stairs,
+                walls: a.walls,
+                wall_height: a.wall_height.unwrap_or(crate::nav::WALL_HEIGHT),
+                open_under: a.under == UnderConfig::Open,
+                unreachable: a.unreachable,
+            })
+            .collect();
+        let mut errors = Vec::new();
+        let links = d
+            .links
+            .iter()
+            .enumerate()
+            .filter_map(|(i, l)| {
+                let zone = match (l.kind, l.min, l.max) {
+                    (LinkKindConfig::Drop, Some(min), Some(max)) => Rect::new(min, max),
+                    (LinkKindConfig::Drop, _, _) => {
+                        errors.push(format!(
+                            "dungeon.links[{i}] ('{}' -> '{}'): a drop needs min and max (the drop zone)",
+                            l.from, l.to
+                        ));
+                        return None;
+                    }
+                    (LinkKindConfig::Walk, _, _) => Rect::new(V2::ZERO, V2::ZERO),
+                };
+                Some(LinkDef {
+                    from: l.from.clone(),
+                    to: l.to.clone(),
+                    kind: match l.kind {
+                        LinkKindConfig::Drop => LinkKind::Drop,
+                        LinkKindConfig::Walk => LinkKind::Walk,
+                    },
+                    zone,
+                })
+            })
+            .collect();
+        let params = NavParams {
+            max_step: d.nav.max_step,
+            max_slope: d.nav.max_slope,
+            max_drop: d.nav.max_drop,
+            headroom: d.nav.headroom,
+        };
+        if !(0.05..=2.0).contains(&params.max_step)
+            || !(0.05..=2.0).contains(&params.max_slope)
+            || !(0.5..=50.0).contains(&params.max_drop)
+            || !(1.5..=20.0).contains(&params.headroom)
+        {
+            errors.push(
+                "dungeon.nav: max_step must be in 0.05..=2, max_slope in 0.05..=2, max_drop in 0.5..=50, headroom in 1.5..=20".into(),
+            );
+        }
+        if !errors.is_empty() {
+            return Err(errors);
+        }
+        Nav::build(defs, links, params)
+    }
+
+    /// Resolve a horizontal position (and optional elevation) onto a surface.
+    /// Without `y`, every floor under `pos` must be at the same height,
+    /// otherwise the position is ambiguous.
+    pub fn place(nav: &Nav, pos: V2, y: Option<f32>) -> Result<(V3, SurfaceId), String> {
+        let under: Vec<(SurfaceId, f32)> = nav
+            .surfaces
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.walk.contains(pos))
+            .map(|(i, s)| (i as SurfaceId, s.height_at(pos)))
+            .collect();
+        if under.is_empty() {
+            return Err("is outside every walkable area".into());
+        }
+        match y {
+            Some(y) => {
+                let s = nav.locate(pos, y).expect("pos is on a surface");
+                let h = nav.height(s, pos);
+                if (h - y).abs() > 0.6 {
+                    let floors: Vec<String> =
+                        under.iter().map(|(_, h)| format!("{h:.1}")).collect();
+                    return Err(format!(
+                        "has y = {y} but the floors there are at y = {}",
+                        floors.join(", ")
+                    ));
+                }
+                Ok((V3::at(pos, h), s))
+            }
+            None => {
+                let (s, h) = under[0];
+                if under
+                    .iter()
+                    .any(|(_, o)| (o - h).abs() > nav.params.max_step)
+                {
+                    let floors: Vec<String> =
+                        under.iter().map(|(_, h)| format!("{h:.1}")).collect();
+                    return Err(format!(
+                        "is above several floors (y = {}); add y = <height> to say which one",
+                        floors.join(", ")
+                    ));
+                }
+                Ok((V3::at(pos, h), s))
+            }
+        }
     }
 
     /// Index of the final (required) encounter, which holds the final boss.
@@ -651,31 +907,47 @@ impl Content {
             !d.areas.is_empty(),
             "dungeon.areas must list at least one walkable rectangle".into(),
         );
-        for (i, a) in d.areas.iter().enumerate() {
+        for (i, l) in d.lava.iter().enumerate() {
             check(
-                a.min.is_finite() && a.max.is_finite() && a.min.x < a.max.x && a.min.z < a.max.z,
-                format!(
-                    "dungeon.areas[{i}] ('{}'): min {:?} must be smaller than max {:?} on both axes",
-                    a.name,
-                    <[f32; 2]>::from(a.min),
-                    <[f32; 2]>::from(a.max)
-                ),
+                Rect::new(l.min, l.max).is_valid() && l.y.is_finite(),
+                format!("dungeon.lava[{i}]: min must be smaller than max on both axes"),
             );
         }
-        let nav = self.nav();
-        let walkable = !d.areas.is_empty();
-        if walkable {
-            check(
-                nav.is_connected(),
-                "dungeon.areas are not all connected; neighbouring rectangles must overlap".into(),
-            );
-            check(
-                nav.contains(d.entrance),
-                format!(
-                    "dungeon.entrance {:?} is not inside any walkable area",
-                    <[f32; 2]>::from(d.entrance)
+        let nav = match self.build_nav() {
+            Ok(nav) => Some(nav),
+            Err(errs) => {
+                for e in errs {
+                    check(false, format!("dungeon.areas/links: {e}"));
+                }
+                None
+            }
+        };
+        if let Some(nav) = &nav {
+            match Content::place(nav, d.entrance, d.entrance_y) {
+                Err(e) => check(
+                    false,
+                    format!("dungeon.entrance {:?} {e}", <[f32; 2]>::from(d.entrance)),
                 ),
-            );
+                Ok((_, start)) => {
+                    for (i, s) in nav.surfaces.iter().enumerate() {
+                        check(
+                            s.def.unreachable || nav.reachable(start, i as SurfaceId),
+                            if nav
+                                .surfaces
+                                .iter()
+                                .all(|s| s.min_y() == 0.0 && !s.is_ramp())
+                            {
+                                "dungeon.areas are not all connected; neighbouring rectangles must overlap".into()
+                            } else {
+                                format!(
+                                    "dungeon.areas['{}'] cannot be reached from the entrance; connect it with a ramp or a drop, or mark it unreachable = true if that is intended",
+                                    s.name()
+                                )
+                            },
+                        );
+                    }
+                }
+            }
         }
 
         let mut diff_ids = BTreeSet::new();
@@ -911,14 +1183,10 @@ impl Content {
                         }
                     }
                 }
-                if walkable {
-                    check(
-                        nav.contains(m.pos),
-                        format!(
-                            "{mp}.pos {:?} is outside every walkable area",
-                            <[f32; 2]>::from(m.pos)
-                        ),
-                    );
+                if let Some(nav) = &nav
+                    && let Err(e) = Content::place(nav, m.pos, m.y)
+                {
+                    check(false, format!("{mp}.pos {:?} {e}", <[f32; 2]>::from(m.pos)));
                 }
             }
             for (j, h) in e.hazards.iter().enumerate() {
@@ -931,6 +1199,11 @@ impl Content {
                         && h.offset >= 0.0,
                     format!("{hp}: needs radius > 0, damage >= 0, on > 0, off >= 0, offset >= 0"),
                 );
+                if let Some(nav) = &nav
+                    && let Err(e) = Content::place(nav, h.pos, h.y)
+                {
+                    check(false, format!("{hp}.pos {:?} {e}", <[f32; 2]>::from(h.pos)));
+                }
             }
         }
         check(

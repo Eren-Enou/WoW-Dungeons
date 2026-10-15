@@ -5,7 +5,7 @@ use crate::ai::{self, AiProfile};
 use crate::class::{AbilityId, ClassId};
 use crate::content::{BUILTIN_SUNKEN_VAULT, Content};
 use crate::events::{CastError, EventKind, Label};
-use crate::math::V2;
+use crate::math::{V2, V3};
 use crate::runner::{default_party, party_at_level, raid_party, run_headless, run_with};
 use crate::sim::{
     ActorId, Aura, AuraKind, COMBAT_LINGER, Cast, CastKind, Controller, DT, DamageSpec, EnemyMode,
@@ -60,7 +60,7 @@ fn steps(sim: &mut Sim, seconds: f32) {
 
 fn place_near(sim: &mut Sim, who: ActorId, target: ActorId, dist: f32) {
     let tp = sim.actors[target].pos;
-    sim.actors[who].pos = sim.nav.project(tp + V2::new(0.0, -dist));
+    sim.set_actor_pos(who, tp + V2::new(0.0, -dist));
 }
 
 fn count(sim: &Sim, f: impl Fn(&EventKind) -> bool) -> usize {
@@ -192,13 +192,13 @@ fn parry_and_block_only_happen_from_the_front() {
         })
     };
     let pos = sim.actors[mob].pos;
-    sim.actors[PLAYER].pos = pos + V2::new(0.0, -1.5); // behind (mob faces +Z)
+    sim.set_actor_pos(PLAYER, pos + V2::new(0.0, -1.5)); // behind (mob faces +Z)
     for _ in 0..100 {
         sim.actors[mob].facing = 0.0;
         sim.deal(PLAYER, mob, melee());
     }
     assert_eq!(parries(&sim), 0, "no parries from behind");
-    sim.actors[PLAYER].pos = pos + V2::new(0.0, 1.5); // in front
+    sim.set_actor_pos(PLAYER, pos + V2::new(0.0, 1.5)); // in front
     for _ in 0..100 {
         sim.actors[mob].facing = 0.0;
         sim.deal(PLAYER, mob, melee());
@@ -794,8 +794,9 @@ fn cinder_ring_damages_only_those_inside() {
     let mut sim = passive_sim();
     let boss = pull_boss(&mut sim);
     let center = sim.actors[HEALER].pos;
-    sim.actors[RANGED].pos = sim.nav.project(center + V2::new(0.0, -12.0));
+    sim.set_actor_pos(RANGED, center + V2::new(0.0, -12.0));
     sim.telegraphs.push(Telegraph {
+        y: 0.0,
         id: 99,
         source: boss,
         what: Label::from("Cinder Ring"),
@@ -865,9 +866,9 @@ fn frontal_cleave_spares_those_behind() {
     let enc = encounter_index(&sim, "brood_chamber");
     let boss = sim.encounters[enc].mobs[0];
     let bp = sim.actors[boss].pos;
-    sim.actors[TANK].pos = bp + V2::new(0.0, -2.5);
-    sim.actors[MELEE].pos = bp + V2::new(0.0, 2.5);
-    sim.actors[PLAYER].pos = bp + V2::new(0.5, -2.8);
+    sim.set_actor_pos(TANK, bp + V2::new(0.0, -2.5));
+    sim.set_actor_pos(MELEE, bp + V2::new(0.0, 2.5));
+    sim.set_actor_pos(PLAYER, bp + V2::new(0.5, -2.8));
     for p in [TANK, MELEE, PLAYER] {
         make_immortal(&mut sim, p);
     }
@@ -919,7 +920,7 @@ fn hazards_pulse_on_and_off() {
         .position(|h| h.cfg.name == "Lava Vent")
         .unwrap();
     let pos = sim.hazards[h].cfg.pos;
-    sim.actors[MELEE].pos = pos;
+    sim.set_actor_pos(MELEE, pos);
     make_immortal(&mut sim, MELEE);
     let (on, off) = (sim.hazards[h].cfg.on, sim.hazards[h].cfg.off);
     steps(&mut sim, on + off);
@@ -1000,7 +1001,7 @@ fn boss_resets_after_wipe_and_phase_retriggers_on_next_pull() {
     assert_eq!(b.mode(), Some(EnemyMode::Idle));
     assert_eq!(b.hp, max);
     assert_eq!(sim.boss_phase(), 1);
-    assert!(b.pos.dist(home) < 0.5);
+    assert!(b.loc().dist(home) < 0.5);
 
     let t = &mut sim.actors[TANK];
     t.alive = true;
@@ -1024,7 +1025,7 @@ fn enemies_leash_and_reset_when_dragged_too_far() {
     place_near(&mut sim, TANK, mob, 2.0);
     sim.engage(enc, TANK);
     make_immortal(&mut sim, TANK);
-    sim.actors[TANK].pos = sim.content.dungeon.entrance;
+    sim.set_actor_pos(TANK, sim.content.dungeon.entrance);
     steps(&mut sim, 30.0);
     assert!(
         count(
@@ -1111,6 +1112,7 @@ fn ai_moves_out_of_noticed_telegraph_and_respects_reaction_time() {
     let mut sim = new_sim();
     let center = sim.actors[RANGED].pos;
     sim.telegraphs.push(Telegraph {
+        y: 0.0,
         id: 1,
         source: sim.boss,
         what: Label::from("Ring"),
@@ -1126,7 +1128,7 @@ fn ai_moves_out_of_noticed_telegraph_and_respects_reaction_time() {
     sim.telegraphs[0].remaining = 1.0;
     sim.board = ai::compute_blackboard(&sim);
     let goal = ai::escape_point(&sim, RANGED).expect("dodges");
-    assert!(goal.dist(center) > 5.0 + sim.actors[RANGED].radius);
+    assert!(goal.xz().dist(center) > 5.0 + sim.actors[RANGED].radius);
     sim.telegraphs[0].remaining = 2.25;
     sim.actors[RANGED].profile = AiProfile::MechanicFocused;
     sim.board = ai::compute_blackboard(&sim);
@@ -1458,9 +1460,9 @@ fn non_tanks_step_out_of_frontal_cleave_cones() {
     let enc = encounter_index(&sim, "brood_chamber");
     let boss = sim.encounters[enc].mobs[0];
     let bp = sim.actors[boss].pos;
-    sim.actors[TANK].pos = bp + V2::new(0.0, -2.5);
+    sim.set_actor_pos(TANK, bp + V2::new(0.0, -2.5));
     sim.actors[boss].facing = std::f32::consts::PI; // facing the tank (-Z)
-    sim.actors[HEALER].pos = bp + V2::new(0.5, -5.0); // in the cone
+    sim.set_actor_pos(HEALER, bp + V2::new(0.5, -5.0)); // in the cone
     sim.engage(enc, TANK);
     sim.add_threat(boss, TANK, 1e6);
     sim.actors[boss].target = Some(TANK);
@@ -1469,7 +1471,7 @@ fn non_tanks_step_out_of_frontal_cleave_cones() {
     let d = ai::party_decision(&sim, HEALER);
     let goal = d.move_goal.expect("moves out of the cone");
     assert!(
-        !crate::stats::is_in_front(bp, sim.actors[boss].facing, goal),
+        !crate::stats::is_in_front(bp, sim.actors[boss].facing, goal.xz()),
         "goal {goal:?} is still in front of the boss"
     );
 }
@@ -1707,22 +1709,23 @@ fn non_tanks_walk_around_frontal_cones_instead_of_through_them() {
     let enc = encounter_index(&sim, "brood_chamber");
     let boss = sim.encounters[enc].mobs[0];
     let bp = sim.actors[boss].pos;
-    sim.actors[TANK].pos = bp + V2::new(0.0, -2.5);
+    sim.set_actor_pos(TANK, bp + V2::new(0.0, -2.5));
     sim.actors[boss].facing = std::f32::consts::PI; // facing -Z
     sim.engage(enc, TANK);
     sim.add_threat(boss, TANK, 1e6);
     sim.actors[boss].target = Some(TANK);
-    sim.actors[HEALER].pos = bp + V2::new(-10.0, -2.0);
+    sim.set_actor_pos(HEALER, bp + V2::new(-10.0, -2.0));
     sim.board = ai::compute_blackboard(&sim);
-    let goal = bp + V2::new(10.0, -2.0); // straight line crosses the cone
+    let goal = V3::at(bp + V2::new(10.0, -2.0), 0.0); // straight line crosses the cone
     let step = ai::route_around_cones(&sim, HEALER, goal);
     assert_ne!(step, goal, "takes a detour");
     assert!(
-        !crate::stats::is_in_front(bp, sim.actors[boss].facing, step) || step.dist(bp) > 9.0,
+        !crate::stats::is_in_front(bp, sim.actors[boss].facing, step.xz())
+            || step.xz().dist(bp) > 9.0,
         "detour {step:?} stays out of the cone"
     );
     // A path that never touches the cone is left alone.
-    let clear = bp + V2::new(-10.0, 6.0);
+    let clear = V3::at(bp + V2::new(-10.0, 6.0), 0.0);
     assert_eq!(ai::route_around_cones(&sim, HEALER, clear), clear);
 }
 

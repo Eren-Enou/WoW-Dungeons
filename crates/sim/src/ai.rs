@@ -9,8 +9,8 @@
 
 use crate::class::{AbilityId, Effect, Role};
 use crate::content::{AbilityKind, EnemyRank};
-use crate::math::V2;
-use crate::sim::{ActorId, AuraKind, CastKind, EnemyMode, Sim};
+use crate::math::{V2, V3};
+use crate::sim::{ActorId, AuraKind, CastKind, EFFECT_HEIGHT, EnemyMode, Sim};
 use serde::{Deserialize, Serialize};
 
 /// How far behind the leader followers stand (local x = right, z = forward).
@@ -192,6 +192,8 @@ pub fn params_of(a: &crate::sim::Actor) -> ProfileParams {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Danger {
     pub center: V2,
+    /// Elevation of the floor the effect is on.
+    pub y: f32,
     pub radius: f32,
     /// Seconds since it appeared (telegraph) or 99 for hazards.
     pub age: f32,
@@ -226,7 +228,7 @@ pub struct Blackboard {
 pub struct Decision {
     /// `Some(x)` sets the current target to `x`; `None` leaves it unchanged.
     pub target: Option<Option<ActorId>>,
-    pub move_goal: Option<V2>,
+    pub move_goal: Option<V3>,
     /// Ability slot and target to attempt this tick.
     pub cast: Option<(usize, ActorId)>,
     pub stop_cast: bool,
@@ -424,6 +426,7 @@ pub fn compute_blackboard(sim: &Sim) -> Blackboard {
     for t in &sim.telegraphs {
         b.dangers.push(Danger {
             center: t.center,
+            y: t.y,
             radius: t.radius,
             age: t.elapsed(),
         });
@@ -434,7 +437,8 @@ pub fn compute_blackboard(sim: &Sim) -> Blackboard {
         }
         if h.active || h.time_to_active(sim.time) <= 1.0 {
             b.dangers.push(Danger {
-                center: h.cfg.pos,
+                center: h.pos.xz(),
+                y: h.pos.y,
                 radius: h.cfg.radius,
                 age: 99.0,
             });
@@ -458,7 +462,9 @@ fn usable(sim: &Sim, id: ActorId, ability: AbilityId, target: ActorId) -> Option
     if a.is_silenced() && def.school.is_magic() {
         return None;
     }
-    if def.target != crate::class::TargetRule::SelfOnly && !sim.reach(id, target, def.range) {
+    if def.target != crate::class::TargetRule::SelfOnly
+        && (!sim.reach(id, target, def.range) || !sim.has_los(id, target))
+    {
         return None;
     }
     let t = sim.actor(target);
@@ -471,42 +477,72 @@ fn usable(sim: &Sim, id: ActorId, ability: AbilityId, target: ActorId) -> Option
     valid.then_some((s, target))
 }
 
+impl Danger {
+    /// Does this danger cover point `p` (with clearance `r`)? Only on its own floor.
+    pub fn covers(&self, p: V3, r: f32) -> bool {
+        p.xz().dist(self.center) <= self.radius + r && (p.y - self.y).abs() <= EFFECT_HEIGHT
+    }
+}
+
 fn in_danger(sim: &Sim, id: ActorId, margin: f32, reaction: f32) -> bool {
     let me = sim.actor(id);
     sim.board
         .dangers
         .iter()
-        .any(|d| d.age >= reaction && me.pos.dist(d.center) <= d.radius + me.radius + margin)
+        .any(|d| d.age >= reaction && d.covers(me.loc(), me.radius + margin))
 }
 
-fn point_safe(sim: &Sim, p: V2, radius: f32, margin: f32) -> bool {
+/// Can `id` hit `target` from here (range and line of sight)?
+fn can_hit(sim: &Sim, id: ActorId, target: ActorId, range: f32) -> bool {
+    sim.reach(id, target, range) && sim.has_los(id, target)
+}
+
+/// Would someone standing at `spot` see `target`?
+fn spot_sees(sim: &Sim, spot: V3, target: ActorId) -> bool {
+    let t = sim.actor(target);
+    sim.nav
+        .line_of_sight(V3::at(spot.xz(), spot.y + 1.7), t.chest())
+}
+
+/// Snap a horizontal point onto the floor nearest elevation `y`.
+fn ground(sim: &Sim, p: V2, y: f32) -> V3 {
+    sim.nav.project(p, y).0
+}
+
+fn point_safe(sim: &Sim, p: V3, radius: f32, margin: f32) -> bool {
     sim.board
         .dangers
         .iter()
-        .all(|d| p.dist(d.center) > d.radius + radius + margin)
+        .all(|d| !d.covers(p, radius + margin))
 }
 
-/// If standing in a noticed danger zone, the nearest safe point.
-pub fn escape_point(sim: &Sim, id: ActorId) -> Option<V2> {
+/// If standing in a noticed danger zone, the nearest safe point (on our floor).
+pub fn escape_point(sim: &Sim, id: ActorId) -> Option<V3> {
     let me = sim.actor(id);
     let p = params_of(me);
     let margin = p.danger_margin;
-    let danger = sim.board.dangers.iter().find(|d| {
-        d.age >= p.reaction_time && me.pos.dist(d.center) <= d.radius + me.radius + margin
-    })?;
+    let danger = sim
+        .board
+        .dangers
+        .iter()
+        .find(|d| d.age >= p.reaction_time && d.covers(me.loc(), me.radius + margin))?;
     let safe_dist = danger.radius + me.radius + margin + 1.0;
     let mut dir = (me.pos - danger.center).normalize_or_zero();
     if dir.len_sq() == 0.0 {
         dir = V2::from_heading(id as f32 * 1.7);
     }
-    let mut best: Option<V2> = None;
+    let mut best: Option<V3> = None;
     for k in 0..16 {
         let sign = if k % 2 == 0 { 1.0 } else { -1.0 };
         let angle = sign * ((k + 1) / 2) as f32 * std::f32::consts::PI / 8.0;
         for dist in [safe_dist, safe_dist + 3.0] {
-            let cand = sim.nav.project(danger.center + dir.rotate(angle) * dist);
-            if point_safe(sim, cand, me.radius, margin * 0.5)
-                && best.is_none_or(|b| cand.dist(me.pos) < b.dist(me.pos))
+            let (cand, s) = sim
+                .nav
+                .project(danger.center + dir.rotate(angle) * dist, me.y);
+            // Only spots we can walk to from here.
+            if sim.nav.reachable(me.surface, s)
+                && point_safe(sim, cand, me.radius, margin * 0.5)
+                && best.is_none_or(|b| cand.dist(me.loc()) < b.dist(me.loc()))
             {
                 best = Some(cand);
             }
@@ -531,17 +567,19 @@ fn frontal_reach(sim: &Sim, e: ActorId) -> f32 {
 }
 
 /// Whether point `p` is inside the frontal cleave cone of any engaged enemy.
-fn in_frontal_cone(sim: &Sim, id: ActorId, p: V2, margin: f32) -> bool {
+fn in_frontal_cone(sim: &Sim, id: ActorId, p: V3, margin: f32) -> bool {
     let me = sim.actor(id);
     sim.board.frontal.iter().any(|&e| {
         let a = sim.actor(e);
         let reach = frontal_reach(sim, e) + a.radius + me.radius + margin;
-        p.dist(a.pos) <= reach && crate::stats::is_in_front(a.pos, a.facing, p)
+        p.xz().dist(a.pos) <= reach
+            && (p.y - a.y).abs() <= EFFECT_HEIGHT
+            && crate::stats::is_in_front(a.pos, a.facing, p.xz())
     })
 }
 
 /// Keep a desired position out of danger zones by nudging it outward.
-fn safe_spot(sim: &Sim, id: ActorId, want: V2) -> V2 {
+fn safe_spot(sim: &Sim, id: ActorId, want: V3) -> V3 {
     let me = sim.actor(id);
     let margin = params_of(me).danger_margin;
     let want = if !sim.is_tank(id) && in_frontal_cone(sim, id, want, margin) {
@@ -553,15 +591,15 @@ fn safe_spot(sim: &Sim, id: ActorId, want: V2) -> V2 {
             .copied()
             .min_by(|&a, &b| {
                 sim.actor(a)
-                    .pos
+                    .loc()
                     .dist(want)
-                    .total_cmp(&sim.actor(b).pos.dist(want))
+                    .total_cmp(&sim.actor(b).loc().dist(want))
             })
             .expect("in a cone implies a frontal enemy");
         let a = sim.actor(e);
         let back = V2::from_heading(a.facing + std::f32::consts::PI);
-        let dist = want.dist(a.pos).max(a.radius + me.radius + 1.0);
-        sim.nav.project(a.pos + back * dist)
+        let dist = want.xz().dist(a.pos).max(a.radius + me.radius + 1.0);
+        ground(sim, a.pos + back * dist, a.y)
     } else {
         want
     };
@@ -569,16 +607,18 @@ fn safe_spot(sim: &Sim, id: ActorId, want: V2) -> V2 {
         return want;
     }
     for d in &sim.board.dangers {
-        if want.dist(d.center) <= d.radius + me.radius + margin {
-            let dir = (want - d.center).normalize_or_zero();
+        if d.covers(want, me.radius + margin) {
+            let dir = (want.xz() - d.center).normalize_or_zero();
             let dir = if dir.len_sq() == 0.0 {
                 V2::new(1.0, 0.0)
             } else {
                 dir
             };
-            return sim
-                .nav
-                .project(d.center + dir * (d.radius + me.radius + margin + 1.0));
+            return ground(
+                sim,
+                d.center + dir * (d.radius + me.radius + margin + 1.0),
+                want.y,
+            );
         }
     }
     want
@@ -598,11 +638,13 @@ pub fn party_decision(sim: &Sim, id: ActorId) -> Decision {
 
 /// If the straight path to `goal` crosses a frontal cleave cone, steer to a point
 /// beside the cleaving enemy first (on our side), so we walk around the front.
-pub(crate) fn route_around_cones(sim: &Sim, id: ActorId, goal: V2) -> V2 {
+pub(crate) fn route_around_cones(sim: &Sim, id: ActorId, goal: V3) -> V3 {
     let me = sim.actor(id);
     let margin = params_of(me).danger_margin * 0.5;
     for k in 1..=8 {
-        let p = me.pos + (goal - me.pos) * (k as f32 / 8.0);
+        let f = k as f32 / 8.0;
+        let p2 = me.pos + (goal.xz() - me.pos) * f;
+        let p = V3::at(p2, me.y + (goal.y - me.y) * f);
         if !in_frontal_cone(sim, id, p, margin) {
             continue;
         }
@@ -610,7 +652,7 @@ pub(crate) fn route_around_cones(sim: &Sim, id: ActorId, goal: V2) -> V2 {
         let Some(&e) = sim.board.frontal.iter().find(|&&e| {
             let a = sim.actor(e);
             let reach = frontal_reach(sim, e) + a.radius + me.radius + margin;
-            p.dist(a.pos) <= reach && crate::stats::is_in_front(a.pos, a.facing, p)
+            p2.dist(a.pos) <= reach && crate::stats::is_in_front(a.pos, a.facing, p2)
         }) else {
             return goal;
         };
@@ -621,11 +663,11 @@ pub(crate) fn route_around_cones(sim: &Sim, id: ActorId, goal: V2) -> V2 {
         // Try both flanks (slightly behind them); keep those outside every cone.
         let best = [right, -right]
             .into_iter()
-            .map(|side| safe_spot(sim, id, sim.nav.project(a.pos + side * reach - fwd * 1.5)))
+            .map(|side| safe_spot(sim, id, ground(sim, a.pos + side * reach - fwd * 1.5, a.y)))
             .filter(|c| !in_frontal_cone(sim, id, *c, margin))
-            .min_by(|x, y| x.dist(me.pos).total_cmp(&y.dist(me.pos)));
+            .min_by(|x, y| x.dist(me.loc()).total_cmp(&y.dist(me.loc())));
         return match best {
-            Some(detour) if detour.dist(me.pos) >= 0.5 => detour,
+            Some(detour) if detour.dist(me.loc()) >= 0.5 => detour,
             _ => goal,
         };
     }
@@ -647,9 +689,9 @@ fn party_decision_inner(sim: &Sim, id: ActorId) -> Decision {
         return out_of_combat(sim, id);
     }
     let params = params_of(me);
-    if !sim.is_tank(id) && in_frontal_cone(sim, id, me.pos, params.danger_margin * 0.5) {
-        let goal = safe_spot(sim, id, me.pos);
-        if goal.dist(me.pos) > 0.2 {
+    if !sim.is_tank(id) && in_frontal_cone(sim, id, me.loc(), params.danger_margin * 0.5) {
+        let goal = safe_spot(sim, id, me.loc());
+        if goal.dist(me.loc()) > 0.2 {
             return Decision {
                 move_goal: Some(goal),
                 auto_attack: me.auto_attack,
@@ -673,10 +715,10 @@ fn party_decision_inner(sim: &Sim, id: ActorId) -> Decision {
                     ..Default::default()
                 };
             }
-        } else if me.cast.is_none() && !sim.reach(id, enemy, ab.def().range) {
+        } else if me.cast.is_none() && !can_hit(sim, id, enemy, ab.def().range) {
             let mut d = Decision {
                 target: Some(Some(enemy)),
-                move_goal: Some(safe_spot(sim, id, sim.actor(enemy).pos)),
+                move_goal: Some(safe_spot(sim, id, sim.actor(enemy).loc())),
                 auto_attack: true,
                 ..Default::default()
             };
@@ -694,7 +736,7 @@ fn party_decision_inner(sim: &Sim, id: ActorId) -> Decision {
     }
 }
 
-fn follow_point(sim: &Sim, id: ActorId) -> Option<V2> {
+fn follow_point(sim: &Sim, id: ActorId) -> Option<V3> {
     let leader = sim.actor(sim.leader);
     if !leader.alive || id == sim.leader {
         return None;
@@ -708,7 +750,11 @@ fn follow_point(sim: &Sim, id: ActorId) -> Option<V2> {
     let ring = (index / FORMATION.len()) as f32 * 3.0;
     let fwd = sim.leader_heading;
     let right = V2::new(fwd.z, -fwd.x);
-    Some(sim.nav.project(leader.pos + right * ox + fwd * (oz - ring)))
+    Some(ground(
+        sim,
+        leader.pos + right * ox + fwd * (oz - ring),
+        leader.y,
+    ))
 }
 
 fn out_of_combat(sim: &Sim, id: ActorId) -> Decision {
@@ -749,7 +795,7 @@ fn out_of_combat(sim: &Sim, id: ActorId) -> Decision {
         return d;
     }
     if let Some(goal) = follow_point(sim, id)
-        && goal.dist(me.pos) > 1.5
+        && goal.dist(me.loc()) > 1.5
     {
         d.move_goal = Some(safe_spot(sim, id, goal));
     }
@@ -778,7 +824,7 @@ fn autopilot(sim: &Sim, id: ActorId) -> Decision {
     }) && sim.alive_party().count() == sim.party.len();
     let gathered = sim
         .alive_party()
-        .all(|q| sim.actor(q).pos.dist(me.pos) <= 12.0 + 0.6 * sim.party.len() as f32);
+        .all(|q| sim.actor(q).loc().dist(me.loc()) <= 12.0 + 0.6 * sim.party.len() as f32);
     if !ready || !gathered {
         return d;
     }
@@ -790,20 +836,20 @@ fn autopilot(sim: &Sim, id: ActorId) -> Decision {
         .collect();
     let Some(&nearest) = mobs.iter().min_by(|&&a, &&b| {
         sim.actor(a)
-            .pos
-            .dist(me.pos)
-            .total_cmp(&sim.actor(b).pos.dist(me.pos))
+            .loc()
+            .dist(me.loc())
+            .total_cmp(&sim.actor(b).loc().dist(me.loc()))
     }) else {
         return d;
     };
     if let Some(c) = usable(sim, id, AbilityId::Challenge, nearest)
-        && sim.actor(nearest).pos.dist(me.pos) <= 22.0
+        && sim.actor(nearest).loc().dist(me.loc()) <= 22.0
     {
         d.cast = Some(c);
         d.target = Some(Some(nearest));
         return d;
     }
-    d.move_goal = Some(safe_spot(sim, id, sim.actor(nearest).pos));
+    d.move_goal = Some(safe_spot(sim, id, sim.actor(nearest).loc()));
     d
 }
 
@@ -816,13 +862,16 @@ fn rank_weight(sim: &Sim, e: ActorId) -> f32 {
 }
 
 /// Where a melee attacker should stand: behind `target` relative to the tank.
-fn behind_spot(sim: &Sim, id: ActorId, target: ActorId) -> V2 {
+fn behind_spot(sim: &Sim, id: ActorId, target: ActorId) -> V3 {
     let t = sim.actor(target);
     let me = sim.actor(id);
     let behind = V2::from_heading(t.facing + std::f32::consts::PI);
     let side = if id.is_multiple_of(2) { 0.35 } else { -0.35 };
-    sim.nav
-        .project(t.pos + behind.rotate(side) * (t.radius + me.radius + 1.0))
+    ground(
+        sim,
+        t.pos + behind.rotate(side) * (t.radius + me.radius + 1.0),
+        t.y,
+    )
 }
 
 /// Tank: pick up loose enemies (taunt if possible), hold the enemy whose threat lead
@@ -896,8 +945,8 @@ fn tank(sim: &Sim, id: ActorId) -> Decision {
             };
             match usable(sim, id, AbilityId::Challenge, e) {
                 Some(c) => d.cast = Some(c),
-                None if !sim.reach(id, e, 20.0) => {
-                    d.move_goal = Some(safe_spot(sim, id, sim.actor(e).pos))
+                None if !can_hit(sim, id, e, 20.0) => {
+                    d.move_goal = Some(safe_spot(sim, id, sim.actor(e).loc()))
                 }
                 None => {}
             }
@@ -976,19 +1025,19 @@ fn tank(sim: &Sim, id: ActorId) -> Decision {
     if d.cast.is_none() {
         let near = engaged
             .iter()
-            .filter(|&&e| sim.actor(e).pos.dist(me.pos) <= 8.0 + sim.actor(e).radius)
+            .filter(|&&e| sim.near(id, e, 8.0 + sim.actor(e).radius))
             .count();
         let wants_defensive =
             me.hp_frac() < p.defensive_hp || sim.board.pulse_incoming || stacks >= 4;
         let loose_near = loose
             .iter()
-            .filter(|&&e| sim.actor(e).pos.dist(me.pos) <= 8.0 + sim.actor(e).radius)
+            .filter(|&&e| sim.near(id, e, 8.0 + sim.actor(e).radius))
             .count();
         let cc_near_now = sim
             .board
             .engaged
             .iter()
-            .any(|&e| sim.actor(e).is_incapacitated() && sim.actor(e).pos.dist(me.pos) <= 9.0);
+            .any(|&e| sim.actor(e).is_incapacitated() && sim.near(id, e, 9.0));
         d.cast = if wants_defensive {
             usable(sim, id, AbilityId::Bulwark, id)
         } else {
@@ -1001,10 +1050,11 @@ fn tank(sim: &Sim, id: ActorId) -> Decision {
         })
         .or_else(|| {
             // Quake on packs, but never next to a crowd-controlled enemy.
-            let cc_near =
-                sim.board.engaged.iter().any(|&e| {
-                    sim.actor(e).is_incapacitated() && sim.actor(e).pos.dist(me.pos) <= 9.0
-                });
+            let cc_near = sim
+                .board
+                .engaged
+                .iter()
+                .any(|&e| sim.actor(e).is_incapacitated() && sim.near(id, e, 9.0));
             (near >= 2 && !cc_near)
                 .then(|| usable(sim, id, AbilityId::QuakeStomp, id))
                 .flatten()
@@ -1025,16 +1075,16 @@ fn tank(sim: &Sim, id: ActorId) -> Decision {
                 others.iter().fold(V2::ZERO, |acc, &v| acc + v) * (1.0 / others.len() as f32);
             let away = (t.pos - centroid).normalize_or_zero();
             if away.len_sq() > 0.0 {
-                let spot = sim.nav.project(t.pos + away * (t.radius + me.radius + 1.2));
-                if spot.dist(me.pos) > 1.5 {
+                let spot = ground(sim, t.pos + away * (t.radius + me.radius + 1.2), t.y);
+                if spot.dist(me.loc()) > 1.5 {
                     d.move_goal = Some(safe_spot(sim, id, spot));
                 }
                 return d;
             }
         }
     }
-    if !sim.reach(id, target, 1.6) {
-        d.move_goal = Some(safe_spot(sim, id, t.pos));
+    if !can_hit(sim, id, target, 1.6) {
+        d.move_goal = Some(safe_spot(sim, id, t.loc()));
     }
     d
 }
@@ -1106,7 +1156,7 @@ fn healer(sim: &Sim, id: ActorId) -> Decision {
                 if let Some(c) = usable(sim, id, AbilityId::Mend, q) {
                     d.cast = Some(c);
                     break;
-                } else if !sim.reach(id, q, 30.0) {
+                } else if !can_hit(sim, id, q, 30.0) {
                     out_of_range_patient.get_or_insert(q);
                 }
             }
@@ -1133,8 +1183,11 @@ fn healer(sim: &Sim, id: ActorId) -> Decision {
             }
         }
     }
+    // Losing sight of the tank (a corner, a ledge) comes before dealing damage.
+    let tank_lost = tank.is_some_and(|t| t != id && !can_hit(sim, id, t, 30.0));
     if d.cast.is_none()
         && !fresh_pull
+        && !tank_lost
         && mana > p.smite_mana
         && let Some(t) = sim.board.kill_target
         && tank.is_none_or(|k| sim.threat(t, k) > 300.0)
@@ -1147,19 +1200,28 @@ fn healer(sim: &Sim, id: ActorId) -> Decision {
         .is_some_and(|(s, _)| me.abilities[s].def().cast_time > 0.0);
     if !casting_now {
         if let Some(q) = out_of_range_patient {
-            d.move_goal = Some(safe_spot(sim, id, sim.actor(q).pos));
+            d.move_goal = Some(safe_spot(sim, id, sim.actor(q).loc()));
         } else if let Some(goal) = ranged_spot(sim, id, 15.0) {
-            let far_from_party = sim.alive_party().any(|q| !sim.reach(id, q, 26.0));
-            if goal.dist(me.pos) > 6.0 || far_from_party || in_danger(sim, id, 0.0, 0.0) {
+            // The ranged spot is chosen to see both the enemy and the tank, so it
+            // is also where to go after losing sight of the tank (one goal, no
+            // flip-flopping at the edge of a corner).
+            let far_from_party = sim.alive_party().any(|q| !can_hit(sim, id, q, 26.0));
+            if goal.dist(me.loc()) > 6.0
+                || far_from_party
+                || tank_lost
+                || in_danger(sim, id, 0.0, 0.0)
+            {
                 d.move_goal = Some(safe_spot(sim, id, goal));
             }
+        } else if let Some(t) = tank.filter(|_| tank_lost) {
+            d.move_goal = Some(safe_spot(sim, id, sim.actor(t).loc()));
         }
     }
     d
 }
 
 /// A spot `dist` away from the tank's enemy on the tank's side, offset sideways per actor.
-fn ranged_spot(sim: &Sim, id: ActorId, dist: f32) -> Option<V2> {
+fn ranged_spot(sim: &Sim, id: ActorId, dist: f32) -> Option<V3> {
     let tank = sim.board.tanks.first().copied();
     let enemy = tank
         .and_then(|t| sim.actor(t).target)
@@ -1173,17 +1235,44 @@ fn ranged_spot(sim: &Sim, id: ActorId, dist: f32) -> Option<V2> {
         // Frontal cleavers: stand behind-and-to-the-side, never in front.
         let back = V2::from_heading(e.facing + std::f32::consts::PI);
         let flank = if id.is_multiple_of(2) { 0.9 } else { -0.9 };
-        return Some(
-            sim.nav
-                .project(epos + back.rotate(flank + side * 0.3) * dist),
-        );
+        return Some(ground(
+            sim,
+            epos + back.rotate(flank + side * 0.3) * dist,
+            e.y,
+        ));
     }
     let anchor = tank.map(|t| sim.actor(t).pos).unwrap_or(sim.actor(id).pos);
     let mut dir = (anchor - epos).normalize_or_zero();
     if dir.len_sq() == 0.0 {
         dir = (sim.actor(id).pos - epos).normalize_or_zero();
     }
-    Some(sim.nav.project(epos + dir.rotate(side) * dist))
+    // A spot behind a corner is useless: come closer until the enemy is in
+    // sight, and stay where the healer can see you (healers: where they can
+    // see the tank).
+    let watch = if sim.actor(id).role() == Some(Role::Healer) {
+        tank
+    } else {
+        sim.board.healers.first().copied()
+    };
+    // Search outward from the preferred direction: the first spot that is
+    // really on the floor (not clamped into a side corridor), sees the enemy and
+    // is seen by the watcher.
+    let base = dir.rotate(side);
+    for k in [1.0, 0.7, 0.45] {
+        for step in 0..9 {
+            let sign = if step % 2 == 0 { 1.0 } else { -1.0 };
+            let angle = sign * ((step + 1) / 2) as f32 * std::f32::consts::FRAC_PI_6;
+            let want = epos + base.rotate(angle) * (dist * k);
+            let spot = ground(sim, want, e.y);
+            if spot.xz().dist(want) < 2.0
+                && spot_sees(sim, spot, enemy)
+                && watch.is_none_or(|t| spot_sees(sim, spot, t))
+            {
+                return Some(spot);
+            }
+        }
+    }
+    Some(ground(sim, epos + dir * (e.radius + 3.0), e.y))
 }
 
 fn dps(sim: &Sim, id: ActorId) -> Decision {
@@ -1241,17 +1330,27 @@ fn dps(sim: &Sim, id: ActorId) -> Decision {
     }
     d.auto_attack = !hold;
 
-    let cc_nearby = |center: V2, r: f32| {
+    let cc_nearby = |r: f32| {
         sim.board
             .engaged
             .iter()
-            .any(|&e| sim.actor(e).is_incapacitated() && sim.actor(e).pos.dist(center) <= r + 1.0)
+            .any(|&e| sim.actor(e).is_incapacitated() && sim.near(id, e, r + 1.0))
     };
     if ranged {
-        if !sim.reach(id, target, 26.0) || in_danger(sim, id, 0.0, 0.0) {
+        let unseen = sim
+            .board
+            .healers
+            .first()
+            .is_some_and(|&h| h != id && !sim.has_los(h, id));
+        if !sim.has_los(id, target) {
+            // No line of sight (a corner or a floor in the way): walk toward the
+            // target along the path until it comes into view.
+            d.move_goal = Some(safe_spot(sim, id, t.loc()));
+        } else if !sim.reach(id, target, 26.0) || in_danger(sim, id, 0.0, 0.0) || unseen {
+            // Out of range, in danger, or out of the healer's sight.
             d.move_goal = ranged_spot(sim, id, RANGED_DISTANCE)
                 .map(|s| safe_spot(sim, id, s))
-                .or(Some(t.pos));
+                .or(Some(t.loc()));
         }
         if !hold && d.cast.is_none() {
             d.cast = usable(sim, id, AbilityId::Flare, target)
@@ -1260,11 +1359,16 @@ fn dps(sim: &Sim, id: ActorId) -> Decision {
         if d.cast
             .is_some_and(|(s, _)| me.abilities[s].def().cast_time > 0.0)
         {
-            d.move_goal = None;
+            if unseen && d.move_goal.is_some() {
+                // Getting back into the healer's sight beats a cast.
+                d.cast = None;
+            } else {
+                d.move_goal = None;
+            }
         }
     } else {
         let spot = safe_spot(sim, id, behind_spot(sim, id, target));
-        if !sim.reach(id, target, 1.6) || spot.dist(me.pos) > 2.5 && tank.is_some() {
+        if !can_hit(sim, id, target, 1.6) || spot.dist(me.loc()) > 2.5 && tank.is_some() {
             d.move_goal = Some(spot);
         }
         if !hold && d.cast.is_none() {
@@ -1273,12 +1377,12 @@ fn dps(sim: &Sim, id: ActorId) -> Decision {
                 .engaged
                 .iter()
                 .copied()
-                .filter(|&e| sim.actor(e).pos.dist(me.pos) <= 6.0 + sim.actor(e).radius)
+                .filter(|&e| sim.near(id, e, 6.0 + sim.actor(e).radius))
                 .collect();
             let aoe_safe = tank.is_some_and(|tank| {
                 near.iter()
                     .all(|&e| sim.threat(e, tank) > 2.0 * sim.threat(e, id) + 150.0)
-            }) && !cc_nearby(me.pos, 6.0);
+            }) && !cc_nearby(6.0);
             if near.len() >= 2 && aoe_safe {
                 d.cast = usable(sim, id, AbilityId::Whirl, id);
             }
@@ -1315,9 +1419,9 @@ pub fn enemy_decision(sim: &Sim, id: ActorId) -> Decision {
             };
             if let Some(t) = target
                 && me.cast.is_none()
-                && !sim.reach(id, t, me.attack_range * 0.8)
+                && (!sim.reach(id, t, me.attack_range * 0.8) || !sim.has_los(id, t))
             {
-                d.move_goal = Some(sim.actor(t).pos);
+                d.move_goal = Some(sim.actor(t).loc());
             }
             d
         }
