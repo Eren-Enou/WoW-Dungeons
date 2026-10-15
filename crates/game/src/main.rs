@@ -12,6 +12,7 @@ mod dungeon;
 mod fx;
 mod hub;
 mod hud;
+mod navdebug;
 mod overlay;
 mod results;
 mod tooltip;
@@ -46,6 +47,7 @@ fn main() {
         hub::HubPlugin,
         dungeon::DungeonPlugin,
         hud::HudPlugin,
+        navdebug::NavDebugPlugin,
         results::ResultsPlugin,
         overlay::OverlayPlugin,
         fx::FxPlugin,

@@ -45,6 +45,8 @@ pub struct DemoConfig {
     pub class: Option<String>,
     /// AI profile for every companion in demo runs (`--profile aggressive`).
     pub profile: Option<String>,
+    /// Camera distance for overview screenshots (`--zoom 30`); also tilts down.
+    pub zoom: Option<f32>,
 }
 
 #[derive(Resource, Default)]
@@ -85,6 +87,7 @@ pub fn parse_args() -> DemoConfig {
         group: value("--group").map(|g| g as u32),
         class: text("--class"),
         profile: text("--profile"),
+        zoom: value("--zoom"),
     }
 }
 
@@ -339,6 +342,10 @@ fn demo_camera(
         return;
     };
     let Some(p) = run.sim.player else { return };
+    if let Some(z) = cfg.zoom {
+        orbit.distance = z.clamp(4.0, 60.0);
+        orbit.pitch = 1.05;
+    }
     let target = run.sim.actors[p].facing;
     let mut diff = target - orbit.yaw;
     while diff > std::f32::consts::PI {

@@ -1384,12 +1384,54 @@ mod tests {
 
     #[test]
     fn content_round_trips_through_toml() {
-        for c in [Content::builtin(), Content::builtin_warrens()] {
+        for c in [
+            Content::builtin(),
+            Content::builtin_warrens(),
+            Content::builtin_cavern(),
+        ] {
             let text = c.to_toml().expect("serializes");
             let back = Content::from_toml_str(&text, "roundtrip").expect("re-parses and validates");
             assert_eq!(back.to_toml().unwrap(), text, "stable round trip");
             assert_eq!(back.encounters.len(), c.encounters.len());
+            // Heights, ramps, decks and drops survive (the editor saves this way).
+            assert_eq!(back.dungeon.areas.len(), c.dungeon.areas.len());
+            assert_eq!(back.dungeon.links.len(), c.dungeon.links.len());
+            let (a, b) = (c.nav(), back.nav());
+            assert_eq!(a.links.len(), b.links.len());
+            assert_eq!(a.walls.len(), b.walls.len());
         }
+    }
+
+    #[test]
+    fn ambiguous_or_misplaced_elevations_are_reported() {
+        // The bridge skulker stands above the underpass: without `y` it is ambiguous.
+        let text = BUILTIN_CAVERN.replace(
+            "{ template = \"skulker\", pos = [42.0, 70.0], y = 5.0 }",
+            "{ template = \"skulker\", pos = [42.0, 70.0] }",
+        );
+        let err = Content::from_toml_str(&text, "test")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("add y = <height>"), "{err}");
+        let text = BUILTIN_CAVERN.replace(
+            "{ template = \"skulker\", pos = [42.0, 70.0], y = 5.0 }",
+            "{ template = \"skulker\", pos = [42.0, 70.0], y = 2.0 }",
+        );
+        let err = Content::from_toml_str(&text, "test")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("floors there are at y"), "{err}");
+        // A solid area over another is rejected with the fix in the message.
+        let text = BUILTIN_CAVERN.replacen(
+            "under = \"open\"
+",
+            "",
+            1,
+        );
+        let err = Content::from_toml_str(&text, "test")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("under = \"open\""), "{err}");
     }
 
     #[test]

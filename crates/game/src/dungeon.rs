@@ -1047,13 +1047,18 @@ pub fn process_events(mut run: ResMut<ActiveRun>) {
 
 fn sync_actors(
     run: Res<ActiveRun>,
+    orbit: Res<OrbitCamera>,
     mut q: Query<(&ActorVisual, &mut Transform, &mut Visibility)>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
+    // In tight spaces the camera can be pulled right up to the character:
+    // hide your own model rather than filling the screen with it.
+    let too_close = orbit.current < 2.0;
     for (vis, mut t, mut visibility) in &mut q {
         let a = &run.sim.actors[vis.id];
         let despawned = a.enemy.as_ref().is_some_and(|e| e.despawned);
-        *visibility = if despawned {
+        let hidden_self = too_close && run.sim.player == Some(vis.id);
+        *visibility = if despawned || hidden_self {
             Visibility::Hidden
         } else {
             Visibility::Inherited
