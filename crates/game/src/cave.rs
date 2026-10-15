@@ -407,7 +407,7 @@ pub fn spawn_lava(
                 Mesh3d(crust_mesh.clone()),
                 MeshMaterial3d(crust_mat.clone()),
                 Transform::from_xyz(p.x, l.y + 0.02, p.z)
-                    .with_rotation(Quat::from_rotation_y(r3 * 6.28))
+                    .with_rotation(Quat::from_rotation_y(r3 * std::f32::consts::TAU))
                     .with_scale(Vec3::new(0.7 + r1 * 1.8, 1.0, 0.5 + r2 * 1.4)),
                 scoped.clone(),
             ));
