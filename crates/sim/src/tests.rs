@@ -2385,14 +2385,17 @@ fn diag_replay() {
                 .move_goal
                 .map(|g| sim.nav.next_waypoint(a.pos, a.surface, g));
             eprintln!(
-                "  watch ({:.3},{:.3}) s{} wp {:?} goal {:?} recover {:.2} commit {:.2}",
+                "  watch ({:.3},{:.3}) s{} wp {:?} goal {:?} recover {:.2} commit {:.2} commit_goal ({:.2},{:.2}) prev {:?}",
                 a.pos.x,
                 a.pos.z,
                 a.surface,
                 wp.map(|w| (w.point.x, w.point.z, w.link)),
                 a.move_goal.map(|g| (g.x, g.z)),
                 a.nav.recover,
-                a.nav.commit
+                a.nav.commit,
+                a.nav.commit_goal.x,
+                a.nav.commit_goal.z,
+                a.nav.prev_goal.map(|g| (g.x, g.z))
             );
             sim.step();
         }

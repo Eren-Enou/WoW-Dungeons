@@ -158,11 +158,11 @@ y = -6.0
 [[dungeon.areas]]
 name = "Slag Pit (north)"
 min = [
-    66.0,
+    64.5,
     40.5,
 ]
 max = [
-    78.0,
+    79.5,
     47.5,
 ]
 tint = [
@@ -175,11 +175,11 @@ y = -6.0
 [[dungeon.areas]]
 name = "Slag Pit (south)"
 min = [
-    66.0,
+    64.5,
     24.5,
 ]
 max = [
-    78.0,
+    79.5,
     31.5,
 ]
 tint = [

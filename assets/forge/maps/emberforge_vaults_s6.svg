@@ -11,8 +11,8 @@
 <polygon points="121.50,63.50 137.50,63.50 137.50,47.50 121.50,47.50" fill="rgb(165,111,113)" stroke="#2a2420" stroke-width="0.25"><title>Bellows Room (y -2.5)</title></polygon>
 <polygon points="81.50,67.50 89.50,67.50 89.50,43.50 81.50,43.50" fill="rgb(165,111,113)" stroke="#2a2420" stroke-width="0.25"><title>Spill Chamber (west) (y -2.5)</title></polygon>
 <polygon points="97.50,67.50 105.50,67.50 105.50,43.50 97.50,43.50" fill="rgb(165,111,113)" stroke="#2a2420" stroke-width="0.25"><title>Spill Chamber (east) (y -2.5)</title></polygon>
-<polygon points="88.00,51.50 99.00,51.50 99.00,43.50 88.00,43.50" fill="rgb(165,111,113)" stroke="#2a2420" stroke-width="0.25"><title>Spill Chamber (north) (y -2.5)</title></polygon>
-<polygon points="88.00,67.50 99.00,67.50 99.00,59.50 88.00,59.50" fill="rgb(165,111,113)" stroke="#2a2420" stroke-width="0.25"><title>Spill Chamber (south) (y -2.5)</title></polygon>
+<polygon points="86.50,51.50 100.50,51.50 100.50,43.50 86.50,43.50" fill="rgb(165,111,113)" stroke="#2a2420" stroke-width="0.25"><title>Spill Chamber (north) (y -2.5)</title></polygon>
+<polygon points="86.50,67.50 100.50,67.50 100.50,59.50 86.50,59.50" fill="rgb(165,111,113)" stroke="#2a2420" stroke-width="0.25"><title>Spill Chamber (south) (y -2.5)</title></polygon>
 <polygon points="127.00,49.00 132.00,49.00 132.00,29.50 127.00,29.50" fill="rgb(165,111,113)" stroke="#2a2420" stroke-width="0.25"><title>Anvil Court - Bellows Room passage (y -2.5)</title></polygon>
 <polygon points="104.00,58.00 123.00,58.00 123.00,53.00 104.00,53.00" fill="rgb(165,111,113)" stroke="#2a2420" stroke-width="0.25"><title>Bellows Room - Spill Chamber passage (y -2.5)</title></polygon>
 <polygon points="67.00,58.50 83.00,58.50 83.00,52.50 67.00,52.50" fill="rgb(182,100,86)" stroke="#2a2420" stroke-width="0.25"><title>Spill Chamber - Hall of Bellows stair (y -5.5 to -2.5)</title></polygon>

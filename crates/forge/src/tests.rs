@@ -205,3 +205,35 @@ fn five_player_parties_clear_generated_layouts() {
         assert!(s.nav_stuck_seconds < 10.0);
     }
 }
+
+#[test]
+fn ten_player_raids_clear_generated_layouts_without_loops() {
+    // Regression (0.6): companions committed to a stale point at a ramp
+    // mouth shuttled for 20+ minutes (the dither commitment renewed itself
+    // with its own target). Found by `dungeon-forge test` on layout 8.
+    let (b, k) = (bp(), kit());
+    for seed in [6u64, 8] {
+        let g = build::generate(&b, &k, seed).expect("generates");
+        let party = dungeon_sim::runner::raid_party(
+            10,
+            b.blueprint.level,
+            dungeon_sim::AiProfile::Balanced,
+        );
+        for sim_seed in 1..=3 {
+            let (_, s) = dungeon_sim::runner::run_headless(&g.content, &party, sim_seed, 1500.0);
+            assert_eq!(
+                s.outcome,
+                dungeon_sim::RunOutcome::Victory,
+                "layout {seed} sim {sim_seed}: cleared {}/{}, dithers {}",
+                s.encounters_cleared,
+                s.encounters_total,
+                s.nav_dithers
+            );
+            assert!(
+                s.nav_dithers < 1500,
+                "layout {seed} sim {sim_seed}: {} dithers",
+                s.nav_dithers
+            );
+        }
+    }
+}

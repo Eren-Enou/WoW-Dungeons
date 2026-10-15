@@ -4,8 +4,8 @@
 <polygon points="99.50,64.25 112.00,64.25 112.00,50.75 99.50,50.75" fill="#c4420f" opacity="0.85"/>
 <polygon points="76.50,69.00 83.50,69.00 83.50,46.00 76.50,46.00" fill="rgb(200,90,60)" stroke="#2a2420" stroke-width="0.25"><title>Slag Pit (west) (y -6.0)</title></polygon>
 <polygon points="92.50,69.00 99.50,69.00 99.50,46.00 92.50,46.00" fill="rgb(200,90,60)" stroke="#2a2420" stroke-width="0.25"><title>Slag Pit (east) (y -6.0)</title></polygon>
-<polygon points="82.00,53.00 94.00,53.00 94.00,46.00 82.00,46.00" fill="rgb(200,90,60)" stroke="#2a2420" stroke-width="0.25"><title>Slag Pit (north) (y -6.0)</title></polygon>
-<polygon points="82.00,69.00 94.00,69.00 94.00,62.00 82.00,62.00" fill="rgb(200,90,60)" stroke="#2a2420" stroke-width="0.25"><title>Slag Pit (south) (y -6.0)</title></polygon>
+<polygon points="80.50,53.00 95.50,53.00 95.50,46.00 80.50,46.00" fill="rgb(200,90,60)" stroke="#2a2420" stroke-width="0.25"><title>Slag Pit (north) (y -6.0)</title></polygon>
+<polygon points="80.50,69.00 95.50,69.00 95.50,62.00 80.50,62.00" fill="rgb(200,90,60)" stroke="#2a2420" stroke-width="0.25"><title>Slag Pit (south) (y -6.0)</title></polygon>
 <polygon points="136.00,66.00 136.00,49.00 132.50,45.50 115.50,45.50 112.00,49.00 112.00,66.00 115.50,69.50 132.50,69.50" fill="rgb(200,90,60)" stroke="#2a2420" stroke-width="0.25"><title>Hall of Bellows (y -6.0)</title></polygon>
 <polygon points="115.00,30.50 133.00,30.50 133.00,12.50 115.00,12.50" fill="rgb(200,90,60)" stroke="#2a2420" stroke-width="0.25"><title>Smoke Hollow (y -6.0)</title></polygon>
 <polygon points="173.50,29.00 173.50,14.00 167.50,8.00 152.50,8.00 146.50,14.00 146.50,29.00 152.50,35.00 167.50,35.00" fill="rgb(200,90,60)" stroke="#2a2420" stroke-width="0.25"><title>The Crucible (y -6.0)</title></polygon>

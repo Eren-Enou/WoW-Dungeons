@@ -2444,6 +2444,7 @@ impl Sim {
             self.ground_danger(a.loc(), a.radius + 0.5)
                 || (a.nav.commit > 0.0 && self.ground_danger(a.nav.commit_goal, a.radius + 0.5))
         };
+        let ai_goal = goal;
         let goal = {
             let n = &mut self.actors[id].nav;
             if danger {
@@ -2526,7 +2527,9 @@ impl Sim {
             n.dithers += 1;
         }
         n.last_step = dir;
-        n.prev_goal = Some(goal);
+        // Remember the AI's own goal, not a commitment target, so a repeated
+        // dither commits to what the AI actually wanted a moment ago.
+        n.prev_goal = Some(ai_goal);
         dir * (speed * DT).min(d.len())
     }
 

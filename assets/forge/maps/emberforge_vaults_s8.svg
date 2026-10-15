@@ -13,8 +13,8 @@
 <polygon points="102.50,100.00 102.50,87.00 100.00,84.50 87.00,84.50 84.50,87.00 84.50,100.00 87.00,102.50 100.00,102.50" fill="rgb(120,140,185)" stroke="#2a2420" stroke-width="0.25"><title>Flue Junction (y 0.0)</title></polygon>
 <polygon points="46.00,105.00 54.00,105.00 54.00,82.00 46.00,82.00" fill="rgb(120,140,185)" stroke="#2a2420" stroke-width="0.25"><title>Slag Pit (west) (y 0.0)</title></polygon>
 <polygon points="61.00,105.00 69.00,105.00 69.00,82.00 61.00,82.00" fill="rgb(120,140,185)" stroke="#2a2420" stroke-width="0.25"><title>Slag Pit (east) (y 0.0)</title></polygon>
-<polygon points="52.50,90.00 62.50,90.00 62.50,82.00 52.50,82.00" fill="rgb(120,140,185)" stroke="#2a2420" stroke-width="0.25"><title>Slag Pit (north) (y 0.0)</title></polygon>
-<polygon points="52.50,105.00 62.50,105.00 62.50,97.00 52.50,97.00" fill="rgb(120,140,185)" stroke="#2a2420" stroke-width="0.25"><title>Slag Pit (south) (y 0.0)</title></polygon>
+<polygon points="51.00,90.00 64.00,90.00 64.00,82.00 51.00,82.00" fill="rgb(120,140,185)" stroke="#2a2420" stroke-width="0.25"><title>Slag Pit (north) (y 0.0)</title></polygon>
+<polygon points="51.00,105.00 64.00,105.00 64.00,97.00 51.00,97.00" fill="rgb(120,140,185)" stroke="#2a2420" stroke-width="0.25"><title>Slag Pit (south) (y 0.0)</title></polygon>
 <polygon points="12.00,175.00 31.00,175.00 31.00,156.00 12.00,156.00" fill="rgb(120,140,185)" stroke="#2a2420" stroke-width="0.25"><title>Charred Vault (y 0.0)</title></polygon>
 <polygon points="66.50,172.00 66.50,159.00 64.00,156.50 51.00,156.50 48.50,159.00 48.50,172.00 51.00,174.50 64.00,174.50" fill="rgb(120,140,185)" stroke="#2a2420" stroke-width="0.25"><title>Tinder Room (y 0.0)</title></polygon>
 <polygon points="84.50,174.50 102.50,174.50 102.50,156.50 84.50,156.50" fill="rgb(120,140,185)" stroke="#2a2420" stroke-width="0.25"><title>Cinder Nook (y 0.0)</title></polygon>

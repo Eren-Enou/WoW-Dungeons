@@ -35,6 +35,10 @@ pub struct Composed {
 
 /// Chasm depth under bridges.
 const CHASM: f32 = 6.0;
+/// The strips round a pit overlap this much at the corners. Walk areas are
+/// inset 0.4 m on every edge, so a 1.5 m overlap left a 0.7 m portal that
+/// companions turning the corner oscillated across; 3 m leaves 2.2 m.
+const STRIP_OVERLAP: f32 = 3.0;
 /// Lava sits this far below a pit room's floor.
 const PIT_DEPTH: f32 = 1.2;
 
@@ -132,8 +136,16 @@ pub fn compose(plan: &Plan, kit: &Kit) -> Composed {
             let pieces = [
                 ("west", V2::new(-h, -h), V2::new(-p, h)),
                 ("east", V2::new(p, -h), V2::new(h, h)),
-                ("north", V2::new(-p - OVERLAP, p), V2::new(p + OVERLAP, h)),
-                ("south", V2::new(-p - OVERLAP, -h), V2::new(p + OVERLAP, -p)),
+                (
+                    "north",
+                    V2::new(-p - STRIP_OVERLAP, p),
+                    V2::new(p + STRIP_OVERLAP, h),
+                ),
+                (
+                    "south",
+                    V2::new(-p - STRIP_OVERLAP, -h),
+                    V2::new(p + STRIP_OVERLAP, -p),
+                ),
             ];
             for (side, a, b) in pieces {
                 let mut area = rect_area(format!("{} ({side})", r.name), r2(c + a), r2(c + b), r.y);

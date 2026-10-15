@@ -21,7 +21,7 @@ USAGE
       installed side by side.
   dungeon-forge inspect <dungeon.toml> [--map FILE.svg]
       Summarise any dungeon file (handwritten or generated); optionally draw its map.
-  dungeon-forge test <dungeon.toml|blueprint.toml> [--seed N] [--runs N] [--sizes 5,10]
+  dungeon-forge test <dungeon.toml|blueprint.toml> [--seed N | --layouts A..B] [--runs N] [--sizes 5,10]
                      [--profiles balanced,aggressive,...] [--classes striker,mender,...]
                      [--difficulties normal,heroic] [--level N] [--failures FILE.json]
       Simulated AI clears over every combination; failures (wipes, timeouts,
@@ -308,6 +308,7 @@ fn cmd_inspect(args: &Args) -> Result<ExitCode, String> {
 fn cmd_test(args: &Args) -> Result<ExitCode, String> {
     args.known(&[
         "seed",
+        "layouts",
         "runs",
         "sizes",
         "profiles",
@@ -317,28 +318,42 @@ fn cmd_test(args: &Args) -> Result<ExitCode, String> {
         "failures",
     ])?;
     let path = first_path(args, "dungeon or blueprint")?;
-    let (content, origin, hint) = if is_blueprint(&path) {
-        let (bp, g) = generate_from(&path, args)?;
-        let tmp = PathBuf::from(format!(
-            "forge_out/{}_s{}.toml",
-            bp.blueprint.id, g.plan.seed
-        ));
-        write_out(&tmp, &g.toml)?;
-        let origin = simtest::generated_from(&g.toml);
-        (g.content, origin, tmp.display().to_string())
+    // What to test: one dungeon file, one generated layout, or a range of layouts.
+    let mut targets: Vec<(Content, Option<String>, String)> = Vec::new();
+    if is_blueprint(&path) {
+        let (bp, kit) = load_pair(&path)?;
+        let seeds: Vec<u64> = match args.get("layouts") {
+            Some(r) => {
+                let (a, b) = r
+                    .split_once("..")
+                    .ok_or_else(|| format!("--layouts: use FROM..TO, e.g. 1..10 (got '{r}')"))?;
+                let a: u64 = a
+                    .parse()
+                    .map_err(|_| format!("--layouts: '{a}' is not a number"))?;
+                let b: u64 = b
+                    .parse()
+                    .map_err(|_| format!("--layouts: '{b}' is not a number"))?;
+                (a..=b).collect()
+            }
+            None => vec![args.num::<u64>("seed")?.unwrap_or(bp.blueprint.seed)],
+        };
+        for seed in seeds {
+            let g = build::generate(&bp, &kit, seed)?;
+            let tmp = PathBuf::from(format!("forge_out/{}_s{seed}.toml", bp.blueprint.id));
+            write_out(&tmp, &g.toml)?;
+            let origin = simtest::generated_from(&g.toml);
+            targets.push((g.content, origin, tmp.display().to_string()));
+        }
     } else {
         let c = Content::load(&path).map_err(|e| e.to_string())?;
         let text = std::fs::read_to_string(&path).unwrap_or_default();
-        (
+        targets.push((
             c,
             simtest::generated_from(&text),
             path.display().to_string(),
-        )
-    };
+        ));
+    }
     let runs = args.num::<usize>("runs")?.unwrap_or(10);
-    let level = args
-        .num::<u32>("level")?
-        .unwrap_or(content.dungeon.recommended_level);
     let sizes: Vec<usize> = args
         .list("sizes", &["5"])
         .iter()
@@ -350,46 +365,79 @@ fn cmd_test(args: &Args) -> Result<ExitCode, String> {
     let profiles = args.list("profiles", &["balanced"]);
     let classes = args.list("classes", &["striker"]);
     let diffs = args.list("difficulties", &["normal"]);
-    for d in &diffs {
-        if content.difficulty(d).is_none() {
-            return Err(format!(
-                "--difficulties: '{d}' is not defined in {}",
-                content.dungeon.id
-            ));
-        }
-    }
     let mut all_failures = Vec::new();
-    println!("{} - {runs} runs per configuration", content.dungeon.name);
-    if let Some(o) = &origin {
-        println!("generated: {o}");
-    }
-    for &size in &sizes {
-        for profile in &profiles {
-            // Classes only matter for 5-player parties (the player's slot).
-            let class_list: Vec<String> = if size == 5 {
-                classes.clone()
-            } else {
-                vec!["-".into()]
-            };
-            for class in &class_list {
-                for diff in &diffs {
-                    let cfg = Config {
-                        size,
-                        class: class.clone(),
-                        profile: profile.clone(),
-                        difficulty: diff.clone(),
-                        level,
-                    };
-                    let r = simtest::run_config(&content, origin.as_deref(), &hint, cfg, runs, 1);
-                    println!(
-                        "  {:<38} {} | failures {}",
-                        r.config.label(),
-                        r.stats.one_line(),
-                        r.failures.len()
-                    );
-                    all_failures.extend(r.failures);
+    // Totals per configuration across layouts: (runs, wins, stuck, unreachable, dithers, ms).
+    let mut totals: std::collections::BTreeMap<String, (usize, usize, f32, f32, f32, f64)> =
+        Default::default();
+    for (content, origin, hint) in &targets {
+        let level = args
+            .num::<u32>("level")?
+            .unwrap_or(content.dungeon.recommended_level);
+        for d in &diffs {
+            if content.difficulty(d).is_none() {
+                return Err(format!(
+                    "--difficulties: '{d}' is not defined in {}",
+                    content.dungeon.id
+                ));
+            }
+        }
+        println!("{} - {runs} runs per configuration", content.dungeon.name);
+        if let Some(o) = origin {
+            println!("generated: {o}");
+        }
+        for &size in &sizes {
+            for profile in &profiles {
+                // Classes only matter for 5-player parties (the player's slot).
+                let class_list: Vec<String> = if size == 5 {
+                    classes.clone()
+                } else {
+                    vec!["-".into()]
+                };
+                for class in &class_list {
+                    for diff in &diffs {
+                        let cfg = Config {
+                            size,
+                            class: class.clone(),
+                            profile: profile.clone(),
+                            difficulty: diff.clone(),
+                            level,
+                        };
+                        let t0 = std::time::Instant::now();
+                        let r = simtest::run_config(content, origin.as_deref(), hint, cfg, runs, 1);
+                        let ms = t0.elapsed().as_secs_f64() * 1000.0;
+                        println!(
+                            "  {:<38} {} | failures {}",
+                            r.config.label(),
+                            r.stats.one_line(),
+                            r.failures.len()
+                        );
+                        let t = totals.entry(r.config.label()).or_default();
+                        t.0 += r.stats.runs;
+                        t.1 += r.stats.victories;
+                        t.2 += r.stats.mean_stuck_seconds * r.stats.runs as f32;
+                        t.3 += r.stats.mean_unreachable_seconds * r.stats.runs as f32;
+                        t.4 += r.stats.mean_dithers * r.stats.runs as f32;
+                        t.5 += ms;
+                        all_failures.extend(r.failures);
+                    }
                 }
             }
+        }
+    }
+    if targets.len() > 1 {
+        println!("totals over {} layouts:", targets.len());
+        for (label, t) in &totals {
+            let n = t.0.max(1) as f32;
+            println!(
+                "  {label:<38} wins {}/{} ({:.0}%) | stuck {:.1}s unreachable {:.1}s dithers {:.1} per run | {:.0} ms per run",
+                t.1,
+                t.0,
+                100.0 * t.1 as f32 / n,
+                t.2 / n,
+                t.3 / n,
+                t.4 / n,
+                t.5 / n as f64
+            );
         }
     }
     if let Some(f) = args.get("failures") {

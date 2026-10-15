@@ -174,11 +174,11 @@ y = -2.5
 [[dungeon.areas]]
 name = "Spill Chamber (north)"
 min = [
-    -77.5,
+    -79.0,
     4.0,
 ]
 max = [
-    -66.5,
+    -65.0,
     12.0,
 ]
 tint = [
@@ -191,11 +191,11 @@ y = -2.5
 [[dungeon.areas]]
 name = "Spill Chamber (south)"
 min = [
-    -77.5,
+    -79.0,
     -12.0,
 ]
 max = [
-    -66.5,
+    -65.0,
     -4.0,
 ]
 tint = [
