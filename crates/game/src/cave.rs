@@ -11,12 +11,11 @@
 //!   walkable space), lava with a slow emissive pulse, drifting embers.
 
 use crate::common::{AppState, rgb};
-use crate::dungeon::ActiveRun;
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 use dungeon_sim::V2;
-use dungeon_sim::content::DecorKind;
+use dungeon_sim::content::{Content, DecorKind};
 use dungeon_sim::nav::Wall;
 use dungeon_sim::poly::Poly;
 
@@ -24,12 +23,8 @@ pub struct CavePlugin;
 
 impl Plugin for CavePlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(
-            Update,
-            (pulse_lava, drift_embers)
-                .run_if(in_state(AppState::Dungeon))
-                .run_if(resource_exists::<ActiveRun>),
-        );
+        // Lava and embers animate wherever they exist (game and viewer).
+        app.add_systems(Update, (pulse_lava, drift_embers));
     }
 }
 
@@ -244,12 +239,13 @@ fn drift_embers(time: Res<Time>, mut q: Query<(&Ember, &mut Transform)>) {
 /// Returns their camera-blocking bounds.
 pub fn spawn_decor(
     commands: &mut Commands,
-    run: &ActiveRun,
+    content: &Content,
+    scope: AppState,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
 ) -> Vec<(Vec3, Vec3)> {
-    let scoped = DespawnOnExit(AppState::Dungeon);
-    let theme = run.sim.content.dungeon.theme;
+    let scoped = DespawnOnExit(scope);
+    let theme = content.dungeon.theme;
     let rock = materials.add(StandardMaterial {
         base_color: rgb(theme.wall).darker(0.05),
         perceptual_roughness: 0.95,
@@ -257,8 +253,8 @@ pub fn spawn_decor(
     });
     let mut blockers = Vec::new();
     // Props whose model file is missing are drawn as their fallback decor.
-    let mut list = run.sim.content.dungeon.decor.clone();
-    for p in &run.sim.content.dungeon.props {
+    let mut list = content.dungeon.decor.clone();
+    for p in &content.dungeon.props {
         if !prop_model_available(&p.model) {
             warn!(
                 "prop model 'assets/{}' not found; drawing the {:?} fallback",
@@ -368,12 +364,13 @@ pub fn prop_model_available(model: &str) -> bool {
 /// fallback decor). Returns camera blockers.
 pub fn spawn_props(
     commands: &mut Commands,
-    run: &ActiveRun,
+    content: &Content,
+    scope: AppState,
     asset_server: &AssetServer,
 ) -> Vec<(Vec3, Vec3)> {
-    let scoped = DespawnOnExit(AppState::Dungeon);
+    let scoped = DespawnOnExit(scope);
     let mut blockers = Vec::new();
-    for p in &run.sim.content.dungeon.props {
+    for p in &content.dungeon.props {
         if !prop_model_available(&p.model) {
             continue;
         }
@@ -398,11 +395,12 @@ pub fn spawn_props(
 /// Lava pools/rivers with a pulsing glow and a few drifting embers.
 pub fn spawn_lava(
     commands: &mut Commands,
-    run: &ActiveRun,
+    content: &Content,
+    scope: AppState,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
 ) {
-    let scoped = DespawnOnExit(AppState::Dungeon);
+    let scoped = DespawnOnExit(scope);
     let ember_mesh = meshes.add(Sphere::new(0.06).mesh().ico(0).expect("ico sphere"));
     let ember_mat = materials.add(StandardMaterial {
         base_color: Color::srgb(1.0, 0.6, 0.2),
@@ -410,14 +408,14 @@ pub fn spawn_lava(
         unlit: true,
         ..default()
     });
-    let explicit_lights = !run.sim.content.dungeon.lights.is_empty();
+    let explicit_lights = !content.dungeon.lights.is_empty();
     let crust_mesh = meshes.add(Cuboid::new(1.0, 0.06, 1.0));
     let crust_mat = materials.add(StandardMaterial {
         base_color: Color::srgb(0.06, 0.04, 0.035),
         perceptual_roughness: 1.0,
         ..default()
     });
-    for (i, l) in run.sim.content.dungeon.lava.iter().enumerate() {
+    for (i, l) in content.dungeon.lava.iter().enumerate() {
         let Ok(shape) = l.shape() else { continue };
         let mat = materials.add(StandardMaterial {
             base_color: Color::srgb(0.35, 0.07, 0.01),

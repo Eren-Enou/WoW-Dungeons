@@ -197,6 +197,11 @@ fn dungeon_config(bp: &Blueprint, kit: &Kit, comp: &compose::Composed) -> Dungeo
         lights: comp.lights.clone(),
         props: comp.props.clone(),
         theme: kit.palette.theme,
+        generated: None,
+        rooms: Vec::new(),
+        atmosphere: Default::default(),
+        modules: None,
+        anchors: Vec::new(),
     }
 }
 

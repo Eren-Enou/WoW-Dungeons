@@ -12,6 +12,8 @@ pub enum AppState {
     Hub,
     Dungeon,
     Results,
+    /// The dungeon viewer: the environment without a simulation.
+    Viewer,
 }
 
 /// Persistent data and loaded content.

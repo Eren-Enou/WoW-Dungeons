@@ -80,6 +80,147 @@ pub struct DungeonConfig {
     pub props: Vec<PropConfig>,
     #[serde(default)]
     pub theme: Theme,
+    /// Where a generated dungeon came from (written by Dungeon Forge).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generated: Option<GeneratedInfo>,
+    /// Logical rooms and corridors and the areas they are made of. Tools,
+    /// lighting and modular art use it; the simulation never reads it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rooms: Vec<RoomConfig>,
+    /// Lighting and fog presets, chosen per room (by `atmosphere` or `role`).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub atmosphere: BTreeMap<String, AtmosphereConfig>,
+    /// Modular art drawn along the real walls and doorways (visual only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modules: Option<ModuleSet>,
+    /// Decoration anchors the generator computed (kept for inspection).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub anchors: Vec<AnchorConfig>,
+}
+
+/// Where a generated dungeon came from.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct GeneratedInfo {
+    /// Blueprint id.
+    pub blueprint: String,
+    /// Blueprint file as given to the generator (lets tools regenerate).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub blueprint_path: String,
+    pub seed: u64,
+    pub kit: String,
+    pub generator: u32,
+}
+
+/// Room roles tools understand (others are rejected so typos surface).
+pub const ROOM_ROLES: &[&str] = &[
+    "entrance", "chamber", "hall", "arena", "pit", "side", "overlook", "passage", "corridor",
+    "bridge", "stair", "ramp", "ledge", "room",
+];
+
+/// A logical room or corridor of the dungeon.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoomConfig {
+    /// Stable identifier (e.g. `r3`, `c7`).
+    pub id: String,
+    pub name: String,
+    /// One of [`ROOM_ROLES`].
+    pub role: String,
+    /// `main`, `alternate`, `side`, `overlook`, `shortcut` or `loop`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub route: String,
+    /// Position on the main route (0 = entrance).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub order: Option<u32>,
+    /// Names of the areas this room is made of.
+    pub areas: Vec<String>,
+    /// For corridors: the ids of the two rooms joined.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub connects: Vec<String>,
+    /// Encounter staged here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encounter: Option<String>,
+    /// Atmosphere preset (defaults to the role's preset, if any).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub atmosphere: Option<String>,
+}
+
+fn default_brightness() -> f32 {
+    220.0
+}
+
+fn default_fog_start() -> f32 {
+    18.0
+}
+
+fn default_fog_end() -> f32 {
+    75.0
+}
+
+/// Ambient light and fog for rooms using this preset.
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AtmosphereConfig {
+    pub ambient: [f32; 3],
+    #[serde(default = "default_brightness")]
+    pub brightness: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fog: Option<[f32; 3]>,
+    #[serde(default = "default_fog_start")]
+    pub fog_start: f32,
+    #[serde(default = "default_fog_end")]
+    pub fog_end: f32,
+}
+
+/// The modular art set of a dungeon. Each piece is optional; a missing piece
+/// (or model file) falls back to the procedural geometry.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModuleSet {
+    /// Tiled along every wall face, stretched to fit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wall: Option<ModuleConfig>,
+    /// A post at every wall joint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub corner: Option<ModuleConfig>,
+    /// A frame over every doorway between two rooms (posts outside the
+    /// opening, lintel above head height).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub door: Option<ModuleConfig>,
+}
+
+/// One modular piece.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModuleConfig {
+    /// Path relative to `assets/`, `.glb` or `.gltf`.
+    pub model: String,
+    /// Nominal size in metres: length along the wall (or opening width for
+    /// a door), height, depth.
+    pub size: [f32; 3],
+}
+
+/// A place the generator could put decoration (for inspection in the viewer).
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AnchorConfig {
+    /// `corner`, `cut_corner`, `door_side`, `wall`, `pillar`, `pit`, `bridge_end`.
+    pub kind: String,
+    pub pos: V2,
+    #[serde(default)]
+    pub y: f32,
+    /// Facing into the room, degrees.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub yaw: f32,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub room: String,
+    /// Free radius around the anchor outside walkable space.
+    #[serde(default = "one")]
+    pub clearance: f32,
+    /// What the generator placed here, if anything.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub used: String,
 }
 
 fn is_zero(v: &f32) -> bool {
@@ -275,7 +416,13 @@ pub struct PropConfig {
 impl PropConfig {
     /// Problems with the model path (relative, inside `assets/`, glTF).
     pub fn path_problem(&self) -> Option<String> {
-        let m = &self.model;
+        model_path_problem(&self.model)
+    }
+}
+
+/// Problems with a model path: relative to `assets/`, inside it, glTF.
+pub fn model_path_problem(m: &str) -> Option<String> {
+    {
         if m.is_empty() {
             return Some("model is empty".into());
         }
@@ -782,6 +929,87 @@ impl fmt::Display for ContentError {
 impl std::error::Error for ContentError {}
 
 impl Content {
+    /// Rooms, atmosphere, modules and anchors: presentation data the
+    /// simulation never reads, checked so tools can trust it.
+    fn validate_presentation(&self, check: &mut impl FnMut(bool, String)) {
+        let d = &self.dungeon;
+        let areas: BTreeSet<&str> = d.areas.iter().map(|a| a.name.as_str()).collect();
+        let ids: BTreeSet<&str> = d.rooms.iter().map(|r| r.id.as_str()).collect();
+        check(
+            ids.len() == d.rooms.len(),
+            "dungeon.rooms: room ids must be unique".into(),
+        );
+        let encounters: BTreeSet<&str> = self.encounters.iter().map(|e| e.id.as_str()).collect();
+        for (i, r) in d.rooms.iter().enumerate() {
+            let p = format!("dungeon.rooms[{i}] ('{}')", r.id);
+            check(
+                ROOM_ROLES.contains(&r.role.as_str()),
+                format!(
+                    "{p}: role '{}' is not one of {}",
+                    r.role,
+                    ROOM_ROLES.join(", ")
+                ),
+            );
+            check(!r.areas.is_empty(), format!("{p}: needs at least one area"));
+            for a in &r.areas {
+                check(
+                    areas.contains(a.as_str()),
+                    format!("{p}: area '{a}' is not in dungeon.areas"),
+                );
+            }
+            for c in &r.connects {
+                check(
+                    ids.contains(c.as_str()),
+                    format!("{p}: connects to unknown room '{c}'"),
+                );
+            }
+            if let Some(e) = &r.encounter {
+                check(
+                    encounters.contains(e.as_str()),
+                    format!("{p}: encounter '{e}' is not an encounter id"),
+                );
+            }
+            if let Some(a) = &r.atmosphere {
+                check(
+                    d.atmosphere.contains_key(a),
+                    format!("{p}: atmosphere '{a}' is not in dungeon.atmosphere"),
+                );
+            }
+        }
+        let colour = |c: [f32; 3]| c.iter().all(|v| (0.0..=1.0).contains(v));
+        for (k, a) in &d.atmosphere {
+            check(
+                colour(a.ambient)
+                    && a.fog.is_none_or(colour)
+                    && (0.0..=5000.0).contains(&a.brightness)
+                    && a.fog_start >= 0.0
+                    && a.fog_end > a.fog_start,
+                format!(
+                    "dungeon.atmosphere.{k}: colours in 0..=1, brightness in 0..=5000, fog_end > fog_start >= 0"
+                ),
+            );
+        }
+        if let Some(m) = &d.modules {
+            for (name, piece) in [("wall", &m.wall), ("corner", &m.corner), ("door", &m.door)] {
+                if let Some(piece) = piece {
+                    if let Some(problem) = model_path_problem(&piece.model) {
+                        check(false, format!("dungeon.modules.{name}: {problem}"));
+                    }
+                    check(
+                        piece.size.iter().all(|v| (0.05..=50.0).contains(v)),
+                        format!("dungeon.modules.{name}: size components must be in 0.05..=50"),
+                    );
+                }
+            }
+        }
+        for (i, a) in d.anchors.iter().enumerate() {
+            check(
+                a.pos.is_finite() && a.y.is_finite() && a.yaw.is_finite() && a.clearance >= 0.0,
+                format!("dungeon.anchors[{i}]: position, height and yaw must be finite"),
+            );
+        }
+    }
+
     pub fn load(path: impl AsRef<Path>) -> Result<Content, ContentError> {
         let path = path.as_ref();
         let text = std::fs::read_to_string(path).map_err(|e| ContentError::Io {
@@ -1263,6 +1491,7 @@ impl Content {
             }
         }
 
+        self.validate_presentation(&mut check);
         let mut diff_ids = BTreeSet::new();
         for (i, df) in self.difficulties.iter().enumerate() {
             let p = format!("difficulties[{i}] ('{}')", df.id);

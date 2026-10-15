@@ -10,13 +10,16 @@ mod common;
 mod controls;
 mod demo;
 mod dungeon;
+mod env;
 mod fx;
 mod hub;
 mod hud;
 mod navdebug;
 mod overlay;
 mod results;
+mod structure;
 mod tooltip;
+mod viewer;
 
 use bevy::prelude::*;
 use bevy::window::WindowResolution;
@@ -67,6 +70,13 @@ fn main() {
         eprintln!("--start-level: party raised to level {level}");
     }
 
+    let viewer_request = viewer::ViewerRequest::from_args();
+    // `--no-vsync`: present as fast as possible (frame-time measurements).
+    let present_mode = if std::env::args().any(|a| a == "--no-vsync") {
+        bevy::window::PresentMode::AutoNoVsync
+    } else {
+        bevy::window::PresentMode::AutoVsync
+    };
     let mut app = App::new();
     // Models load from <game folder>/assets (the working directory was set
     // to the game folder above), the same place content is read from.
@@ -79,6 +89,7 @@ fn main() {
                 primary_window: Some(Window {
                     title: "Dungeon Sandbox".into(),
                     resolution: WindowResolution::new(1280, 760),
+                    present_mode,
                     ..default()
                 }),
                 ..default()
@@ -104,6 +115,7 @@ fn main() {
         overlay::OverlayPlugin,
         fx::FxPlugin,
         demo::DemoPlugin(demo::parse_args()),
+        viewer::ViewerPlugin(viewer_request),
     ));
     if let Some(secs) = smoke_seconds {
         app.insert_resource(common::SmokeTest {

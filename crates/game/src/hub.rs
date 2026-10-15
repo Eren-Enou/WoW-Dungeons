@@ -97,6 +97,8 @@ pub struct HubUi {
     pub editor_template: usize,
     pub dirty: bool,
     pub companions_dirty: bool,
+    /// Open the selected dungeon in the viewer (set by a button).
+    pub open_viewer: bool,
 }
 
 impl Default for HubUi {
@@ -110,6 +112,7 @@ impl Default for HubUi {
             editor_template: 0,
             dirty: true,
             companions_dirty: true,
+            open_viewer: false,
         }
     }
 }
@@ -138,6 +141,8 @@ pub enum HubAction {
     EditSave,
     EditDiscard,
     Reload,
+    /// Inspect the selected dungeon in the viewer.
+    OpenViewer,
     /// Change a sandbox knob by a factor (or reset with `Knob::Reset`).
     Sandbox(Knob, f32),
 }
@@ -606,6 +611,10 @@ pub fn hub_tooltip(action: &HubAction, data: &GameData, ui: &HubUi) -> Option<Ti
             "Reload content",
             "Re-read the dungeon files from disk and report any errors.",
         ),
+        HubAction::OpenViewer => Tip::new(
+            "Dungeon viewer",
+            "Fly through the selected dungeon without fighting: rooms, navigation, encounters and modular art. Backspace returns here.",
+        ),
     })
 }
 
@@ -766,6 +775,10 @@ pub fn apply_action(action: HubAction, data: &mut GameData, ui: &mut HubUi) {
                 ability_speed: snap(clamped.ability_speed),
                 telegraph: snap(clamped.telegraph),
             };
+        }
+        HubAction::OpenViewer => {
+            ui.open_viewer = true;
+            save = false;
         }
         HubAction::Reload => {
             if data.reload_content() {
@@ -1082,6 +1095,7 @@ fn dungeons_tab(p: &mut ChildSpawnerCommands, data: &GameData) {
             Color::srgb(0.7, 0.7, 0.7),
         );
         button(r, "Reload files (F5)", HubAction::Reload, false);
+        button(r, "Inspect in viewer (V)", HubAction::OpenViewer, false);
     });
     for d in &data.library.dungeons {
         let selected = d.dungeon.id == pr.selected_dungeon;
@@ -1584,7 +1598,22 @@ fn hub_movement(
     }
 }
 
-fn hub_keys(keys: Res<ButtonInput<KeyCode>>, mut data: ResMut<GameData>, mut ui: ResMut<HubUi>) {
+fn hub_keys(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut data: ResMut<GameData>,
+    mut ui: ResMut<HubUi>,
+    mut req: ResMut<crate::viewer::ViewerRequest>,
+    mut next: ResMut<NextState<AppState>>,
+) {
+    if keys.just_pressed(KeyCode::KeyV) || ui.open_viewer {
+        ui.open_viewer = false;
+        // The viewer reads the dungeon selected here; nothing is saved.
+        req.target = Some(data.profile.selected_dungeon.clone());
+        req.blueprint = None;
+        req.room = None;
+        next.set(AppState::Viewer);
+        return;
+    }
     if keys.just_pressed(KeyCode::KeyP) {
         ui.panel_open = !ui.panel_open;
         ui.dirty = true;

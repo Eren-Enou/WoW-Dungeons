@@ -10,16 +10,23 @@
 //! * with Shift+N, wall faces and the shrunk "walk" rectangles actors' centres
 //!   are confined to.
 //!
+//! * surfaces the entrance can't reach (and that aren't marked
+//!   `unreachable`) in magenta: a disconnected region is a content bug.
+//!
 //! Everything is cheap gizmo lines plus a few world-anchored text labels.
+//! The surface, link and wall layers only need a `Nav`, so the dungeon viewer
+//! (`viewer.rs`) draws them too; AI paths need the running simulation.
 
 use crate::camera::MainCamera;
 use crate::common::{AppState, text_font, to_vec3};
 use crate::dungeon::ActiveRun;
+use crate::viewer::ViewerScene;
 use bevy::picking::Pickable;
 use bevy::prelude::*;
 use dungeon_sim::V2;
 use dungeon_sim::math::V3;
 use dungeon_sim::nav::LinkKind;
+use dungeon_sim::nav::Nav;
 use dungeon_sim::poly::Poly;
 
 pub struct NavDebugPlugin;
@@ -38,6 +45,13 @@ impl Plugin for NavDebugPlugin {
                 .chain()
                 .run_if(in_state(AppState::Dungeon))
                 .run_if(resource_exists::<ActiveRun>),
+        )
+        .add_systems(
+            Update,
+            (draw_viewer, labels_viewer)
+                .chain()
+                .run_if(in_state(AppState::Viewer))
+                .run_if(resource_exists::<ViewerScene>),
         );
     }
 }
@@ -80,28 +94,39 @@ fn v3(p: V3) -> Vec3 {
     Vec3::new(p.x, p.y, p.z)
 }
 
-fn draw(dbg: Res<NavDebug>, run: Res<ActiveRun>, mut gizmos: Gizmos) {
-    if !dbg.on {
-        return;
-    }
-    let sim = &run.sim;
-    let nav = &sim.nav;
+/// Surfaces the entrance surface can't reach on foot (and that aren't marked
+/// intentionally unreachable).
+pub fn disconnected(nav: &Nav, entrance: Vec3) -> Vec<bool> {
+    let start = nav.locate(V2::new(entrance.x, entrance.z), entrance.y);
+    (0..nav.surfaces.len())
+        .map(|i| {
+            let s = &nav.surfaces[i];
+            !s.def.unreachable
+                && start.is_some_and(|a| a as usize != i && !nav.reachable(a, i as _))
+        })
+        .collect()
+}
+
+/// Surfaces, portals, drops and (optionally) walls of a `Nav`.
+pub fn draw_nav(nav: &Nav, collision: bool, cut_off: &[bool], gizmos: &mut Gizmos) {
     let (lo, hi) = nav
         .surfaces
         .iter()
         .fold((f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), s| {
             (lo.min(s.min_y()), hi.max(s.max_y()))
         });
-    for s in &nav.surfaces {
-        let color = if s.def.unreachable {
+    for (i, s) in nav.surfaces.iter().enumerate() {
+        let color = if cut_off.get(i).copied().unwrap_or(false) {
+            Color::srgb(1.0, 0.1, 0.9)
+        } else if s.def.unreachable {
             Color::srgb(0.6, 0.2, 0.2)
         } else {
             height_color((s.min_y() + s.max_y()) * 0.5, lo, hi)
         };
-        outline(&mut gizmos, &s.def.shape, |p| s.height_at(p), color);
-        if dbg.collision {
+        outline(gizmos, &s.def.shape, |p| s.height_at(p), color);
+        if collision {
             outline(
-                &mut gizmos,
+                gizmos,
                 &s.walk,
                 |p| s.height_at(p) + 0.02,
                 color.with_alpha(0.45),
@@ -113,7 +138,7 @@ fn draw(dbg: Res<NavDebug>, run: Res<ActiveRun>, mut gizmos: Gizmos) {
             LinkKind::Walk => {
                 if l.from < l.to {
                     outline(
-                        &mut gizmos,
+                        gizmos,
                         &l.portal,
                         |_| l.entry.y + 0.05,
                         Color::srgb(0.2, 1.0, 0.3),
@@ -125,7 +150,7 @@ fn draw(dbg: Res<NavDebug>, run: Res<ActiveRun>, mut gizmos: Gizmos) {
                 let b = v3(l.exit) + Vec3::Y * 0.3;
                 gizmos.arrow(a, b, Color::srgb(1.0, 0.55, 0.1));
                 outline(
-                    &mut gizmos,
+                    gizmos,
                     &l.portal,
                     |_| l.entry.y + 0.08,
                     Color::srgb(1.0, 0.55, 0.1),
@@ -133,7 +158,7 @@ fn draw(dbg: Res<NavDebug>, run: Res<ActiveRun>, mut gizmos: Gizmos) {
             }
         }
     }
-    if dbg.collision {
+    if collision {
         for w in &nav.walls {
             let a0 = to_vec3(w.a, w.bottom0);
             let b0 = to_vec3(w.b, w.bottom1);
@@ -144,6 +169,15 @@ fn draw(dbg: Res<NavDebug>, run: Res<ActiveRun>, mut gizmos: Gizmos) {
             gizmos.line(b0, b0 + up, c);
         }
     }
+}
+
+fn draw(dbg: Res<NavDebug>, run: Res<ActiveRun>, mut gizmos: Gizmos) {
+    if !dbg.on {
+        return;
+    }
+    let sim = &run.sim;
+    let nav = &sim.nav;
+    draw_nav(nav, dbg.collision, &[], &mut gizmos);
     // Paths of AI party members (and the selected actor, whoever it is).
     let selected = sim.player.and_then(|p| sim.actors[p].target);
     for id in 0..sim.actors.len() {
@@ -212,16 +246,58 @@ fn draw(dbg: Res<NavDebug>, run: Res<ActiveRun>, mut gizmos: Gizmos) {
     }
 }
 
-/// Surface name + elevation labels, anchored to each surface's centre.
-#[allow(clippy::type_complexity)]
+fn draw_viewer(dbg: Res<NavDebug>, scene: Res<ViewerScene>, mut gizmos: Gizmos) {
+    if dbg.on {
+        draw_nav(&scene.nav, dbg.collision, &scene.cut_off, &mut gizmos);
+    }
+}
+
 fn labels(
-    mut commands: Commands,
+    commands: Commands,
     dbg: Res<NavDebug>,
     run: Res<ActiveRun>,
     camera: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
+    q: Query<(Entity, &SurfaceLabel, &mut Node)>,
+) {
+    place_labels(
+        commands,
+        &dbg,
+        &run.sim.nav,
+        &[],
+        AppState::Dungeon,
+        *camera,
+        q,
+    );
+}
+
+fn labels_viewer(
+    commands: Commands,
+    dbg: Res<NavDebug>,
+    scene: Res<ViewerScene>,
+    camera: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
+    q: Query<(Entity, &SurfaceLabel, &mut Node)>,
+) {
+    place_labels(
+        commands,
+        &dbg,
+        &scene.nav,
+        &scene.cut_off,
+        AppState::Viewer,
+        *camera,
+        q,
+    );
+}
+
+/// Surface name + elevation labels, anchored to each surface's centre.
+fn place_labels(
+    mut commands: Commands,
+    dbg: &NavDebug,
+    nav: &Nav,
+    cut_off: &[bool],
+    scope: AppState,
+    camera: (&Camera, &GlobalTransform),
     mut q: Query<(Entity, &SurfaceLabel, &mut Node)>,
 ) {
-    let nav = &run.sim.nav;
     if !dbg.on {
         for (e, _, _) in &q {
             commands.entity(e).despawn();
@@ -235,23 +311,28 @@ fn labels(
             } else {
                 format!("y {:.1}", s.def.y)
             };
+            let warn = if cut_off.get(i).copied().unwrap_or(false) {
+                "\nNOT REACHABLE from the entrance"
+            } else {
+                ""
+            };
             commands.spawn((
                 Node {
                     position_type: PositionType::Absolute,
                     ..default()
                 },
-                Text::new(format!("[{i}] {}\n{y}", s.name())),
+                Text::new(format!("[{i}] {}\n{y}{warn}", s.name())),
                 text_font(10.0),
                 TextColor(Color::srgb(0.85, 0.95, 1.0)),
                 TextShadow::default(),
                 Pickable::IGNORE,
                 SurfaceLabel { index: i },
-                DespawnOnExit(AppState::Dungeon),
+                DespawnOnExit(scope),
             ));
         }
         return;
     }
-    let (cam, cam_gt) = *camera;
+    let (cam, cam_gt) = camera;
     for (_, label, mut node) in &mut q {
         let s = &nav.surfaces[label.index];
         let c = s.def.shape.centroid();
