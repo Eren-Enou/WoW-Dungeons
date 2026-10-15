@@ -704,6 +704,12 @@ impl Content {
             .expect("builtin content is valid")
     }
 
+    /// The shipped Cavern Traverse navigation test dungeon (used by tests).
+    pub fn builtin_cavern() -> Content {
+        Content::from_toml_str(BUILTIN_CAVERN, "<builtin cavern_traverse>")
+            .expect("builtin content is valid")
+    }
+
     /// The navigation for this (validated) content.
     pub fn nav(&self) -> Nav {
         self.build_nav()
@@ -1351,6 +1357,8 @@ impl ContentLibrary {
 }
 
 /// The shipped content files, embedded for tests.
+pub const BUILTIN_CAVERN: &str =
+    include_str!("../../../assets/content/dungeons/05_cavern_traverse.toml");
 pub const BUILTIN_SUNKEN_VAULT: &str =
     include_str!("../../../assets/content/dungeons/01_sunken_vault.toml");
 pub const BUILTIN_WARRENS: &str =

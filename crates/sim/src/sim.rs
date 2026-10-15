@@ -414,6 +414,8 @@ pub struct NavState {
     pub commit_goal: V3,
     /// Times this actor dithered this run.
     pub dithers: u32,
+    /// Seconds this run spent with a goal it could not reach.
+    pub unreachable_time: f32,
 }
 
 impl Actor {
@@ -1399,6 +1401,7 @@ impl Sim {
         self.run_ai();
         self.process_player_cast();
         self.move_actors();
+        self.settle_heights();
         self.check_aggro();
         self.update_auras();
         self.update_casts_and_cooldowns();
@@ -2285,7 +2288,6 @@ impl Sim {
             if !self.actors[id].alive {
                 continue;
             }
-            self.settle_height(id);
             let a = &self.actors[id];
             if a.is_incapacitated() {
                 continue;
@@ -2333,7 +2335,6 @@ impl Sim {
                     a.pos = new_pos;
                     a.surface = new_surface;
                 }
-                self.settle_height(id);
             } else if let Some(t) = self.actors[id].target
                 && self.actors[id].controller != Controller::Player
             {
@@ -2341,6 +2342,16 @@ impl Sim {
                 if dir.len_sq() > 1e-4 {
                     self.actors[id].facing = dir.heading();
                 }
+            }
+        }
+    }
+
+    /// Follow the floor height once per tick: ramps exactly, drops by falling
+    /// at `FALL_SPEED` (also while stunned).
+    fn settle_heights(&mut self) {
+        for id in 0..self.actors.len() {
+            if self.actors[id].alive {
+                self.settle_height(id);
             }
         }
     }
@@ -2415,6 +2426,9 @@ impl Sim {
         }
         let a = &mut self.actors[id];
         a.nav.unreachable = unreachable;
+        if unreachable {
+            a.nav.unreachable_time += DT;
+        }
         if a.nav.stalled >= STUCK_AFTER && a.nav.recover <= 0.0 {
             // Back off toward the middle of the current surface (or the portal
             // being crossed) and try again; never teleport.
@@ -2439,6 +2453,11 @@ impl Sim {
         if d.len() < 0.05 {
             if a.nav.recover > 0.0 {
                 a.nav.recover = 0.0;
+            }
+            // "Arrived" at a waypoint while the goal is still far away and
+            // reachable: that is stuck too.
+            if !unreachable && (a.pos.dist(goal.xz()) > 1.0 || (a.y - goal.y).abs() > 1.0) {
+                a.nav.stalled += DT;
             }
             return V2::ZERO;
         }
@@ -3293,6 +3312,12 @@ impl Sim {
         a.pos = q.xz();
         a.y = q.y;
         a.surface = s;
+    }
+
+    /// Put an actor at a world position (on the floor nearest `at.y`).
+    pub fn set_actor_loc(&mut self, id: ActorId, at: V3) {
+        self.actors[id].y = at.y;
+        self.set_actor_pos(id, at.xz());
     }
 
     /// Can enemy `e` do anything about `p`: alive, and reachable on foot or in sight?

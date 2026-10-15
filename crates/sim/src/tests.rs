@@ -9,7 +9,7 @@ use crate::math::{V2, V3};
 use crate::runner::{default_party, party_at_level, raid_party, run_headless, run_with};
 use crate::sim::{
     ActorId, Aura, AuraKind, COMBAT_LINGER, Cast, CastKind, Controller, DT, DamageSpec, EnemyMode,
-    HEAL_THREAT_FACTOR, PartyMemberSpec, RunOptions, RunOutcome, Sim, Telegraph,
+    FALL_SPEED, HEAL_THREAT_FACTOR, PartyMemberSpec, RunOptions, RunOutcome, Sim, Telegraph,
 };
 use crate::stats::{HitKind, School};
 
@@ -1851,4 +1851,362 @@ fn threat_view_reports_secure_contested_lost_and_taunt() {
     let s = slot(&sim, TANK, AbilityId::Challenge);
     sim.try_cast(TANK, s, Some(mob)).unwrap();
     assert_eq!(sim.threat_view(mob, TANK).tank, TankThreat::Secure);
+}
+
+// ------------------------------------------- 0.4 navigation and space ---
+
+fn cavern_passive() -> Sim {
+    let mut sim = Sim::new(
+        &Content::builtin_cavern(),
+        &party_at_level(ClassId::Striker, 2, AiProfile::Balanced),
+        5,
+    );
+    for p in sim.party.clone() {
+        sim.actors[p].controller = Controller::Player;
+    }
+    sim
+}
+
+fn surf(sim: &Sim, name: &str) -> crate::nav::SurfaceId {
+    sim.nav
+        .find(name)
+        .unwrap_or_else(|| panic!("no area {name}"))
+}
+
+/// The skulker waiting in the underpass, right under the rope bridge.
+fn lurker(sim: &Sim) -> ActorId {
+    let e = sim
+        .encounters
+        .iter()
+        .position(|e| e.id == "underpass_lurker")
+        .unwrap();
+    sim.encounters[e].mobs[0]
+}
+
+#[test]
+fn shipped_dungeons_keep_their_flat_navigation() {
+    let mut flat = 0;
+    for text in [
+        crate::content::BUILTIN_SUNKEN_VAULT,
+        crate::content::BUILTIN_WARRENS,
+        include_str!("../../../assets/content/dungeons/03_ashen_spire.toml"),
+        include_str!("../../../assets/content/dungeons/04_cinder_court.toml"),
+    ] {
+        let c = Content::from_toml_str(text, "test").unwrap();
+        let nav = c.nav();
+        flat += 1;
+        // Old maps: everything at height 0, no ramps or drops, all connected.
+        assert!(
+            nav.surfaces
+                .iter()
+                .all(|s| s.min_y() == 0.0 && !s.is_ramp()),
+            "{}",
+            c.dungeon.id
+        );
+        assert!(
+            nav.links
+                .iter()
+                .all(|l| l.kind == crate::nav::LinkKind::Walk)
+        );
+        let (_, start) = Content::place(&nav, c.dungeon.entrance, None).unwrap();
+        for s in 0..nav.surfaces.len() {
+            assert!(nav.reachable(start, s as u16), "{} area {s}", c.dungeon.id);
+        }
+    }
+    assert_eq!(flat, 4);
+}
+
+#[test]
+fn cavern_layout_connects_by_height_not_by_overlap() {
+    let sim = cavern_passive();
+    let nav = &sim.nav;
+    let bridge = surf(&sim, "Rope Bridge");
+    let under = surf(&sim, "Underpass");
+    let walkway = surf(&sim, "High Walkway");
+    let gallery = surf(&sim, "Hanging Gallery");
+    let basin = surf(&sim, "Magma Basin");
+    let perch = surf(&sim, "Sniper Perch");
+    let linked = |a, b| nav.links.iter().any(|l| l.from == a && l.to == b);
+    // The bridge lies over the underpass but they are not connected.
+    assert!(!linked(bridge, under) && !linked(under, bridge));
+    assert!(linked(walkway, bridge) && linked(bridge, walkway));
+    // The drop goes down only; the basin gets back up the long way round.
+    assert!(
+        nav.links
+            .iter()
+            .any(|l| l.from == gallery && l.to == basin && l.kind == crate::nav::LinkKind::Drop)
+    );
+    assert!(!linked(basin, gallery));
+    assert!(nav.reachable(basin, gallery));
+    let up = nav
+        .path_points(V2::new(43.0, 110.0), basin, V3::new(43.0, 5.0, 90.0))
+        .unwrap();
+    assert!(up.len() > 6, "walks all the way round: {up:?}");
+    let down = nav
+        .path_points(V2::new(43.0, 92.0), gallery, V3::new(43.0, -3.0, 110.0))
+        .unwrap();
+    assert!(down.len() <= 4, "takes the drop: {down:?}");
+    // The perch is unreachable from everywhere else.
+    for s in 0..nav.surfaces.len() as u16 {
+        if s != perch {
+            assert!(!nav.reachable(s, perch));
+        }
+    }
+}
+
+#[test]
+fn melee_cannot_hit_through_the_bridge() {
+    let mut sim = cavern_passive();
+    let mob = lurker(&sim);
+    let mpos = sim.actors[mob].pos;
+    // Directly above it on the bridge: horizontally overlapping, 5 m up.
+    sim.set_actor_loc(PLAYER, V3::at(mpos + V2::new(0.0, 1.0), 5.0));
+    assert_eq!(sim.actors[PLAYER].surface, surf(&sim, "Rope Bridge"));
+    let range = sim.actors[PLAYER].attack_range;
+    assert!(!sim.reach(PLAYER, mob, range));
+    assert!(!sim.has_los(PLAYER, mob));
+    // Same spot on the underpass floor: in range and in sight.
+    sim.set_actor_loc(PLAYER, V3::at(mpos + V2::new(0.0, 1.5), 0.0));
+    assert_eq!(sim.actors[PLAYER].surface, surf(&sim, "Underpass"));
+    assert!(sim.reach(PLAYER, mob, range));
+    assert!(sim.has_los(PLAYER, mob));
+}
+
+#[test]
+fn casts_need_line_of_sight_through_floors_and_walls() {
+    let mut sim = cavern_passive();
+    let mob = lurker(&sim);
+    let mpos = sim.actors[mob].pos;
+    let slot = sim.actors[RANGED].ability_slot(AbilityId::ArcBolt).unwrap();
+    // Arcanist on the bridge right above the lurker: in range, no sight.
+    sim.set_actor_loc(RANGED, V3::at(mpos + V2::new(-1.0, 2.0), 5.0));
+    assert_eq!(
+        sim.validate_cast(RANGED, slot, Some(mob)),
+        Err(CastError::NoLineOfSight)
+    );
+    // Down in the underpass, 12 m away along the passage: clear.
+    sim.set_actor_loc(RANGED, V3::at(mpos + V2::new(0.0, 12.0), 0.0));
+    assert_eq!(sim.validate_cast(RANGED, slot, Some(mob)), Ok(mob));
+    // In the lava hollow, around the corner: in range, blocked by walls.
+    sim.set_actor_loc(RANGED, V3::new(52.0, 0.0, 42.0));
+    assert!(sim.reach(RANGED, mob, 30.0));
+    assert_eq!(
+        sim.validate_cast(RANGED, slot, Some(mob)),
+        Err(CastError::NoLineOfSight)
+    );
+}
+
+#[test]
+fn ground_effects_only_hit_their_own_floor() {
+    let mut sim = cavern_passive();
+    let boss = sim.boss;
+    let c = V2::new(42.0, 70.0);
+    for p in [PLAYER, RANGED, MELEE] {
+        sim.set_actor_loc(p, V3::new(0.0, 0.0, 0.0));
+    }
+    sim.set_actor_loc(TANK, V3::at(c + V2::new(0.0, 0.5), 5.0)); // on the bridge
+    sim.set_actor_loc(HEALER, V3::at(c, 0.0)); // in the underpass below
+    let (tank_hp, healer_hp) = (sim.actors[TANK].hp, sim.actors[HEALER].hp);
+    sim.telegraphs.push(Telegraph {
+        id: 1,
+        source: boss,
+        what: Label::from("Ring"),
+        school: School::Fire,
+        center: c,
+        y: 5.0,
+        radius: 4.0,
+        remaining: 0.05,
+        total: 2.0,
+        damage: 300.0,
+    });
+    sim.step();
+    assert!(
+        sim.actors[TANK].hp < tank_hp,
+        "the ring on the bridge hits the bridge"
+    );
+    assert_eq!(
+        sim.actors[HEALER].hp, healer_hp,
+        "and not the floor 5 m below"
+    );
+}
+
+#[test]
+fn walking_over_an_enemy_on_a_lower_floor_does_not_pull_it() {
+    let mut sim = cavern_passive();
+    let mob = lurker(&sim);
+    let mpos = sim.actors[mob].pos;
+    for p in sim.party.clone() {
+        sim.set_actor_loc(p, V3::new(0.0, 0.0, 0.0));
+    }
+    // Right above it on the bridge: 5 m away, inside its 10 m aggro radius.
+    sim.set_actor_loc(TANK, V3::at(mpos + V2::new(0.0, 1.0), 5.0));
+    steps(&mut sim, 1.0);
+    assert_eq!(sim.actors[mob].mode(), Some(EnemyMode::Idle));
+    // The same distance on its own floor pulls it.
+    sim.set_actor_loc(TANK, V3::at(mpos + V2::new(0.0, 5.0), 0.0));
+    steps(&mut sim, 0.2);
+    assert_eq!(sim.actors[mob].mode(), Some(EnemyMode::Engaged));
+}
+
+#[test]
+fn stepping_off_the_drop_falls_instead_of_teleporting() {
+    let mut sim = cavern_passive();
+    sim.player = Some(PLAYER);
+    let p = PLAYER;
+    for q in sim.party.clone() {
+        if q != p {
+            sim.set_actor_loc(q, V3::new(0.0, 0.0, 0.0));
+        }
+    }
+    sim.set_actor_loc(p, V3::new(43.0, 5.0, 95.0));
+    assert_eq!(sim.actors[p].surface, surf(&sim, "Hanging Gallery"));
+    sim.set_player_move(V2::new(0.0, 1.0));
+    let mut last_y = sim.actors[p].y;
+    let mut fell = false;
+    for _ in 0..80 {
+        sim.step();
+        let y = sim.actors[p].y;
+        assert!(
+            last_y - y <= FALL_SPEED * DT + 1e-3,
+            "fell {} in one tick",
+            last_y - y
+        );
+        assert!(y <= last_y + 1e-3, "never goes up");
+        fell |= y < 4.0 && y > -3.0;
+        last_y = y;
+    }
+    assert!(fell, "passed through intermediate heights");
+    assert_eq!(sim.actors[p].surface, surf(&sim, "Magma Basin"));
+    assert!((sim.actors[p].y + 3.0).abs() < 1e-3);
+    // Walking off the gallery's side (no drop zone) is blocked by the edge.
+    sim.set_actor_loc(p, V3::new(43.0, 5.0, 85.0));
+    sim.set_player_move(V2::new(1.0, 0.0));
+    steps(&mut sim, 2.0);
+    assert_eq!(sim.actors[p].surface, surf(&sim, "Hanging Gallery"));
+    assert!((sim.actors[p].y - 5.0).abs() < 1e-3);
+}
+
+#[test]
+fn enemies_give_up_on_targets_they_cannot_reach_or_see() {
+    let mut sim = cavern_passive();
+    let mob = lurker(&sim);
+    for p in sim.party.clone() {
+        sim.set_actor_loc(p, V3::new(0.0, 0.0, -6.0));
+    }
+    // Pull it, then put everyone on the unreachable perch, out of its sight.
+    let near = sim.actors[mob].pos + V2::new(0.0, 5.0);
+    sim.set_actor_loc(TANK, V3::at(near, 0.0));
+    steps(&mut sim, 0.2);
+    assert_eq!(sim.actors[mob].mode(), Some(EnemyMode::Engaged));
+    for p in sim.party.clone() {
+        sim.set_actor_loc(p, V3::new(62.0, 3.0, 110.0));
+        assert_eq!(sim.actors[p].surface, surf(&sim, "Sniper Perch"));
+        assert!(!sim.can_pursue(mob, p));
+    }
+    steps(&mut sim, 0.5);
+    assert_ne!(
+        sim.actors[mob].mode(),
+        Some(EnemyMode::Engaged),
+        "it evades instead of standing stuck"
+    );
+}
+
+/// Full autopilot run. Every tick, every living party member stays on the
+/// floor of its surface, never moves faster than it can run (plus a drop
+/// landing), never rises more than a step and falls at most `FALL_SPEED`.
+fn traverse(size: usize, seed: u64) -> (RunOutcome, f32, f32, u32) {
+    let content = Content::builtin_cavern();
+    let party = if size == 5 {
+        party_at_level(ClassId::Striker, 2, AiProfile::Balanced)
+    } else {
+        raid_party(size, 2, AiProfile::Balanced)
+    };
+    let options = crate::sim::RunOptions {
+        autopilot: true,
+        ..Default::default()
+    };
+    let mut sim = Sim::with_options(&content, &party, seed, options);
+    let max_step = sim.nav.params.max_step;
+    while sim.outcome == RunOutcome::InProgress && sim.time < 900.0 {
+        let before: Vec<(V2, f32, bool)> =
+            sim.actors.iter().map(|a| (a.pos, a.y, a.alive)).collect();
+        sim.step();
+        for &p in &sim.party {
+            let a = &sim.actors[p];
+            if !a.alive || !before[p].2 {
+                continue;
+            }
+            let walk = sim.nav.surfaces[a.surface as usize].walk;
+            assert!(
+                walk.shrunk(-0.01).contains(a.pos),
+                "seed {seed}: {} left the floor of '{}' at {:?}",
+                a.name,
+                sim.nav.surfaces[a.surface as usize].name(),
+                a.pos
+            );
+            let moved = a.pos.dist(before[p].0);
+            assert!(
+                moved <= a.speed * DT * 1.5 + 1.2,
+                "seed {seed}: {} jumped {moved} m",
+                a.name
+            );
+            let dy = a.y - before[p].1;
+            assert!(dy <= max_step + 1e-3, "seed {seed}: {} rose {dy} m", a.name);
+            assert!(
+                -dy <= FALL_SPEED * DT + max_step + 1e-3,
+                "seed {seed}: {} dropped {dy}",
+                a.name
+            );
+        }
+    }
+    let stuck: f32 = sim
+        .party
+        .iter()
+        .map(|&p| sim.actors[p].nav.stuck_time)
+        .sum();
+    let unreachable: f32 = sim
+        .party
+        .iter()
+        .map(|&p| sim.actors[p].nav.unreachable_time)
+        .sum();
+    let dithers: u32 = sim.party.iter().map(|&p| sim.actors[p].nav.dithers).sum();
+    (sim.outcome, stuck, unreachable, dithers)
+}
+
+#[test]
+fn five_person_party_traverses_the_cavern() {
+    for seed in 1..=3 {
+        let (outcome, stuck, unreachable, dithers) = traverse(5, seed);
+        assert_eq!(outcome, RunOutcome::Victory, "seed {seed}");
+        assert!(stuck < 3.0, "seed {seed}: stuck {stuck} s");
+        assert!(
+            unreachable < 1.0,
+            "seed {seed}: unreachable {unreachable} s"
+        );
+        assert!(dithers < 30, "seed {seed}: {dithers} dithers");
+    }
+}
+
+#[test]
+fn ten_person_raid_traverses_the_cavern() {
+    for seed in 1..=2 {
+        let (outcome, stuck, unreachable, dithers) = traverse(10, seed);
+        assert_eq!(outcome, RunOutcome::Victory, "seed {seed}");
+        assert!(stuck < 6.0, "seed {seed}: stuck {stuck} s");
+        assert!(
+            unreachable < 2.0,
+            "seed {seed}: unreachable {unreachable} s"
+        );
+        assert!(dithers < 60, "seed {seed}: {dithers} dithers");
+    }
+}
+
+#[test]
+fn cavern_runs_replay_identically() {
+    let content = Content::builtin_cavern();
+    let party = party_at_level(ClassId::Striker, 2, AiProfile::Balanced);
+    let (_, a) = run_headless(&content, &party, 11, 900.0);
+    let (_, b) = run_headless(&content, &party, 11, 900.0);
+    assert_eq!(a.log_hash, b.log_hash);
+    assert_eq!(a.outcome, RunOutcome::Victory);
 }

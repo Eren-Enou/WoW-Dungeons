@@ -104,6 +104,11 @@ pub struct RunSummary {
     /// Effective healing per point of healer mana spent.
     pub heal_per_mana: f32,
     pub enemies_killed: u32,
+    /// Party navigation quality: seconds stuck, seconds with an unreachable
+    /// goal, and dither events (all summed over party members).
+    pub nav_stuck_seconds: f32,
+    pub nav_unreachable_seconds: f32,
+    pub nav_dithers: u32,
     pub event_count: usize,
     /// FNV-1a hash over the formatted event log, for determinism checks.
     pub log_hash: u64,
@@ -216,6 +221,17 @@ impl RunSummary {
                 0.0
             },
             enemies_killed: kills,
+            nav_stuck_seconds: sim
+                .party
+                .iter()
+                .map(|&p| sim.actors[p].nav.stuck_time)
+                .sum(),
+            nav_unreachable_seconds: sim
+                .party
+                .iter()
+                .map(|&p| sim.actors[p].nav.unreachable_time)
+                .sum(),
+            nav_dithers: sim.party.iter().map(|&p| sim.actors[p].nav.dithers).sum(),
             event_count: sim.events.len(),
             log_hash,
             members,

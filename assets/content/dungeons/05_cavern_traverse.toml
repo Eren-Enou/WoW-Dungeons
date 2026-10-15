@@ -1,0 +1,376 @@
+# Dungeon Sandbox content file: Cavern Traverse (navigation test dungeon, 0.4).
+#
+# A short graybox cave built to exercise the layered navigation: a winding
+# passage, a fork with a dead end, a ramp up to a high walkway, a bridge over a
+# lower passage, a gallery stacked above that passage (two routes on top of
+# each other), a one-way drop, a lava pit to walk around, a narrow tunnel, a
+# fire vent and a boss basin below the entrance level.
+#
+# Coordinates are [x, z] on the ground plane; `y` is height in metres. Areas at
+# the same height that overlap are connected; areas at different heights only
+# connect through ramps (`y_to`) or authored drops (`[[dungeon.links]]`).
+# See RULES.md ("Navigation") for every field.
+
+[dungeon]
+id = "cavern_traverse"
+name = "Cavern Traverse"
+description = "A navigation proving ground: winding tunnels, a high walkway and rope bridge, a stacked gallery, a one-way drop and the Magma Basin below."
+recommended_level = 2
+hp_multiplier = 1.0
+damage_multiplier = 1.0
+entrance = [0.0, -4.0]
+leash_radius = 45.0
+theme = { floor = [0.25, 0.21, 0.19], wall = [0.36, 0.30, 0.27], light = [1.0, 0.6, 0.35] }
+
+[[difficulties]]
+id = "normal"
+name = "Normal"
+
+[[difficulties]]
+id = "heroic"
+name = "Heroic"
+hp = 1.6
+damage = 1.4
+level_bonus = 2
+reward_multiplier = 2.0
+rarity_bonus = 1
+
+[[difficulties]]
+id = "raid10"
+name = "Raid (10)"
+hp = 2.6
+damage = 1.6
+level_bonus = 1
+reward_multiplier = 1.5
+rarity_bonus = 1
+
+# ------------------------------------------------------------------ layout --
+
+# 1. Entrance cavern.
+[[dungeon.areas]]
+name = "Entrance Cavern"
+min = [-10.0, -8.0]
+max = [10.0, 10.0]
+
+# 2. Winding passage (three legs).
+[[dungeon.areas]]
+name = "Winding Passage 1"
+min = [-2.0, 8.0]
+max = [2.0, 24.0]
+
+[[dungeon.areas]]
+name = "Winding Passage 2"
+min = [-2.0, 20.0]
+max = [18.0, 24.0]
+
+[[dungeon.areas]]
+name = "Winding Passage 3"
+min = [14.0, 20.0]
+max = [18.0, 36.0]
+
+# Branching intersection.
+[[dungeon.areas]]
+name = "Fork Hall"
+min = [8.0, 34.0]
+max = [28.0, 48.0]
+
+# Dead end.
+[[dungeon.areas]]
+name = "Dead-End Alcove"
+min = [-4.0, 38.0]
+max = [10.0, 44.0]
+
+# 3. Ramp up to the elevated walkway (rises 5 m over 14 m).
+[[dungeon.areas]]
+name = "Ash Ramp"
+min = [14.0, 47.0]
+max = [20.0, 61.0]
+y = 0.0
+y_to = 5.0
+
+[[dungeon.areas]]
+name = "High Walkway"
+min = [14.0, 60.0]
+max = [20.0, 76.0]
+y = 5.0
+
+# 4. Rope bridge crossing above the underpass.
+[[dungeon.areas]]
+name = "Rope Bridge"
+min = [19.0, 68.0]
+max = [47.0, 72.0]
+y = 5.0
+under = "open"
+walls = false
+
+[[dungeon.areas]]
+name = "East Ledge"
+min = [46.0, 64.0]
+max = [56.0, 82.0]
+y = 5.0
+
+# 5. Hanging gallery: runs directly above the underpass (two stacked routes)
+# and ends at the drop into the basin.
+[[dungeon.areas]]
+name = "Hanging Gallery"
+min = [39.0, 78.0]
+max = [47.0, 98.0]
+y = 5.0
+under = "open"
+walls = false
+
+# 8. Narrow tunnel (3 m) east from the fork.
+[[dungeon.areas]]
+name = "Narrow Tunnel"
+min = [26.0, 40.0]
+max = [44.0, 43.0]
+
+# 7. Lava hollow: a ring of floor around a lava pit - two ways round.
+[[dungeon.areas]]
+name = "Lava Hollow South"
+min = [40.0, 40.0]
+max = [54.0, 46.0]
+
+[[dungeon.areas]]
+name = "Lava Hollow West"
+min = [40.0, 40.0]
+max = [44.0, 58.0]
+
+[[dungeon.areas]]
+name = "Lava Hollow East"
+min = [48.0, 40.0]
+max = [54.0, 58.0]
+
+[[dungeon.areas]]
+name = "Lava Hollow North"
+min = [40.0, 52.0]
+max = [54.0, 58.0]
+
+# The lower passage beneath the bridge and the gallery.
+[[dungeon.areas]]
+name = "Underpass"
+min = [40.0, 56.0]
+max = [44.0, 90.5]
+
+# Stairs down into the basin (0 m to -3 m).
+[[dungeon.areas]]
+name = "Cinder Descent"
+min = [40.0, 89.0]
+max = [44.0, 99.5]
+y = 0.0
+y_to = -3.0
+stairs = true
+
+# 10. Boss arena, 3 m below the entrance.
+[[dungeon.areas]]
+name = "Magma Basin"
+min = [26.0, 98.0]
+max = [60.0, 126.0]
+y = -3.0
+
+# An unreachable rock perch beside the basin (pathfinding must give up cleanly).
+[[dungeon.areas]]
+name = "Sniper Perch"
+min = [60.0, 108.0]
+max = [64.0, 112.0]
+y = 3.0
+unreachable = true
+
+# 6. One-way drop: step off the end of the gallery, fall 8 m into the basin.
+[[dungeon.links]]
+from = "Hanging Gallery"
+to = "Magma Basin"
+kind = "drop"
+min = [40.0, 96.5]
+max = [46.0, 99.5]
+
+# 9. Environmental hazard: the lava pit (decor) and a fire vent (below).
+[[dungeon.lava]]
+min = [44.0, 46.0]
+max = [48.0, 52.0]
+y = -0.6
+
+[[dungeon.lava]]
+min = [27.0, 118.0]
+max = [33.0, 125.0]
+y = -3.4
+
+# --------------------------------------------------------------- enemies --
+
+[templates.skulker]
+name = "Cinder Skulker"
+rank = "trash"
+level = 1
+hp = 600.0
+melee_damage = 65.0
+attack_interval = 2.0
+aggro_radius = 10.0
+speed = 6.5
+radius = 0.6
+armor = 60.0
+dodge = 0.05
+
+[templates.brute]
+name = "Fork Brute"
+rank = "elite"
+level = 2
+hp = 2800.0
+melee_damage = 150.0
+attack_interval = 2.4
+aggro_radius = 12.0
+speed = 6.0
+radius = 1.1
+armor = 120.0
+parry = 0.05
+
+[[templates.brute.abilities]]
+name = "Rockfall Cleave"
+kind = "cleave"
+interval = 8.0
+damage = 90.0
+radius = 5.0
+
+[templates.warden]
+name = "Magma Warden"
+rank = "boss"
+level = 3
+hp = 12000.0
+melee_damage = 400.0
+attack_interval = 2.0
+attack_range = 2.5
+aggro_radius = 14.0
+speed = 6.5
+radius = 1.6
+armor = 150.0
+resist = 5.0
+parry = 0.08
+enrage_seconds = 240.0
+
+[[templates.warden.phases]]
+hp_below = 0.5
+damage_multiplier = 1.25
+announce = "The Magma Warden stokes the basin! Watch the ground!"
+
+[[templates.warden.abilities]]
+name = "Slag Bolt"
+kind = "bolt"
+interval = 8.0
+cast_time = 1.5
+interruptible = true
+target = "random_non_tank"
+damage = 380.0
+school = "fire"
+phases = [1]
+
+[[templates.warden.abilities]]
+name = "Magma Ring"
+kind = "ring"
+interval = 9.0
+initial = 2.0
+delay = 2.5
+radius = 5.0
+damage = 560.0
+school = "fire"
+target = "random"
+phases = [2]
+
+# ------------------------------------------------------------- encounters --
+
+[[encounters]]
+id = "winding_pack"
+name = "Passage Skulkers"
+mobs = [
+  { template = "skulker", pos = [15.5, 28.0] },
+  { template = "skulker", pos = [16.5, 31.0] },
+]
+
+[[encounters]]
+id = "fork_guard"
+name = "Fork Brute"
+mobs = [
+  { template = "brute", pos = [18.0, 42.0] },
+  { template = "skulker", pos = [22.0, 44.0] },
+]
+
+# Fought on the high route: one on the bridge right above the underpass (y
+# says which floor), one on the far ledge.
+[[encounters]]
+id = "bridge_pack"
+name = "Bridge Skulkers"
+mobs = [
+  { template = "skulker", pos = [30.0, 70.0] },
+  { template = "skulker", pos = [42.0, 70.0], y = 5.0 },
+  { template = "skulker", pos = [51.0, 72.0] },
+]
+
+# Directly under the bridge: crossing above must not pull it (no aggro
+# through floors).
+[[encounters]]
+id = "underpass_lurker"
+name = "Underpass Lurker"
+optional = true
+mobs = [
+  { template = "skulker", pos = [42.0, 68.0], y = 0.0 },
+]
+
+[[encounters]]
+id = "lava_hollow"
+name = "Lava Hollow"
+optional = true
+mobs = [
+  { template = "skulker", pos = [46.0, 55.0] },
+  { template = "skulker", pos = [50.0, 55.0] },
+]
+hazards = [
+  { name = "Fire Vent", pos = [42.0, 50.0], radius = 2.5, damage = 120.0, school = "fire", on = 2.0, off = 4.0 },
+]
+
+[[encounters]]
+id = "magma_warden"
+name = "Magma Warden"
+mobs = [
+  { template = "warden", pos = [43.0, 115.0] },
+]
+
+# ------------------------------------------------------------------ loot --
+
+[[loot]]
+id = "traverse_boots"
+name = "Cavewalker Boots"
+slot = "feet"
+rarity = "common"
+stats = { stamina = 8, armor = 40 }
+weight = 1
+source = "fork_guard"
+
+[[loot]]
+id = "slag_ward"
+name = "Slag Ward"
+slot = "off_hand"
+rarity = "uncommon"
+role = "tank"
+stats = { stamina = 10, armor = 200 }
+weight = 2
+
+[[loot]]
+id = "basin_focus"
+name = "Basin Focus"
+slot = "trinket"
+rarity = "uncommon"
+role = "caster"
+stats = { power = 5, crit = 0.5 }
+weight = 2
+
+[[loot]]
+id = "ropewalker_legs"
+name = "Ropewalker Leggings"
+slot = "legs"
+rarity = "uncommon"
+role = "melee"
+stats = { power = 5, hit = 1.0 }
+weight = 2
+
+[rewards]
+marks_per_clear = 10
+marks_per_wipe = 1
+xp_per_clear = 450

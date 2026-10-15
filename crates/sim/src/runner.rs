@@ -125,6 +125,9 @@ pub struct BatchStats {
     pub mean_threat_failures: f32,
     pub mean_overheal_pct: f32,
     pub mean_heal_per_mana: f32,
+    pub mean_stuck_seconds: f32,
+    pub mean_unreachable_seconds: f32,
+    pub mean_dithers: f32,
 }
 
 pub fn batch_stats(summaries: &[RunSummary]) -> BatchStats {
@@ -160,13 +163,16 @@ pub fn batch_stats(summaries: &[RunSummary]) -> BatchStats {
         mean_threat_failures: mean(&|s| s.threat_failures as f32),
         mean_overheal_pct: mean(&|s| s.overheal_pct),
         mean_heal_per_mana: mean(&|s| s.heal_per_mana),
+        mean_stuck_seconds: mean(&|s| s.nav_stuck_seconds),
+        mean_unreachable_seconds: mean(&|s| s.nav_unreachable_seconds),
+        mean_dithers: mean(&|s| s.nav_dithers as f32),
     }
 }
 
 impl BatchStats {
     pub fn one_line(&self) -> String {
         format!(
-            "runs {} | wins {} ({:.0}%) | wipes {} | timeouts {} | mean {:.0}s (wins {:.0}s) | deaths {:.2} | dps {:.0} | avoidable {:.0} | ring hits {:.2} | interrupts {:.0}% | threat fails {:.1} | overheal {:.0}% | heal/mana {:.2}",
+            "runs {} | wins {} ({:.0}%) | wipes {} | timeouts {} | mean {:.0}s (wins {:.0}s) | deaths {:.2} | dps {:.0} | avoidable {:.0} | ring hits {:.2} | interrupts {:.0}% | threat fails {:.1} | overheal {:.0}% | heal/mana {:.2} | nav stuck {:.1}s unreachable {:.1}s dithers {:.1}",
             self.runs,
             self.victories,
             100.0 * self.victories as f32 / self.runs.max(1) as f32,
@@ -181,7 +187,10 @@ impl BatchStats {
             100.0 * self.interrupt_rate,
             self.mean_threat_failures,
             self.mean_overheal_pct,
-            self.mean_heal_per_mana
+            self.mean_heal_per_mana,
+            self.mean_stuck_seconds,
+            self.mean_unreachable_seconds,
+            self.mean_dithers
         )
     }
 }

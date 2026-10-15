@@ -28,6 +28,9 @@ pub const WALL_HEIGHT: f32 = 3.2;
 pub const SLAB: f32 = 0.4;
 /// A ramp may overlap the floor it joins by at most this much (its foot/head).
 pub const RAMP_OVERLAP_MAX: f32 = 2.0;
+/// Mid-route waypoints closer than this are skipped (callers treat anything
+/// nearer than about 0.05 m as "arrived").
+pub const WAYPOINT_SKIP: f32 = 0.1;
 /// Extra route cost for taking a drop (prefer walking when similar).
 pub const DROP_PENALTY: f32 = 2.0;
 
@@ -910,14 +913,19 @@ impl Nav {
                 // keep going (never return the current position mid-route).
                 let m = (li.portal.size().x.min(li.portal.size().z) * 0.5).min(0.3);
                 let aim = li.portal.shrunk(m).clamp(after);
-                if aim.dist(from) < 1e-3 { after } else { aim }
+                if aim.dist(from) < WAYPOINT_SKIP {
+                    after
+                } else {
+                    aim
+                }
             }
             LinkKind::Drop => {
-                if li.portal.contains(from) {
+                let edge = li.portal.clamp(li.exit.xz());
+                if li.portal.contains(from) || edge.dist(from) < WAYPOINT_SKIP {
                     // At the edge: step off toward the landing spot.
                     li.exit.xz()
                 } else {
-                    li.portal.clamp(li.exit.xz())
+                    edge
                 }
             }
         };
