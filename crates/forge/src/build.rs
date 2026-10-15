@@ -309,7 +309,7 @@ fn header(bp: &Blueprint, plan: &Plan) -> String {
          # Main route {main} rooms; {alt} alternate-route rooms; {side} side rooms;\n\
          # {ramps} ramps, {bridges} bridges, {drops} one-way drops, {loops} return loops.\n\
          # This is an ordinary dungeon file: edit it freely, but regenerating\n\
-         # with dungeon-forge overwrites it. See DUNGEON_FORGE_0_6.md.\n\n",
+         # with dungeon-forge overwrites it. See DUNGEON_FORGE_0_7.md.\n\n",
         name = bp.blueprint.name,
         id = bp.blueprint.id,
         seed = plan.seed,
