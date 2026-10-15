@@ -209,10 +209,16 @@ fn start_run(
         visuals_spawned: 0,
         wall_color: rgb(content.dungeon.theme.wall),
     };
+    let optional = content.encounters.len() - required;
+    let extra = if optional > 0 {
+        format!(" (+{optional} optional)")
+    } else {
+        String::new()
+    };
     run.set_banner(
         format!(
-            "{} - {} encounters, final boss: {boss_name}",
-            content.dungeon.name, required
+            "{} - {required} encounters{extra}, final boss: {boss_name}",
+            content.dungeon.name
         ),
         5.0,
         Color::srgb(0.9, 0.85, 0.6),

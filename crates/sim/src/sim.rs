@@ -44,6 +44,10 @@ pub const RECOVER_FOR: f32 = 0.8;
 /// After two direction reversals in quick succession, keep heading for the
 /// previous goal this long (two AI goals fighting over a boundary).
 pub const COMMIT_FOR: f32 = 0.75;
+/// Companions closer than this ease apart (soft crowd separation).
+pub const PERSONAL_SPACE: f32 = 0.9;
+/// Fastest separation drift (m/s); much slower than walking.
+pub const SEPARATION_SPEED: f32 = 1.2;
 /// Seconds the whole party must be out of combat before fallen members rally.
 pub const RALLY_DELAY: f32 = 8.0;
 /// Fraction of HP and resource fallen members rally with.
@@ -1401,6 +1405,7 @@ impl Sim {
         self.run_ai();
         self.process_player_cast();
         self.move_actors();
+        self.separate_party();
         self.settle_heights();
         self.check_aggro();
         self.update_auras();
@@ -2342,6 +2347,52 @@ impl Sim {
                 if dir.len_sq() > 1e-4 {
                     self.actors[id].facing = dir.heading();
                 }
+            }
+        }
+    }
+
+    /// Soft crowd separation: AI party members standing almost on top of
+    /// each other drift apart slowly, through `try_move` (walls and edges
+    /// respected, never a teleport). Facing and casts are left alone.
+    fn separate_party(&mut self) {
+        for i in 0..self.party.len() {
+            let id = self.party[i];
+            let a = &self.actors[id];
+            if !a.alive
+                || a.controller == Controller::Player
+                || a.cast.is_some()
+                || a.is_incapacitated()
+            {
+                continue;
+            }
+            let mut push = V2::ZERO;
+            for &o in &self.party {
+                let b = &self.actors[o];
+                if o == id || !b.alive || (b.y - a.y).abs() > 1.0 {
+                    continue;
+                }
+                let d = a.pos.dist(b.pos);
+                if d >= PERSONAL_SPACE {
+                    continue;
+                }
+                let away = if d > 1e-3 {
+                    (a.pos - b.pos) * (1.0 / d)
+                } else {
+                    // Exactly stacked: split by id, deterministically.
+                    V2::from_heading(if id < o { 0.0 } else { std::f32::consts::PI })
+                };
+                push += away * (PERSONAL_SPACE - d);
+            }
+            if push.len_sq() < 1e-6 {
+                continue;
+            }
+            let step = push.normalize_or_zero() * (SEPARATION_SPEED * DT).min(push.len());
+            let (pos, surface, dropped) = self.nav.try_move(a.pos, a.surface, step);
+            // Never drift off a ledge just to make room.
+            if !dropped {
+                let a = &mut self.actors[id];
+                a.pos = pos;
+                a.surface = surface;
             }
         }
     }
