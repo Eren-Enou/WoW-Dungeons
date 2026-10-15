@@ -15,6 +15,7 @@ pub mod inspect;
 pub mod kit;
 pub mod layout;
 pub mod map;
+pub mod overrides;
 pub mod placement;
 pub mod populate;
 pub mod report;

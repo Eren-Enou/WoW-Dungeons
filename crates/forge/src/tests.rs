@@ -282,7 +282,7 @@ fn crypt_layouts_are_deterministic_and_deliver_their_identity() {
         assert!(
             c.encounters
                 .iter()
-                .any(|e| e.mobs.iter().any(|m| m.patrol.len() >= 1))
+                .any(|e| e.mobs.iter().any(|m| !m.patrol.is_empty()))
         );
         let council = c
             .encounters
@@ -416,4 +416,40 @@ fn five_player_parties_clear_crypt_layouts() {
         }
     }
     assert!(wins * 4 >= runs * 3, "{wins}/{runs} clears");
+}
+
+#[test]
+fn designer_overrides_survive_regeneration_and_go_stale_loudly() {
+    let g = build::generate(&bp(), &kit(), 1).expect("generates");
+    let fin = g.content.encounters[g.content.final_encounter()].id.clone();
+    let patch = format!(
+        "[[encounters]]\nid = \"{fin}\"\nname = \"The Wyrm Below\"\n\n\
+         [[encounters]]\nid = \"o1_optional_elite\"\nremove = true\n\n\
+         [[loot]]\nid = \"emberforge_vaults_sentinel_shard\"\nsource = \"{fin}\"\n\n\
+         [dungeon]\ndescription = \"Edited by hand.\"\n"
+    );
+    // Removing an encounter that loot still drops from is caught by the loader.
+    let dangling = "[[encounters]]\nid = \"o1_optional_elite\"\nremove = true\n";
+    let text = crate::overrides::apply(&g.toml, dangling, "test.toml").expect("applies");
+    let err = dungeon_sim::Content::from_toml_str(&text, "patched").unwrap_err();
+    assert!(err.to_string().contains("o1_optional_elite"), "{err}");
+    let text = crate::overrides::apply(&g.toml, &patch, "test.toml").expect("applies");
+    let c = dungeon_sim::Content::from_toml_str(&text, "patched").expect("loads");
+    assert_eq!(c.encounters.len(), g.content.encounters.len() - 1);
+    assert!(c.encounters.iter().any(|e| e.name == "The Wyrm Below"));
+    assert_eq!(c.dungeon.description, "Edited by hand.");
+    assert!(text.starts_with("# The Emberforge Vaults - generated"));
+    // Regenerating the same seed and re-applying gives the same file.
+    let again = build::generate(&bp(), &kit(), 1).expect("generates");
+    assert_eq!(
+        crate::overrides::apply(&again.toml, &patch, "test.toml").unwrap(),
+        text
+    );
+    // An override for something the layout no longer has is an error.
+    let stale = "[[encounters]]\nid = \"e9_dragon\"\nname = \"x\"\n";
+    let err = crate::overrides::apply(&g.toml, stale, "stale.toml").unwrap_err();
+    assert!(
+        err.contains("e9_dragon") && err.contains("layout has changed"),
+        "{err}"
+    );
 }

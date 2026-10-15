@@ -15,10 +15,12 @@ USAGE
   dungeon-forge validate <blueprint.toml>
       Check a blueprint and its kit (no generation).
   dungeon-forge generate <blueprint.toml> [--seed N] [--out FILE] [--map FILE.svg] [--tagged] [--quiet]
+                         [--overrides FILE.toml]
       Build and validate a dungeon; write it (default: forge_out/<id>_s<seed>.toml)
       and print the topology, checks and summary. --tagged gives the dungeon the
       id <id>_s<seed> and name '<name> (layout <seed>)' so several seeds can be
-      installed side by side.
+      installed side by side. --overrides applies a designer patch (keyed by
+      id/name) after generation and loads the result; stale keys are errors.
   dungeon-forge inspect <dungeon.toml> [--map FILE.svg]
       Summarise any dungeon file (handwritten or generated); optionally draw its map.
   dungeon-forge test <dungeon.toml|blueprint.toml> [--seed N | --layouts A..B] [--runs N] [--sizes 5,10]
@@ -267,9 +269,16 @@ fn generate_from(path: &Path, args: &Args) -> Result<(Blueprint, Generated), Str
 }
 
 fn cmd_generate(args: &Args) -> Result<ExitCode, String> {
-    args.known(&["seed", "out", "map"])?;
+    args.known(&["seed", "out", "map", "overrides"])?;
     let path = first_path(args, "blueprint")?;
-    let (bp, g) = generate_from(&path, args)?;
+    let (bp, mut g) = generate_from(&path, args)?;
+    if let Some(o) = args.get("overrides") {
+        let patch = std::fs::read_to_string(o).map_err(|e| format!("{o}: {e}"))?;
+        let text = dungeon_forge::overrides::apply(&g.toml, &patch, o)?;
+        g.content = Content::from_toml_str(&text, o)
+            .map_err(|e| format!("with the overrides from {o} the dungeon does not load: {e}"))?;
+        g.toml = text;
+    }
     let out = args.get("out").map(PathBuf::from).unwrap_or_else(|| {
         PathBuf::from(format!(
             "forge_out/{}_s{}.toml",
