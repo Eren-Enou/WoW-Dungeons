@@ -445,7 +445,10 @@ fn level_region(r: Poly, (c0, cx, cz): (f32, f32, f32), tol: f32) -> Option<Poly
 
 /// Does segment `a`→`b` touch polygon `r`?
 fn segment_touches(r: &Poly, a: V2, b: V2) -> bool {
-    r.clip(a, b).is_some()
+    // Polygon edges are slanted, so an actor slid onto a portal's edge can sit
+    // a rounding error outside it; count that as touching (rectangles stay
+    // exact, as in 0.4).
+    r.clip(a, b).is_some() || (!r.is_axis_rect() && r.contains_tol(a, 1e-3))
 }
 
 /// Where steering aims inside a portal: away from its sides when it is wide

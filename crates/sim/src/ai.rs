@@ -645,14 +645,21 @@ pub fn party_decision(sim: &Sim, id: ActorId) -> Decision {
         && escape_point(sim, id).is_none()
         && let Some(goal) = d.move_goal
     {
-        d.move_goal = Some(route_around_cones(sim, id, goal));
+        d.move_goal = Some(cone_detour(sim, id, goal).0);
     }
     d
 }
 
 /// If the straight path to `goal` crosses a frontal cleave cone, steer to a point
 /// beside the cleaving enemy first (on our side), so we walk around the front.
+#[cfg(test)]
 pub(crate) fn route_around_cones(sim: &Sim, id: ActorId, goal: V3) -> V3 {
+    cone_detour(sim, id, goal).0
+}
+
+/// `route_around_cones`, plus the cleaving enemy in the way when no detour
+/// gets closer to `goal` than standing still.
+fn cone_detour(sim: &Sim, id: ActorId, goal: V3) -> (V3, Option<ActorId>) {
     let me = sim.actor(id);
     let margin = params_of(me).danger_margin * 0.5;
     for k in 1..=8 {
@@ -668,7 +675,7 @@ pub(crate) fn route_around_cones(sim: &Sim, id: ActorId, goal: V3) -> V3 {
             let reach = frontal_reach(sim, e) + a.radius + me.radius + margin;
             p2.dist(a.pos) <= reach && crate::stats::is_in_front(a.pos, a.facing, p2)
         }) else {
-            return goal;
+            return (goal, None);
         };
         let a = sim.actor(e);
         let fwd = V2::from_heading(a.facing);
@@ -680,12 +687,18 @@ pub(crate) fn route_around_cones(sim: &Sim, id: ActorId, goal: V3) -> V3 {
             .map(|side| safe_spot(sim, id, ground(sim, a.pos + side * reach - fwd * 1.5, a.y)))
             .filter(|c| !in_frontal_cone(sim, id, *c, margin))
             .min_by(|x, y| x.dist(me.loc()).total_cmp(&y.dist(me.loc())));
+        // No detour, or only one we are already standing at or that gets us no
+        // closer: the cone blocks the way.
+        let stuck = best.is_none_or(|c| {
+            c.dist(me.loc()) < 0.5 || c.xz().dist(goal.xz()) + 0.5 >= me.pos.dist(goal.xz())
+        });
+        let blocker = stuck.then_some(e);
         return match best {
-            Some(detour) if detour.dist(me.loc()) >= 0.5 => detour,
-            _ => goal,
+            Some(detour) if detour.dist(me.loc()) >= 0.5 => (detour, blocker),
+            _ => (goal, blocker),
         };
     }
-    goal
+    (goal, None)
 }
 
 fn party_decision_inner(sim: &Sim, id: ActorId) -> Decision {
@@ -1245,16 +1258,10 @@ fn ranged_spot(sim: &Sim, id: ActorId, dist: f32) -> Option<V3> {
     let epos = e.pos;
     // Spread ranged members around an arc so one ring can't catch everyone.
     let side = ((id % 5) as f32 - 2.0) * 0.3;
-    if sim.board.frontal.contains(&enemy) {
-        // Frontal cleavers: stand behind-and-to-the-side, never in front.
-        let back = V2::from_heading(e.facing + std::f32::consts::PI);
-        let flank = if id.is_multiple_of(2) { 0.9 } else { -0.9 };
-        return Some(ground(
-            sim,
-            epos + back.rotate(flank + side * 0.3) * dist,
-            e.y,
-        ));
-    }
+    let frontal = sim.board.frontal.contains(&enemy);
+    // Frontal cleavers: stand behind-and-to-the-side, never in front.
+    let flank_dir = V2::from_heading(e.facing + std::f32::consts::PI)
+        .rotate(if id.is_multiple_of(2) { 0.9 } else { -0.9 } + side * 0.3);
     let anchor = tank.map(|t| sim.actor(t).pos).unwrap_or(sim.actor(id).pos);
     let mut dir = (anchor - epos).normalize_or_zero();
     if dir.len_sq() == 0.0 {
@@ -1271,7 +1278,22 @@ fn ranged_spot(sim: &Sim, id: ActorId, dist: f32) -> Option<V3> {
     // Search outward from the preferred direction: the first spot that is
     // really on the floor (not clamped into a side corridor), sees the enemy and
     // is seen by the watcher.
-    let base = dir.rotate(side);
+    let base = if frontal { flank_dir } else { dir.rotate(side) };
+    let me = sim.actor(id);
+    // A spot across a chasm or lava is no good if the walk there is long.
+    let walkable = |spot: V3| {
+        sim.nav
+            .path_points(me.pos, me.surface, spot)
+            .is_some_and(|pts| {
+                let mut len = 0.0;
+                let mut prev = me.loc();
+                for q in pts {
+                    len += prev.xz().dist(q.xz());
+                    prev = q;
+                }
+                len <= me.pos.dist(spot.xz()) * 1.5 + 6.0
+            })
+    };
     for k in [1.0, 0.7, 0.45] {
         for step in 0..9 {
             let sign = if step % 2 == 0 { 1.0 } else { -1.0 };
@@ -1279,13 +1301,18 @@ fn ranged_spot(sim: &Sim, id: ActorId, dist: f32) -> Option<V3> {
             let want = epos + base.rotate(angle) * (dist * k);
             let spot = ground(sim, want, e.y);
             if spot.xz().dist(want) < 2.0
+                && !(frontal && crate::stats::is_in_front(epos, e.facing, spot.xz()))
                 && !spot_pulls(sim, spot)
                 && spot_sees(sim, spot, enemy)
                 && watch.is_none_or(|t| spot_sees(sim, spot, t))
+                && walkable(spot)
             {
                 return Some(spot);
             }
         }
+    }
+    if frontal {
+        return Some(ground(sim, epos + flank_dir * dist, e.y));
     }
     Some(ground(sim, epos + dir * (e.radius + 3.0), e.y))
 }
@@ -1320,9 +1347,32 @@ fn dps(sim: &Sim, id: ActorId) -> Decision {
                 .copied()
                 .find(|&e| !sim.actor(e).is_incapacitated())
         });
-    let Some(target) = target else {
+    let Some(mut target) = target else {
         return d;
     };
+    if !ranged {
+        // Boxed in (a narrow bridge, a pack lined up): when the only way
+        // around a cleave cone to the kill target leads backwards, fight the
+        // cleaving enemy in the way from behind instead of shuttling.
+        // Already hitting something safely: keep at it rather than walk the
+        // long way round.
+        let spot = safe_spot(sim, id, behind_spot(sim, id, target));
+        let (detour, blocker) = cone_detour(sim, id, spot);
+        let fighting =
+            |e: ActorId| sim.board.engaged.contains(&e) && !sim.actor(e).is_incapacitated();
+        if detour.dist(spot) > 0.5 || blocker.is_some() {
+            if let Some(c) = me.target.filter(|&c| {
+                c != target
+                    && fighting(c)
+                    && can_hit(sim, id, c, 1.6)
+                    && !in_frontal_cone(sim, id, me.loc(), p.danger_margin * 0.5)
+            }) {
+                target = c;
+            } else if let Some(e) = blocker.filter(|&e| fighting(e)) {
+                target = e;
+            }
+        }
+    }
     d.target = Some(Some(target));
     let t = sim.actor(target);
 

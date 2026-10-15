@@ -2222,6 +2222,31 @@ fn cavern_runs_replay_identically() {
 // ------------------------------------------ 0.5: The Cinderdeep Hollows ---
 
 #[test]
+fn actor_on_a_slanted_portal_edge_crosses_it() {
+    // Regression (0.5, 10-player seed 15): a companion slid onto the slanted
+    // edge shared by the Glass Passage landing and its ramp sat a rounding
+    // error outside the portal, so every step slid along the edge instead of
+    // crossing and it never arrived.
+    let c = Content::builtin_cinderdeep();
+    let nav = c.nav();
+    let top = nav.find("Glass Passage (top)").unwrap();
+    let goal = V3::new(-15.09, -4.0, 96.02);
+    // Slid onto the edge: the nearest walkable point to a spot past it.
+    let mut pos = nav.surfaces[top as usize].walk.clamp(V2::new(-27.9, 98.84));
+    let mut s = top;
+    for _ in 0..200 {
+        let wp = nav.next_waypoint(pos, s, goal);
+        let d = wp.point - pos;
+        if d.len() < 0.05 {
+            break;
+        }
+        let step = d.normalize_or_zero() * (7.0 * crate::sim::DT).min(d.len());
+        (pos, s, _) = nav.try_move(pos, s, step);
+    }
+    assert!(pos.dist(goal.xz()) < 0.5, "stuck at {pos:?} on {s}");
+}
+
+#[test]
 fn cinderdeep_layout_has_routes_shortcut_and_return_connection() {
     let c = Content::builtin_cinderdeep();
     let nav = c.nav();
@@ -2329,6 +2354,49 @@ fn diag_replay() {
     while sim.time < until && sim.outcome == RunOutcome::InProgress {
         sim.step();
     }
+    if let Ok(w) = std::env::var("DIAG_WATCH") {
+        let w: usize = w.parse().unwrap();
+        let s = sim.actors[w].surface as usize;
+        eprintln!(
+            "surf {} walk {:?}",
+            sim.nav.surfaces[s].name(),
+            sim.nav.surfaces[s].walk.points()
+        );
+        for k in 0..sim.nav.links.len() {
+            if sim.nav.links[k].from as usize != s {
+                continue;
+            }
+            let l = &sim.nav.links[k];
+            eprintln!(
+                "link {k} -> {} {:?} portal {:?} inner {:?}",
+                sim.nav.surfaces[l.to as usize].name(),
+                l.kind,
+                l.portal.points(),
+                l.inner.points()
+            );
+            eprintln!(
+                "   to walk {:?}",
+                sim.nav.surfaces[l.to as usize].walk.points()
+            );
+        }
+        for _ in 0..std::env::var("DIAG_N").map_or(12, |v| v.parse().unwrap()) {
+            let a = &sim.actors[w];
+            let wp = a
+                .move_goal
+                .map(|g| sim.nav.next_waypoint(a.pos, a.surface, g));
+            eprintln!(
+                "  watch ({:.3},{:.3}) s{} wp {:?} goal {:?} recover {:.2} commit {:.2}",
+                a.pos.x,
+                a.pos.z,
+                a.surface,
+                wp.map(|w| (w.point.x, w.point.z, w.link)),
+                a.move_goal.map(|g| (g.x, g.z)),
+                a.nav.recover,
+                a.nav.commit
+            );
+            sim.step();
+        }
+    }
     eprintln!(
         "t {:.1} outcome {:?} leader {}",
         sim.time, sim.outcome, sim.leader
@@ -2346,6 +2414,11 @@ fn diag_replay() {
         let wp = a
             .move_goal
             .map(|g| sim.nav.next_waypoint(a.pos, a.surface, g));
+        eprintln!(
+            "   cast {:?} incap {}",
+            a.cast.as_ref().map(|c| (c.name.clone(), c.remaining)),
+            a.is_incapacitated()
+        );
         eprintln!(
             "{id} {} ({:.1},{:.1}) y {:.1} '{}' goal {:?} wp {:?} mode {:?} tgt {:?} hp {:.0} nav {:?}",
             a.name,
