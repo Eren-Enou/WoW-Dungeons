@@ -2487,3 +2487,246 @@ fn props_validate_paths_and_stay_off_walkable_floor() {
         assert!(err.contains(expect), "{model}: {err}");
     }
 }
+
+/// A small L-shaped test map: hall A, a corridor east, room C around the
+/// corner (out of sight of most of A). `extra` is appended (encounters etc.).
+fn l_map(extra: &str) -> String {
+    test_map(L_AREAS, extra)
+}
+
+const L_AREAS: &str = r#"[[dungeon.areas]]
+name = "Hall A"
+min = [0.0, 0.0]
+max = [20.0, 40.0]
+
+[[dungeon.areas]]
+name = "Corridor B"
+min = [18.0, 8.0]
+max = [32.0, 12.0]
+
+[[dungeon.areas]]
+name = "Room C"
+min = [30.0, 8.0]
+max = [42.0, 30.0]
+"#;
+
+/// A hall with a 4 x 2 m pillar (a hole in the floor, walled in) just north
+/// of where the boss stands.
+const PILLAR_AREAS: &str = r#"[[dungeon.areas]]
+name = "South"
+min = [0.0, 0.0]
+max = [30.0, 12.0]
+
+[[dungeon.areas]]
+name = "North"
+min = [0.0, 14.0]
+max = [30.0, 40.0]
+
+[[dungeon.areas]]
+name = "West"
+min = [0.0, 9.0]
+max = [14.0, 17.0]
+
+[[dungeon.areas]]
+name = "East"
+min = [18.0, 9.0]
+max = [30.0, 17.0]
+"#;
+
+fn test_map(areas: &str, extra: &str) -> String {
+    format!(
+        r#"[dungeon]
+id = "l_map"
+name = "L Map"
+hp_multiplier = 1.0
+entrance = [2.0, 2.0]
+leash_radius = 80.0
+
+{areas}
+[templates.walker]
+name = "Walker"
+rank = "trash"
+hp = 500.0
+melee_damage = 10.0
+attack_interval = 2.0
+aggro_radius = 6.0
+speed = 6.0
+radius = 0.5
+
+[templates.seer]
+name = "Seer"
+rank = "boss"
+hp = 50000.0
+melee_damage = 1.0
+attack_interval = 5.0
+aggro_radius = 6.0
+speed = 0.01
+radius = 1.0
+
+[[templates.seer.abilities]]
+name = "Gaze"
+kind = "pulse"
+interval = 6.0
+initial = 1.0
+cast_time = 3.0
+damage = 100.0
+los_blockable = true
+
+{extra}
+
+[[loot]]
+id = "x"
+name = "X"
+slot = "trinket"
+weight = 1
+
+[rewards]
+marks_per_clear = 1
+"#
+    )
+}
+
+#[test]
+fn patrols_walk_their_route_and_are_pulled_where_they_are() {
+    let text = l_map(
+        r#"[[encounters]]
+id = "patrol"
+mobs = [{ template = "walker", pos = [10.0, 35.0], patrol = [[10.0, 15.0]] }]
+
+[[encounters]]
+id = "boss"
+mobs = [{ template = "seer", pos = [38.0, 26.0] }]"#,
+    );
+    let content = Content::from_toml_str(&text, "l_map").expect("valid");
+    let party = default_party(ClassId::Warden);
+    let mut sim = Sim::new(&content, &party, 1);
+    let walker = sim.encounters[0].mobs[0];
+    // Hold the party still at the entrance (player-controlled, no input).
+    for &p in &sim.party.clone() {
+        sim.actors[p].controller = crate::sim::Controller::Player;
+    }
+    let start = sim.actors[walker].pos;
+    let mut min_z = f32::MAX;
+    for _ in 0..(12.0 / crate::sim::DT) as usize {
+        sim.step();
+        min_z = min_z.min(sim.actors[walker].pos.z);
+    }
+    assert!(min_z < 16.0, "walked to the far point (min z {min_z})");
+    assert_eq!(sim.actors[walker].mode(), Some(EnemyMode::Idle));
+    // Walk back toward the spawn after turning.
+    for _ in 0..(3.0 / crate::sim::DT) as usize {
+        sim.step();
+    }
+    assert!(sim.actors[walker].pos.z > min_z + 1.0, "turned around");
+    assert_ne!(sim.actors[walker].pos, start);
+    // Stand in its path: it pulls where it is, and that becomes its home.
+    let p = sim.party[0];
+    let here = sim.actors[walker].pos;
+    sim.actors[p].pos = V2::new(here.x + 3.0, here.z);
+    for _ in 0..4 {
+        sim.step();
+    }
+    assert_eq!(sim.actors[walker].mode(), Some(EnemyMode::Engaged));
+    let home = sim.actors[walker].enemy.as_ref().unwrap().home;
+    assert!(
+        home.xz().dist(here) < 2.0,
+        "home {home:?} vs caught at {here:?}"
+    );
+}
+
+#[test]
+fn los_pulses_spare_hidden_party_members() {
+    let text = l_map(
+        r#"[[encounters]]
+id = "boss"
+mobs = [{ template = "seer", pos = [10.0, 10.0] }]"#,
+    );
+    let content = Content::from_toml_str(&text, "l_map").expect("valid");
+    let party = default_party(ClassId::Warden);
+    let mut sim = Sim::new(&content, &party, 1);
+    for &p in &sim.party.clone() {
+        sim.actors[p].controller = crate::sim::Controller::Player;
+    }
+    let (seen, hidden) = (sim.party[0], sim.party[1]);
+    // `seen` stands in the hall; `hidden` around the corner in room C.
+    sim.actors[seen].pos = V2::new(4.0, 30.0);
+    let c_surface = sim.nav.find("Room C").unwrap();
+    sim.actors[hidden].pos = V2::new(38.0, 26.0);
+    sim.actors[hidden].surface = c_surface;
+    for &p in &sim.party.clone()[2..] {
+        sim.actors[p].pos = V2::new(40.0, 28.0);
+        sim.actors[p].surface = c_surface;
+    }
+    assert!(!sim.has_los(sim.encounters[0].mobs[0], hidden));
+    sim.engage(0, seen);
+    for _ in 0..(6.0 / crate::sim::DT) as usize {
+        sim.step();
+    }
+    let hits = |dst: ActorId| {
+        sim.events
+            .iter()
+            .filter(|e| matches!(&e.kind, EventKind::Damage { what, dst: d, .. } if &**what == "Gaze" && *d == dst))
+            .count()
+    };
+    assert!(hits(seen) >= 1, "the visible member was hit");
+    assert_eq!(hits(hidden), 0, "the hidden member was spared");
+}
+
+#[test]
+fn ai_companions_take_cover_from_los_pulses() {
+    // Companions under AI fighting the seer: most pulses should miss
+    // non-tanks because they step around the corner while it is cast.
+    let text = test_map(
+        PILLAR_AREAS,
+        r#"[[encounters]]
+id = "boss"
+mobs = [{ template = "seer", pos = [16.0, 6.0] }]"#,
+    );
+    let content = Content::from_toml_str(&text, "pillar_map").expect("valid");
+    let party = party_at_level(ClassId::Warden, 5, AiProfile::Balanced);
+    let mut sim = Sim::new(&content, &party, 3);
+    let tank = sim.party[0];
+    sim.engage(0, tank);
+    for _ in 0..(40.0 / crate::sim::DT) as usize {
+        sim.step();
+    }
+    let casts = sim
+        .events
+        .iter()
+        .filter(|e| matches!(&e.kind, EventKind::CastStart { what, .. } if &**what == "Gaze"))
+        .count();
+    let hits = sim
+        .events
+        .iter()
+        .filter(|e| matches!(&e.kind, EventKind::Damage { what, .. } if &**what == "Gaze"))
+        .count();
+    assert!(casts >= 6, "{casts} casts");
+    let possible = casts * sim.party.len();
+    assert!(
+        hits * 4 < possible,
+        "{hits} hits out of {possible} possible: companions did not take cover"
+    );
+}
+
+#[test]
+fn bad_patrols_and_misused_los_flags_are_rejected() {
+    let off_map = l_map(
+        r#"[[encounters]]
+id = "boss"
+mobs = [{ template = "seer", pos = [10.0, 10.0], patrol = [[100.0, 100.0]] }]"#,
+    );
+    let err = Content::from_toml_str(&off_map, "l")
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("patrol[0]"), "{err}");
+    let misused = l_map(
+        r#"[[encounters]]
+id = "boss"
+mobs = [{ template = "seer", pos = [10.0, 10.0] }]"#,
+    )
+    .replace("kind = \"pulse\"", "kind = \"bolt\"");
+    let err = Content::from_toml_str(&misused, "l")
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("los_blockable only applies"), "{err}");
+}

@@ -337,7 +337,22 @@ pub struct EnemyState {
     pub enrage_seconds: Option<f32>,
     pub enraged: bool,
     pub pull_time: f32,
+    /// Patrol route (spawn point first); empty for mobs that stand still.
+    pub patrol: Vec<V3>,
+    /// Index of the patrol point it is walking to, and the direction.
+    pub patrol_next: usize,
+    pub patrol_forward: bool,
 }
+
+impl EnemyState {
+    /// Walking a patrol right now (idle with a route).
+    pub fn patrolling(&self) -> bool {
+        self.mode == EnemyMode::Idle && self.patrol.len() > 1
+    }
+}
+
+/// Patrols walk at this fraction of their running speed.
+pub const PATROL_PACE: f32 = 0.45;
 
 #[derive(Debug, Clone)]
 pub struct Actor {
@@ -955,6 +970,17 @@ impl Sim {
                 let (pos, _) =
                     Content::place(&sim.nav, spawn.pos, spawn.y).expect("validated spawn");
                 let id = sim.spawn_enemy(&spawn.template, pos, ei, false);
+                if !spawn.patrol.is_empty() {
+                    let mut route = vec![sim.actors[id].loc()];
+                    for q in &spawn.patrol {
+                        let (p3, _) =
+                            Content::place(&sim.nav, *q, spawn.y).expect("validated patrol");
+                        route.push(p3);
+                    }
+                    let es = sim.actors[id].enemy.as_mut().expect("enemy");
+                    es.patrol = route;
+                    es.patrol_next = 1;
+                }
                 sim.encounters[ei].mobs.push(id);
             }
             for h in &enc.hazards {
@@ -1078,6 +1104,9 @@ impl Sim {
                 enrage_seconds: t.enrage_seconds,
                 enraged: false,
                 pull_time: 0.0,
+                patrol: Vec::new(),
+                patrol_next: 0,
+                patrol_forward: true,
             }),
         });
         self.enemies.push(id);
@@ -1402,6 +1431,7 @@ impl Sim {
         self.time += DT;
         self.tick += 1;
         self.refresh_combat_flags();
+        self.advance_patrols();
         self.run_ai();
         self.process_player_cast();
         self.move_actors();
@@ -1984,7 +2014,13 @@ impl Sim {
                     })
                     .collect();
                 let now = self.time;
+                let (here, facing) = (self.actors[m].loc(), self.actors[m].facing);
                 let es = self.actors[m].enemy.as_mut().expect("enemy");
+                if es.patrol.len() > 1 {
+                    // Caught on its route: fight (and later reset) from here.
+                    es.home = here;
+                    es.home_facing = facing;
+                }
                 es.mode = EnemyMode::Engaged;
                 es.threat.clear();
                 es.threat.push(ThreatEntry {
@@ -2287,6 +2323,38 @@ impl Sim {
         self.forget(id);
     }
 
+    /// Idle patrols that reached their next point turn toward the following
+    /// one (back and forth along the route).
+    fn advance_patrols(&mut self) {
+        for i in 0..self.enemies.len() {
+            let e = self.enemies[i];
+            let a = &self.actors[e];
+            if !a.alive {
+                continue;
+            }
+            let Some(es) = a.enemy.as_ref() else { continue };
+            if !es.patrolling() {
+                continue;
+            }
+            let target = es.patrol[es.patrol_next];
+            if a.pos.dist(target.xz()) > 0.4 {
+                continue;
+            }
+            let es = self.actors[e].enemy.as_mut().expect("enemy");
+            let last = es.patrol.len() - 1;
+            if es.patrol_forward && es.patrol_next == last {
+                es.patrol_forward = false;
+            } else if !es.patrol_forward && es.patrol_next == 0 {
+                es.patrol_forward = true;
+            }
+            es.patrol_next = if es.patrol_forward {
+                es.patrol_next + 1
+            } else {
+                es.patrol_next - 1
+            };
+        }
+    }
+
     fn move_actors(&mut self) {
         for id in 0..self.actors.len() {
             self.actors[id].moved_last_tick = false;
@@ -2298,7 +2366,15 @@ impl Sim {
                 continue;
             }
             let resetting = a.mode() == Some(EnemyMode::Resetting);
-            let speed = a.speed * if resetting { 1.5 } else { 1.0 };
+            let patrolling = a.enemy.as_ref().is_some_and(|e| e.patrolling());
+            let speed = a.speed
+                * if resetting {
+                    1.5
+                } else if patrolling {
+                    PATROL_PACE
+                } else {
+                    1.0
+                };
             let step = if a.controller == Controller::Player {
                 a.move_dir.normalize_or_zero() * speed * DT
             } else if let Some(goal) = a.move_goal {
@@ -2968,7 +3044,11 @@ impl Sim {
                 }
             }
             AbilityKind::Pulse => {
-                let hits: Vec<ActorId> = self.alive_party().collect();
+                // A line-of-sight pulse spares anyone hiding behind cover.
+                let hits: Vec<ActorId> = self
+                    .alive_party()
+                    .filter(|&p| !cfg.los_blockable || self.has_los(e, p))
+                    .collect();
                 for p in hits {
                     let spec = DamageSpec::new(
                         cfg.damage,

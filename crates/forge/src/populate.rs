@@ -113,6 +113,7 @@ pub fn populate(bp: &Blueprint, kit: &Kit, plan: &Plan, comp: &Composed) -> Popu
                     template: template.to_string(),
                     pos: r2(p),
                     y: Some(r.y),
+                    patrol: Vec::new(),
                 });
             }
         };
@@ -132,6 +133,7 @@ pub fn populate(bp: &Blueprint, kit: &Kit, plan: &Plan, comp: &Composed) -> Popu
                             template: m.template.clone(),
                             pos: r2(p),
                             y: Some(r.y),
+                            patrol: Vec::new(),
                         });
                     }
                 }

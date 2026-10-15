@@ -580,6 +580,10 @@ pub struct EnemyAbility {
     /// Debuff: the aura applied.
     #[serde(default)]
     pub aura: Option<AuraConfig>,
+    /// Pulse: only hits party members who can see the caster (hide behind
+    /// pillars or around corners while it is cast).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub los_blockable: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
@@ -665,7 +669,14 @@ pub struct MobSpawn {
     /// Elevation; needed only when several floors lie under `pos`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub y: Option<f32>,
+    /// Patrol route: while idle the mob walks from `pos` through these points
+    /// and back again at walking pace (aggro is checked where it is).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub patrol: Vec<V2>,
 }
+
+/// Most patrol points a mob may have.
+pub const MAX_PATROL_POINTS: usize = 8;
 
 /// An environmental hazard that pulses on and off while its encounter is alive.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -1394,6 +1405,10 @@ impl Content {
                     );
                 }
                 check(a.damage >= 0.0, format!("{ap}: damage must be >= 0"));
+                check(
+                    !a.los_blockable || a.kind == AbilityKind::Pulse,
+                    format!("{ap}: los_blockable only applies to kind = \"pulse\""),
+                );
                 match a.kind {
                     AbilityKind::Bolt | AbilityKind::Pulse => {
                         check(
@@ -1485,10 +1500,47 @@ impl Content {
                         }
                     }
                 }
-                if let Some(nav) = &nav
-                    && let Err(e) = Content::place(nav, m.pos, m.y)
-                {
-                    check(false, format!("{mp}.pos {:?} {e}", <[f32; 2]>::from(m.pos)));
+                if let Some(nav) = &nav {
+                    match Content::place(nav, m.pos, m.y) {
+                        Err(e) => {
+                            check(false, format!("{mp}.pos {:?} {e}", <[f32; 2]>::from(m.pos)))
+                        }
+                        Ok((start, s0)) => {
+                            check(
+                                m.patrol.len() <= MAX_PATROL_POINTS,
+                                format!("{mp}.patrol: at most {MAX_PATROL_POINTS} points"),
+                            );
+                            // Every leg of the patrol must be a walkable route.
+                            let mut prev = (start, s0);
+                            for (k, q) in m.patrol.iter().enumerate() {
+                                match Content::place(nav, *q, m.y) {
+                                    Err(e) => {
+                                        check(
+                                            false,
+                                            format!(
+                                                "{mp}.patrol[{k}] {:?} {e}",
+                                                <[f32; 2]>::from(*q)
+                                            ),
+                                        );
+                                        break;
+                                    }
+                                    Ok((p3, s)) => {
+                                        if nav.path_points(prev.0.xz(), prev.1, p3).is_none() {
+                                            check(
+                                                false,
+                                                format!(
+                                                    "{mp}.patrol[{k}] {:?} cannot be walked to from the previous point; patrol legs must be walkable routes",
+                                                    <[f32; 2]>::from(*q)
+                                                ),
+                                            );
+                                            break;
+                                        }
+                                        prev = (p3, s);
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
             for (j, h) in e.hazards.iter().enumerate() {

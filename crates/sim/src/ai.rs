@@ -701,7 +701,106 @@ fn cone_detour(sim: &Sim, id: ActorId, goal: V3) -> (V3, Option<ActorId>) {
     (goal, None)
 }
 
+/// Is engaged enemy `e` casting a line-of-sight pulse?
+fn casting_los_pulse(sim: &Sim, e: ActorId) -> bool {
+    let a = sim.actor(e);
+    let Some(cast) = &a.cast else { return false };
+    let crate::sim::CastKind::Enemy(i) = cast.kind else {
+        return false;
+    };
+    a.enemy
+        .as_ref()
+        .and_then(|es| es.abilities.get(i))
+        .is_some_and(|ab| ab.cfg.los_blockable)
+}
+
+/// An engaged enemy casting a line-of-sight pulse that can see `id`, if any.
+fn los_pulse_caster(sim: &Sim, id: ActorId) -> Option<ActorId> {
+    sim.board
+        .engaged
+        .iter()
+        .copied()
+        .find(|&e| casting_los_pulse(sim, e) && sim.has_los(e, id))
+}
+
+/// Nearest reachable spot (within ~20 m) where `caster` can't see us: behind
+/// a pillar or around a corner. Deterministic ring search, nearest first.
+fn cover_point(sim: &Sim, id: ActorId, caster: ActorId) -> Option<V3> {
+    let me = sim.actor(id);
+    let c = sim.actor(caster);
+    let (eye_h, chest_h) = (me.eye().y - me.y, me.chest().y - me.y);
+    let hidden_at = |p: V3| {
+        !sim.nav.line_of_sight(c.eye(), V3::at(p.xz(), p.y + eye_h))
+            && !sim
+                .nav
+                .line_of_sight(c.eye(), V3::at(p.xz(), p.y + chest_h))
+    };
+    // Deep in the shadow: still hidden 0.7 m to either side, so standing
+    // there doesn't flicker in and out of sight.
+    let hidden = |p: V3| {
+        let side = (p.xz() - c.pos).normalize_or_zero();
+        let side = V2::new(-side.z, side.x) * 0.7;
+        hidden_at(p)
+            && hidden_at(V3::at(p.xz() + side, p.y))
+            && hidden_at(V3::at(p.xz() - side, p.y))
+    };
+    for k in 1..=10 {
+        let r = 2.0 * k as f32;
+        let mut best: Option<(f32, V3)> = None;
+        for j in 0..16 {
+            let a = j as f32 * std::f32::consts::TAU / 16.0;
+            let want = me.pos + V2::new(a.cos(), a.sin()) * r;
+            let p = ground(sim, want, me.y);
+            if p.xz().dist(want) > 1.0 || (p.y - me.y).abs() > 1.5 || !hidden(p) {
+                continue;
+            }
+            if !point_safe(sim, p, me.radius, 0.5) {
+                continue;
+            }
+            let d = me.pos.dist(p.xz());
+            if best.is_none_or(|(bd, _)| d < bd - 1e-4)
+                && sim.nav.path_points(me.pos, me.surface, p).is_some()
+            {
+                best = Some((d, p));
+            }
+        }
+        if let Some((_, p)) = best {
+            return Some(p);
+        }
+    }
+    None
+}
+
 fn party_decision_inner(sim: &Sim, id: ActorId) -> Decision {
+    let me = sim.actor(id);
+    // A line-of-sight pulse is being cast and it can see us: break line of
+    // sight first (casting can wait; instants are still allowed).
+    if let Some(caster) = los_pulse_caster(sim, id)
+        && let Some(cover) = cover_point(sim, id, caster)
+    {
+        return Decision {
+            move_goal: Some(cover),
+            stop_cast: me.cast.is_some(),
+            auto_attack: true,
+            ..Default::default()
+        };
+    }
+    // Already out of sight while it is still casting: stay put (the normal
+    // decision would walk straight back into view).
+    if sim
+        .board
+        .engaged
+        .iter()
+        .any(|&e| casting_los_pulse(sim, e) && !sim.has_los(e, id))
+    {
+        let mut d = party_decision_inner_rest(sim, id);
+        d.move_goal = None;
+        return d;
+    }
+    party_decision_inner_rest(sim, id)
+}
+
+fn party_decision_inner_rest(sim: &Sim, id: ActorId) -> Decision {
     let me = sim.actor(id);
     if let Some(escape) = escape_point(sim, id) {
         // Instant abilities are still allowed while running out.
@@ -1468,6 +1567,8 @@ pub fn enemy_decision(sim: &Sim, id: ActorId) -> Decision {
     match es.mode {
         EnemyMode::Idle => Decision {
             auto_attack: false,
+            // Patrols walk their route; everyone else stands still.
+            move_goal: es.patrolling().then(|| es.patrol[es.patrol_next]),
             ..Default::default()
         },
         EnemyMode::Resetting => Decision {
