@@ -3,45 +3,67 @@
 Prioritized, actionable work. Completed milestones are summarized at the bottom;
 details and evidence live in PROGRESS.md.
 
-## Next up (after 0.5)
+## Next up (after 0.6)
 
-1. **Human playtests** (need a person): PLAYTEST_0_5.md first (Cinderdeep
-   from the packaged ZIP: time to clear, difficulty, route readability,
-   companion movement, camera), then PLAYTEST_NAVIGATION.md and
-   PLAYTEST_0_3.md.
-2. **Cinderdeep tuning from that feedback**: Normal may be too easy at level 5
-   (the AI party almost never dies); decide with players before changing
-   numbers. Consider a camera rule for very large bosses (Ignarax fills the
-   view up close).
-3. **AI movement follow-ups**: melee converging on the same attack spot still
-   overlap (give each attacker its own spot without hurting outcomes: a
-   per-melee slot was tried and measured worse); remaining dither loops around
-   the Cistern pack (melee and healer); dithers are still ~35–135 per run
-   depending on profile. Still open from 0.4: first frontal sweeps right after
-   a pull catch melee arriving before enemies have turned; threat failures
-   from healer-caster packs at the pull.
-4. **Decor collision/sight**: pillars and stalagmites are visual only; decide
-   whether large decor should block line of sight (would need solid volumes in
-   `Nav`).
-5. **Release**: run the manual GitHub Actions workflow once pushing is
+1. **Human playtests** (need a person): PLAYTEST_FORGE.md (generated dungeon
+   and tools) and PLAYTEST_0_5.md (Cinderdeep), then PLAYTEST_NAVIGATION.md
+   and PLAYTEST_0_3.md.
+2. **Milestone 0.7: encounter composition and AI validation** (continuation
+   plan in DUNGEON_FORGE_0_6.md):
+   - recipes v2: patrols, councils, add waves, and size fields with room-fit
+     checks;
+   - space-aware pack placement (scored candidates);
+   - a difficulty budget calibrated by `dungeon-forge test`, labelled as
+     AI-calibrated;
+   - `dungeon-forge report` (stuck and dither heatmaps, deaths per encounter);
+   - a second kit (crypt or fungal).
+3. **AI movement follow-ups**:
+   - melee converging on one attack spot, and high dithering in melee-heavy,
+     cautious parties (100–215 per run on generated layouts);
+   - first frontal sweeps catching arriving melee;
+   - threat failures from healer-caster packs at the pull.
+4. **Milestone 0.8: presentation** (plan in ASSET_PIPELINE_RESEARCH.md):
+   - per-component GLB prefabs with procedural fallback;
+   - theme definitions, decoration anchors and original Blender art with
+     provenance rows;
+   - a package size budget.
+5. **Forge quality**:
+   - free-form (non-grid) placement for more organic caves;
+   - merging designer edits into regenerated files;
+   - room-level culling if frame time ever needs it.
+6. **Cinderdeep tuning from human feedback** (Normal may be too easy at level
+   5); a camera rule for very large bosses.
+7. **Decor and props blocking sight**: decide whether large scenery should
+   become solid volumes in `Nav`.
+8. **Release**: run the manual GitHub Actions workflow once pushing is
    authorised; test the ZIP on another machine and on Windows 10.
-6. **UI follow-ups from 0.3**: per-aura icons/chips with their own tooltips;
-   more than one debuff on compact raid frames; key rebinding; a settings panel
-   for follow speed and mouse sensitivity (stored in `profile.settings`).
-7. **Threat alerts**: decide with playtesters whether 2.5 s between alerts is
-   right and whether non-tanks also want "your healer is being attacked".
-8. **Editor, part 3** (heights, polygons and drops included): add/remove
-   abilities and phases, edit aura values and mob placement in-game.
-9. **Raid tuning**: The Cinder Court is 100% wins at damage x1.0 but 5% at
-   x1.4 - find the middle; a raid test for tank swaps.
-10. **Performance**: Cinderdeep is 0.041 ms/tick (5 players); legacy dungeons
-   rose ~25% in 0.5. Next wins: cache spot-search path lengths per tick, fewer
-   per-tick line-of-sight questions from healers, cache `engaged_enemies()`.
-11. **Economy and hub**: vendor stock rotation, item upgrades with marks,
-   stash scrolling.
+9. **UI follow-ups from 0.3**:
+   - per-aura icons with tooltips;
+   - several debuffs on compact raid frames;
+   - key rebinding;
+   - a settings panel.
+10. **Editor, part 3**: add or remove abilities and phases, place mobs
+    in-game. Consider a forge-backed "Studio" later.
+11. **Raid tuning, economy and hub**:
+    - Cinder Court damage between ×1.0 and ×1.4;
+    - vendor rotation;
+    - stash scrolling.
 
 ## Done
 
+- 0.6: Dungeon Forge foundation:
+  - blueprint and kit formats;
+  - deterministic grid generator with bounded attempts and diagnostics;
+  - room and corridor components;
+  - structural and encounter-space validation;
+  - the `dungeon-forge` CLI (validate, generate, inspect, test, seeds; SVG
+    maps);
+  - the Emberforge Vaults (generated, playable) and two more layouts;
+  - fixes for a stale dither commitment and pit-corner portals;
+  - bounds-pruned projection (−25–32% per tick on Cinderdeep);
+  - GLB props with fallback and provenance.
+
+  See DUNGEON_FORGE_0_6.md.
 - 0.5: The Cinderdeep Hollows (original lava-cavern dungeon, 8 encounters, 3
   optional, branch, one-way drop, bridge, return tunnel, island boss); convex
   polygon areas and ramps in any direction; decor, lava polygons, lights,

@@ -23,8 +23,10 @@ The script:
    folder and ZIP are deleted);
 3. copies `dungeon-sandbox.exe`, `dungeon-headless.exe` (if built),
    `HOW_TO_PLAY.txt` (from `packaging\`), `README.md`, `CHANGELOG.md` and the
-   `*.toml` files under `assets\content\` — never source, `target\`, logs,
-   saves, screenshots, PDBs or custom editor copies (`90_*.toml`);
+   `*.toml` files under `assets\content\`, plus the models under
+   `assets\models\` (`.glb/.gltf/.bin/.png/.ktx2` and `PROVENANCE.md`, 0.6)
+   — never source, `target\`, logs, saves, screenshots, PDBs or custom editor
+   copies (`90_*.toml`);
 4. checks the required files exist, at least one dungeon file is present and
    nothing forbidden slipped in, failing with a message that says what to do;
 5. writes `dist\DungeonSandbox-<version>-windows-x64.zip` and prints both
@@ -33,12 +35,13 @@ The script:
 Package layout:
 
 ```
-DungeonSandbox-0.5.0-windows-x64/
+DungeonSandbox-<version>-windows-x64/
   dungeon-sandbox.exe      the game
   dungeon-headless.exe     optional AI-only simulation runner
   HOW_TO_PLAY.txt          player guide (controls, loop, Cinderdeep notes)
   README.md, CHANGELOG.md
-  assets/content/dungeons/*.toml, assets/content/variants/*.toml
+  assets/content/dungeons/*.toml, assets/content/variants/**.toml
+  assets/models/**          GLB props + PROVENANCE.md (0.6)
   saves/                   created on first save (not shipped)
 ```
 
@@ -70,6 +73,14 @@ On the development machine (Windows 11, release build):
 Not verified: other machines, other GPUs, Windows 10, SmartScreen behaviour
 for downloaded ZIPs (the build is unsigned; testers may see "Windows protected
 your PC" and need *More info → Run anyway*).
+
+## Verified (0.6, 2026-10-15)
+
+`package-windows.ps1 -Build` produced `DungeonSandbox-0.6.0-windows-x64.zip`
+(28.6 MB, 7 dungeon files plus `assets/models`). The ZIP was extracted to a
+scratch folder and the game started from a different working directory: the
+generated Emberforge Vaults loaded, and its GLB braziers rendered (no
+fallback warning).
 
 ## Optional CI artifact
 

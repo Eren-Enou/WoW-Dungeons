@@ -1,14 +1,120 @@
 # Progress
 
-Status: **0.5 (the first true dungeon experience: The Cinderdeep Hollows,
-polygon caves, AI movement fixes, Windows packaging) implemented and verified
-with unit and simulation tests, multi-seed headless batches, automated
-graphical runs and a test of the packaged ZIP.** No human has played 0.2–0.5
-yet. The scripts for that are PLAYTEST_0_5.md, PLAYTEST_NAVIGATION.md and
-PLAYTEST_0_3.md.
+Status: **0.6 (Dungeon Forge foundation) implemented and verified** with unit
+tests, multi-layout simulation matrices, automated graphical runs and a test
+of the packaged ZIP. 0.6 adds the blueprint and kit formats, the deterministic
+generator, components, validation, the CLI, a generated dungeon you can play
+from the hub, and GLB props with fallback. No human has played 0.2–0.6 yet.
+The scripts for that are PLAYTEST_FORGE.md, PLAYTEST_0_5.md,
+PLAYTEST_NAVIGATION.md and PLAYTEST_0_3.md.
 
 Environment: Windows 11 Pro, Rust 1.99.0, Bevy 0.20.0 (pinned `=0.20.0`,
 Cargo.lock committed), NVIDIA RTX 2070 SUPER (Vulkan).
+
+## 0.6 — Dungeon Forge foundation
+
+Plan: DUNGEON_FORGE_PLAN.md. Formats, results and continuation plan:
+DUNGEON_FORGE_0_6.md. Asset research: ASSET_PIPELINE_RESEARCH.md.
+
+Starting point: commit c61cc28 (0.5 complete). Commits:
+
+| commit | content |
+|---|---|
+| ecbb790 | Phase A: architecture review and plan |
+| 19bb66b | Phase B/C: forge crate and CLI, volcanic kit, Emberforge Vaults |
+| d272b83 | Phase D: multi-layout matrix; pit-corner and stale-commitment fixes |
+| 84781aa | Phase E: GLB props, provenance, asset research |
+| c44b416 | Phase F: profiling, bounds-pruned projection |
+
+The version bump and docs commit follow these.
+
+### Checks (run 2026-10-15 after the last code change)
+- `cargo fmt --all -- --check`: clean.
+- `cargo check --workspace`: clean.
+- `cargo clippy --workspace --all-targets -- -D warnings`: clean.
+- `cargo test --workspace --release`:
+  - `dungeon_forge` 11 passed;
+  - `dungeon_sim` 157 passed, 1 ignored (`diag_replay`);
+  - `dungeon_game` 15 passed;
+  - 0 failed.
+- `cargo build --release --workspace`: succeeded.
+
+### Acceptance (0.6)
+1. A readable blueprint without coordinates: `assets/forge/blueprints/emberforge_vaults.toml`.
+2. A deterministic builder: byte-identical output per seed (test).
+3. Components cover branching (alternate route, side rooms), elevation
+   (ramps, stairs, overlook, drop) and boss arenas.
+4. Variation: 40/40 seeds, 39 distinct route shapes; three shipped layouts
+   that differ in structure.
+5. The output passes the loader plus the structure and encounter-space
+   checks on every seed.
+6. It loads in the game: listed in the Dungeons tab; graphical demo Victory
+   in 390.6 s.
+7. AI parties clear it:
+   - 1000/1000 5-player and 250/250 10-player Normal runs over 10 layouts;
+   - 0 s stuck.
+8. Failed generation gives a diagnosis: a tally of causes plus suggestions
+   (test with an impossible blueprint).
+9. Authored dungeons:
+   - unchanged by the forge;
+   - the one simulation fix is equal or better on the same seeds;
+   - the optimisation is bit-identical.
+10. Documented: DUNGEON_FORGE_0_6.md, README, `dungeon-forge --help`.
+
+### Headless (release; details in DUNGEON_FORGE_0_6.md)
+- Generated layouts (10 layouts × 5 runs per configuration):
+
+  | Configuration | Wins |
+  |---|---|
+  | Normal, level 3 | 1250/1250 |
+  | Heroic, 5 players at level 5 | 200/200 |
+  | Heroic, 10 players at level 3 | 99/100 |
+  | Heroic, 5 players at level 3 | 0/50 (final boss) |
+
+- Regression, against the 0.5 binary on the same seeds:
+  - Vault 100/100%;
+  - Warrens 99% (0.5: 98%);
+  - Spire 291/300 (0.5: 289);
+  - Cavern 100%;
+  - Cinderdeep 30/30 at 5 and 10 players;
+  - Cinder Court 30/30.
+- Performance (ms/tick):
+
+  | Dungeon | 5 players | 10 players |
+  |---|---|---|
+  | Cinderdeep | 0.031 (0.5: 0.041) | 0.044 (0.5: 0.065) |
+  | Emberforge | 0.011 | 0.017 |
+  | Legacy dungeons | 0.005 | ≤ 0.010 |
+
+- Generation: about 5 ms per dungeon; navigation builds in at most 1.4 ms.
+
+### Graphical (automated)
+- Area-tour screenshots of the generated dungeon (entrance, ledge with drop
+  strip, pit room, arena) were inspected.
+- GLB braziers render in the arena. With the model file removed, the
+  fallback crystals and a warning appear.
+- `--input-test` (moved 30.0 m), `--frame-test`, `--tooltip-test`,
+  `--click-test`, `--hub-tour`: OK.
+- The hub-tour Dungeons tab lists "The Emberforge Vaults (level 3+)".
+- Packaged 0.6.0 ZIP (28.6 MB): extracted and run from another directory;
+  the generated dungeon and its GLB props loaded.
+
+### Bugs found and fixed during 0.6
+- **Pit-room corner portal 0.7 m wide**: oscillation; the overlap is now 3 m.
+- **Stale dither commitment** (all dungeons): 10-player timeouts on
+  generated layouts.
+- **A drop shortcut from the entrance to the room before the final arena**
+  (it skipped the dungeon): shortcuts and alternate routes are now limited to
+  two rooms and never bypass a boss.
+- **Molten column hiding the lava pit**: the column is smaller.
+- **Braziers hidden behind arena walls**: they are scaled to show above.
+
+### Not verified (needs a human)
+- Whether generated layouts feel like places or like rooms on a grid;
+  pacing; difficulty at level 3; route readability.
+- Whether the tools are clear to another developer (PLAYTEST_FORGE.md
+  part 3).
+- Props on other GPUs; the package on other machines.
 
 ## 0.5 — the first true dungeon experience
 

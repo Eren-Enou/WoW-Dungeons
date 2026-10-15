@@ -260,7 +260,9 @@ Full design: NAVIGATION_0_4.md.
   stands at a waypoint while its reachable goal is > 1 m away, for 1 s is stuck:
   it steers to the current portal (or surface) centre for 0.8 s. Two reversals
   of direction within ~0.7 s commit it to its previous goal for 0.75 s, unless
-  it or that goal is in a ground effect. A companion whose goal is unreachable
+  it or that goal is in a ground effect. The "previous goal" is always the
+  AI's own goal, never a commitment target (0.6), so a repeated dither cannot
+  renew a commitment to a stale point. A companion whose goal is unreachable
   stays with the leader.
 * **Range and sight**: `reach(a, b, r)` ⇔ `h² + v² ≤ r²` with `h` = horizontal
   edge-to-edge distance and `v` = height difference minus 1 m. Line of sight is a
@@ -313,3 +315,34 @@ Design and results: DUNGEON_0_5.md.
 * **Soft separation**: AI party members within 0.9 m of each other (and within
   1 m of height) drift apart at up to 1.2 m/s through normal movement (walls
   respected, never over a drop edge, not while casting, facing unchanged).
+
+## Props and generated dungeons (0.6) [orig]
+
+Formats and the generator: DUNGEON_FORGE_0_6.md.
+
+* **Props**: `[[dungeon.props]]` has `model` (a `.glb`/`.gltf` path
+  relative to `assets/`; absolute paths and `..` are rejected), `pos`, `y`,
+  `yaw` (degrees), `scale` (0.05–20), `radius` and `height` (the footprint),
+  and `fallback` (a decor kind drawn when the model file is missing). Props
+  are scenery: their footprint must not overlap walkable space between the
+  floor and head height (the same rule as decor). They never block movement
+  or sight and never change navigation.
+* **Generated dungeons** are ordinary dungeon files and follow every rule
+  above. In addition, the generator guarantees:
+  * room joins overlap by 1.5 m;
+  * pit-room corners overlap by 3 m;
+  * ramps are no steeper than 0.3;
+  * drops fall 3.6–7.5 m;
+  * no walk link outside the planned corridors;
+  * the final arena has a single way in;
+  * shortcuts and alternate routes skip at most two rooms and never a boss;
+  * every pack leaves a safe staging spot in its entry corridor;
+  * no two encounters are within aggro radius + 6 m at a similar height;
+  * a boss room's centre-to-wall distance is at least 2.5 × its largest ring
+    radius and 1.6 × its largest cleave radius.
+* **Level scaling of kit templates**: HP, melee damage, ability damage,
+  heals and DoT values × `(1 + 0.1·(L−1)) / (1 + 0.1·(Lref−1))`; template
+  level + `(L − Lref)`, clamped to 1..=12.
+* **Generated rewards**: marks per clear 8 + 2·L, marks per wipe 1, XP per
+  clear 200 + 200·L. Difficulties: Normal; Heroic (HP ×1.5, damage ×1.35,
+  +2 levels, rewards ×2, rarity +1); Raid (10) (×2.6, ×1.6, +1, ×1.5, +1).

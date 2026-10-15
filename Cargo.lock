@@ -2522,7 +2522,7 @@ checksum = "d8b14ccef22fc6f5a8f4d7d768562a182c04ce9a3b3157b91390b52ddfdf1a76"
 
 [[package]]
 name = "dungeon_forge"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "dungeon_sim",
  "serde",
@@ -2532,7 +2532,7 @@ dependencies = [
 
 [[package]]
 name = "dungeon_game"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "bevy",
  "dungeon_sim",
@@ -2540,7 +2540,7 @@ dependencies = [
 
 [[package]]
 name = "dungeon_sim"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "serde",
  "serde_json",

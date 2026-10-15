@@ -89,6 +89,14 @@ A lava cavern descent, about 8-15 minutes on a first clear:
 - Heart Island: Ignarax, the Molten Heart. Three phases: eruptions and spawn
   from the moat at 60%, a relentless Heart Pulse at 25%.
 
+THE EMBERFORGE VAULTS (new in 0.6, level 3+)
+--------------------------------------------
+Built by Dungeon Forge, the game's dungeon generator, from a blueprint
+rather than by hand: Emberkin raiders, a guarded caster, Forgewarden Hask
+beside a lava pit and Cindermaw, the Furnace Wyrm, in a braziered arena.
+Look for the second route between two rooms, a raised ledge that drops (one
+way) further in, a bridge over lava and an optional elite in a side cell.
+
 Difficulty: Normal, Heroic (harder, better loot) and Raid (10). The Sandbox tab
 can make any dungeon easier or harder without editing files.
 
