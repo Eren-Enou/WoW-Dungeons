@@ -62,3 +62,14 @@ If AzerothCore/Playerbots are studied later, record here which files were read,
 their exact license (these projects are copyleft, GPL/AGPL family — verify the
 specific version in each repository first), and keep
 the separation: behavioural observations only, no code transcription.
+
+## 0.5: The Cinderdeep Hollows
+
+The milestone asked for a dungeon *inspired by* the feel of Ragefire Chasm (a
+short early lava cave in World of Warcraft). Nothing from the game was
+consulted or used: no maps, coordinates, screenshots, names, enemy lists or
+data files. The design takes only the generic genre idea of "a short, winding
+lava cave that leads down to a boss" (see DUNGEON_0_5.md). The layout,
+regions, enemies, abilities, numbers and names are original. Convex polygon
+clipping (Cyrus–Beck) and convex intersection are standard textbook
+algorithms, written from scratch.

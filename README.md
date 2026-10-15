@@ -4,15 +4,22 @@ An original Rust + Bevy 0.20 third-person dungeon RPG inspired by the
 *mechanical feel* of classic tab-target MMORPG dungeons: one player, four
 autonomous companions (tank / healer / DPS) with selectable AI personalities,
 a WoW-Classic-style combat model (armor, hit tables, rage/energy/mana,
-interrupts, crowd control), four data-driven dungeons and a 10-player raid
-with multi-phase bosses, layered navigation with ramps, bridges, drops and
-line of sight, levels, loot with rarities, and a sandbox for editing
+interrupts, crowd control), four data-driven dungeons, a navigation test
+level and a 10-player raid with multi-phase bosses, layered navigation with
+angled caves, ramps, bridges, drops and line of sight, levels, loot with rarities, and a sandbox for editing
 encounters without recompiling. Classic MMO controls, clickable party/raid
 frames with mouseover healing, threat-coloured nameplates and tooltips
 generated from the real rules. All assets are primitive meshes; all names, maps and numbers are
 original.
 
 ## Quick start
+
+**Packaged build (Windows):** extract `DungeonSandbox-<version>-windows-x64.zip`
+and double-click `dungeon-sandbox.exe`; `HOW_TO_PLAY.txt` inside explains the
+game. Saves go to `saves\` next to the exe. Building the package:
+[RELEASE_BUILD.md](RELEASE_BUILD.md).
+
+**From source:**
 
 ```bash
 cargo run --release
@@ -87,6 +94,14 @@ RULES.md documents every formula.
 * **The Cinder Court** (raid, 10 players, level 10): gate guards, Twinmaw the
   Behemoth (tank swaps) and the Cinder Regent.
 
+* **The Cinderdeep Hollows** (level 5+, 0.5): an original lava-cavern descent
+  from a cold entrance to a molten heart: a fork into a low road and a high
+  ridge (with a one-way drop), Kilnmaster Vorsk beside a slag pit, an optional
+  Glass Matriarch, the Kiln Span bridge over a lava river, the Magma Cistern
+  and Ignarax, the Molten Heart, on an island in a lava moat. Three optional
+  fights, a return tunnel. See [DUNGEON_0_5.md](DUNGEON_0_5.md) and
+  [PLAYTEST_0_5.md](PLAYTEST_0_5.md).
+
 * **Cavern Traverse** (level 2+, 0.4): a graybox navigation proving ground with
   a winding passage, a ramp to a high walkway, a rope bridge over an underpass,
   a gallery stacked above it, a one-way drop into the Magma Basin, a narrow
@@ -147,10 +162,37 @@ min = [40.0, 96.5]
 max = [46.0, 99.5]
 ```
 
+Caves (0.5): areas can be convex polygons and ramps can run in any
+direction; lava pools/rivers can be polygons; scenery and lights are data:
+
+```toml
+[[dungeon.areas]]
+name = "Glass Passage"
+points = [[-14.6, 94.4], [-30.0, 96.7], [-29.3, 101.7], [-13.9, 99.4]]
+y = -4.0
+y_to = -1.0
+slope_from = [-15.0, 97.0]   # height y here ...
+slope_to = [-28.9, 99.1]     # ... and y_to here
+
+[[dungeon.decor]]   # pillar | stalagmite | boulder | crystal; must not overlap walkable floor
+kind = "stalagmite"
+pos = [6.0, 20.0]
+radius = 0.8
+height = 3.0
+
+[[dungeon.lights]]
+pos = [8.0, 88.0]
+y = -2.0
+color = [1.0, 0.5, 0.2]
+intensity = 1.2      # relative brightness (1.0 = normal)
+range = 18.0
+```
+
 Areas connect only where they overlap **and** are level with each other.
 Mob and hazard positions take an optional `y` (required when floors are
-stacked there). The full rules are in RULES.md ("Navigation"); the design is in
-[NAVIGATION_0_4.md](NAVIGATION_0_4.md).
+stacked there). The full rules are in RULES.md ("Navigation" and its 0.5
+additions); the design is in [NAVIGATION_0_4.md](NAVIGATION_0_4.md) and
+[DUNGEON_0_5.md](DUNGEON_0_5.md).
 
 Environment overrides: `DUNGEON_CONTENT=<dir or file>`,
 `DUNGEON_SAVE_DIR=<dir>` (default `./saves`).
@@ -200,8 +242,14 @@ cargo run -- --demo --dungeon gloomroot_warrens --level 6 --speed 4 --screenshot
 * `--nav-debug` starts with the navigation overlay on; `--zoom D` sets an
   overview camera distance for screenshots, e.g.
   `--demo --dungeon cavern_traverse --nav-debug --zoom 30 --screenshots 3`.
+* `--area-tour "Area A,Area B"` (or `all`) with `--dungeon ID`: points the
+  camera at each named area in turn, saves `screenshots/area_NN_<name>.png`
+  and exits.
+* `--start-level N` raises the player and all companions to level N in the
+  loaded save (never lowers), for playing higher-level dungeons in a playtest.
 
-Manual playtest scenarios: [PLAYTEST_0_3.md](PLAYTEST_0_3.md) (combat UX) and
+Manual playtest scenarios: [PLAYTEST_0_5.md](PLAYTEST_0_5.md) (Cinderdeep),
+[PLAYTEST_0_3.md](PLAYTEST_0_3.md) (combat UX) and
 [PLAYTEST_NAVIGATION.md](PLAYTEST_NAVIGATION.md) (0.4 navigation).
 
 Set `DUNGEON_SAVE_DIR` to a temp folder for these runs so they don't touch your
@@ -217,16 +265,24 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo build --release --workspace
 ```
 
+`cargo test -p dungeon_sim --release diag_replay -- --ignored --nocapture`
+replays one headless run and prints every actor's position, surface, goal and
+waypoint (`DIAG_DUNGEON`, `DIAG_SEED`, `DIAG_LEVEL`, `DIAG_SIZE`,
+`DIAG_TIME`; `DIAG_WATCH=<actor>` with `DIAG_N=<ticks>` traces one actor tick
+by tick; `DIAG_ALL` includes idle enemies).
+
 ## Layout
 
 ```
 crates/sim    dungeon_sim: stats & formulas, combat, auras, AI + blackboard,
-              layered 2.5D navigation + line of sight,
+              layered 2.5D navigation on convex polygons + line of sight,
               content schema, items, profile/progression, headless runner
 crates/game   dungeon_game: Bevy app (hub, dungeon renderer, HUD, overlays, effects,
               results, camera, controls, tooltips, demo/test automation)
 assets/content/dungeons/   the playable dungeons (TOML)
 assets/content/variants/   example encounter variations
+packaging/    files shipped in the Windows package (HOW_TO_PLAY.txt)
+scripts/      package-windows.ps1
 RULES.md      authoritative rules and formulas ([WoW] / [orig] tagged)
 RESEARCH.md   references and design provenance
 PROGRESS.md   verified status, benchmarks, known problems

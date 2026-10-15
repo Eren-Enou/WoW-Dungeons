@@ -1,5 +1,73 @@
 # Changelog
 
+## 0.5 — the first true dungeon experience
+
+Design, layout, results and limitations: DUNGEON_0_5.md. Playtest script:
+PLAYTEST_0_5.md. Packaging: RELEASE_BUILD.md.
+
+### The Cinderdeep Hollows (new dungeon, level 5+)
+- An original lava-cavern descent from 0 m to −12 m, built from 49 angled cave
+  areas:
+  - a cold entrance;
+  - a fork into a low road and a high ridge (ending in a one-way drop);
+  - the Smelter Gallery around a slag pit;
+  - an optional grotto;
+  - the Kiln Span bridge over a lava river;
+  - a return tunnel;
+  - the Magma Cistern lava chamber;
+  - Ignarax's island arena in a lava moat.
+- 8 encounters, 3 of them optional. Positioning matters throughout: a caster
+  guarded by brutes, hounds on a narrow ledge, a lava-side boss with spreading
+  rings, frontal-cleaving shieldbearers on the bridge, a pack approachable from
+  two causeways with timed vents, and a three-phase final boss.
+- Atmosphere:
+  - fog, ambient light and per-area tints (cold to hot as you descend);
+  - placed lights;
+  - jagged rock walls;
+  - pillars, stalagmites, boulders and crystals;
+  - pulsing lava with crust plates and embers;
+  - low lips at lava edges.
+
+### Navigation
+- Areas can be convex polygons (`points`) and ramps can run in any direction
+  (`slope_from`/`slope_to`). Portals, walls and line of sight work on
+  polygons. Non-convex shapes are rejected with a fix suggestion.
+- Lava can be polygons. Walls facing lava are 0.6 m lips, which block movement
+  but not sight.
+- New `[[dungeon.decor]]` and `[[dungeon.lights]]` sections and a per-area
+  `tint`. Validation keeps decor off walkable floor.
+- Sliding along walls at any angle.
+- Fixed: an actor on a slanted portal edge could slide along it forever.
+- Rectangle maps navigate exactly as in 0.4: per-seed log hashes were verified
+  identical after the refactor.
+
+### AI
+- Ranged and healer spots:
+  - never within an idle pack's aggro radius + 3 m;
+  - never more than a short walk away (no spots across lava);
+  - near frontal cleavers they now go through the same validated search.
+- Melee boxed in by cleave cones (on a narrow bridge, for example) attack the
+  enemy in the way from behind instead of shuttling.
+- Soft crowd separation: companions closer than 0.9 m drift apart.
+- Result:
+  - the 10-player Cinderdeep timeout is gone, and stuck time fell from
+    46.8 s to 0.6 s per run;
+  - dithers fell in every legacy dungeon;
+  - win rates are unchanged within batch noise.
+
+### Distribution and tools
+- `scripts/package-windows.ps1` builds a versioned, verified ZIP containing
+  the exe, the headless runner, the content and `HOW_TO_PLAY.txt`.
+- The game and the headless runner find `assets/` next to the executable, and
+  saves go next to the exe.
+- Optional manual GitHub Actions workflow (artifact only, no release).
+- Version 0.5.0.
+- New flags:
+  - `--area-tour` (area screenshots);
+  - `--start-level N` (playtest convenience);
+  - `diag_replay` with `DIAG_WATCH`/`DIAG_N` per-tick traces.
+- The intro banner counts optional encounters.
+
 ## 0.4 — three-dimensional navigation and dungeon environments
 
 Design, verification, benchmarks and limits: NAVIGATION_0_4.md.

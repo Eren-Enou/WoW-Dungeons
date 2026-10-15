@@ -272,3 +272,44 @@ Full design: NAVIGATION_0_4.md.
   100/70/45% distance) for one that sees the enemy and is seen by the first
   healer (healers: sees the tank); ranged DPS out of the healer's sight move
   before casting; healers who lose the tank stop damage casts and move.
+
+## Navigation and AI additions (0.5) [orig]
+
+Design and results: DUNGEON_0_5.md.
+
+* **Polygon areas**: an area may give `points = [[x, z], ...]` (a convex
+  polygon, either winding; at least 3 points) instead of `min`/`max`.
+  Non-convex outlines are rejected with "split it into convex pieces". All
+  connection, validation, wall and sight rules above apply unchanged: portals
+  are the convex intersection of two walk polygons (each shrunk by the wall
+  margin), walls are polygon edges at any angle with the portal spans cut out.
+  Rectangles keep exact axis-aligned arithmetic, so 0.4 maps navigate
+  exactly as before.
+* **Ramps in any direction**: `slope_from = [x, z]` and `slope_to = [x, z]` put
+  height `y` at the first point and `y_to` at the second; the height is linear
+  along that direction and constant across it. The plane extends over the
+  whole footprint, so put the two points at the ramp's ends.
+  `axis` still works for rectangles. Slope limit unchanged (0.6).
+* **Movement on polygons**: a step that would leave a polygon area without
+  crossing a portal slides to the nearest walkable point (projecting the step
+  onto the wall at any angle). A step starting within 1 mm of a slanted portal
+  counts as touching it (rounding on slanted edges); rectangles stay exact.
+* **Lava**: `[[dungeon.lava]]` may be a polygon (`points`). A wall facing lava
+  is a 0.6 m lip rather than a full wall: it still blocks movement but not
+  sight over it. Lava damage rules are unchanged.
+* **Decor**: `[[dungeon.decor]]` (`pillar`, `stalagmite`, `boulder`,
+  `crystal`; `pos`, `y`, `radius`, `height`) must not overlap any walkable area
+  at its height, so scenery never suggests walkable ground. Decor does not block
+  movement or sight. `[[dungeon.lights]]` and per-area `tint` are visual only.
+* **No overpulls**: ranged and healer spot searches reject any spot within an
+  idle pack's aggro radius + 3 m, and any spot whose walking route is longer
+  than 1.5 × the straight distance + 6 m (no "nearby" spot across a lava
+  channel). Near frontal cleavers the same validated search is used, restricted
+  to spots not in front of the cleaver.
+* **Cone-blocked melee**: if every way to the kill target's back crosses a
+  frontal cone and no detour gets closer (a narrow bridge, a pack lined up),
+  melee keep hitting the target they can already reach safely, or attack the
+  cleaving enemy in the way from behind.
+* **Soft separation**: AI party members within 0.9 m of each other (and within
+  1 m of height) drift apart at up to 1.2 m/s through normal movement (walls
+  respected, never over a drop edge, not while casting, facing unchanged).

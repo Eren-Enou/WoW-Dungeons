@@ -49,6 +49,24 @@ fn main() {
         .nth(1)
         .and_then(|s| s.parse().ok());
 
+    // `--start-level N`: raise the player and every companion to level N in
+    // the loaded save (for playtests of higher-level dungeons). Never lowers.
+    let mut data = GameData::load();
+    if let Some(level) = std::env::args()
+        .skip_while(|a| a != "--start-level")
+        .nth(1)
+        .and_then(|s| s.parse::<u32>().ok())
+    {
+        let level = level.clamp(1, dungeon_sim::class::MAX_LEVEL);
+        let p = &mut data.profile;
+        p.player_level = p.player_level.max(level);
+        for c in p.roster.iter_mut() {
+            c.level = c.level.max(level);
+        }
+        data.save();
+        eprintln!("--start-level: party raised to level {level}");
+    }
+
     let mut app = App::new();
     app.add_plugins(DefaultPlugins.set(WindowPlugin {
         primary_window: Some(Window {
@@ -59,7 +77,7 @@ fn main() {
         ..default()
     }))
     .insert_resource(ClearColor(Color::srgb(0.05, 0.05, 0.08)))
-    .insert_resource(GameData::load())
+    .insert_resource(data)
     .init_state::<AppState>()
     .add_plugins((
         camera::CameraPlugin,

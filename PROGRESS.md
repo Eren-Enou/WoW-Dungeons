@@ -1,12 +1,98 @@
 # Progress
 
-Status: **0.4 (three-dimensional navigation and dungeon environments)
-implemented and verified with unit and simulation tests, multi-seed headless
-batches and automated graphical runs.** No human has played 0.2–0.4 yet. The
-scripts for that are PLAYTEST_NAVIGATION.md and PLAYTEST_0_3.md.
+Status: **0.5 (the first true dungeon experience: The Cinderdeep Hollows,
+polygon caves, AI movement fixes, Windows packaging) implemented and verified
+with unit and simulation tests, multi-seed headless batches, automated
+graphical runs and a test of the packaged ZIP.** No human has played 0.2–0.5
+yet. The scripts for that are PLAYTEST_0_5.md, PLAYTEST_NAVIGATION.md and
+PLAYTEST_0_3.md.
 
 Environment: Windows 11 Pro, Rust 1.99.0, Bevy 0.20.0 (pinned `=0.20.0`,
 Cargo.lock committed), NVIDIA RTX 2070 SUPER (Vulkan).
+
+## 0.5 — the first true dungeon experience
+
+Plan, layout, encounters, AI work, full tables and limitations:
+DUNGEON_0_5.md. Packaging: RELEASE_BUILD.md.
+
+Starting point: commit e2b58ab (0.4 complete). Commits:
+
+| commit | content |
+|---|---|
+| c1c2a3f | Phase A/B: polygons, ramps in any direction, decor/lava/lights, cave renderer |
+| 2298a44 | Phase C: Cinderdeep layout and encounters, polygon sliding, no overpulls |
+| 594f738 | Phase D (part 1): lava look, lips, area tour, tests |
+| 15aa9d8 | clippy fix |
+| a7ad756 | Phase E: portal-edge fix, cone-blocked melee, walkable ranged spots |
+| dffeafc | Phase F: packaging script, HOW_TO_PLAY, manual CI workflow, version 0.5.0 |
+| cb76f37 | soft crowd separation, banner counts optional encounters |
+
+The documentation commit (with `--start-level`) follows these.
+
+### Checks (run 2026-10-15 after the last code change)
+- `cargo fmt --all -- --check`: clean.
+- `cargo check --workspace`: clean.
+- `cargo clippy --workspace --all-targets -- -D warnings`: clean.
+- `cargo test --workspace --release`: **156 passed**, 1 ignored (`diag_replay`)
+  in `dungeon_sim`; **15** passed in `dungeon_game`; 0 failed.
+- `cargo build --release --workspace`: succeeded.
+
+### Headless (release; details in DUNGEON_0_5.md)
+- Cinderdeep at level 5, 30 seeds per batch:
+  - each player class: 30/30;
+  - each AI profile: 30/30;
+  - 10 players: 30/30;
+  - Raid (10) difficulty at level 6: 30/30;
+  - Heroic at level 7: 29/30.
+  - Stuck time 0.1–0.5 s per run, unreachable time 0.0 s, deterministic replay
+    OK.
+  - An AI clear takes about 8 minutes (5 players) and 4.8 minutes (10).
+- Against the 0.4 binary on the same seeds:
+  - Vault 100%, Warrens 98–100% (0.4: 99%), Spire 96–97% over 300 seeds
+    (0.4: 97%), Cavern 100%, Cinder Court 30/30.
+  - Dithers are lower everywhere.
+  - Rectangle navigation was verified bit-identical after the polygon refactor
+    (per-seed log hashes).
+- Benchmarks:
+  - Cinderdeep: 0.041 ms/tick with 5 players, 0.062 with 10;
+  - legacy dungeons: ~25% slower than 0.4 (Vault 0.004, Cinder Court 0.009).
+
+### Graphical (automated)
+- Area-tour screenshots of the entrance, fork, ridge ledge, Kiln Span, slag
+  pit, Cistern and Heart Island were inspected.
+- Cinderdeep demo at level 5: victory in 465 s, 0 deaths, about 60 fps.
+- `--input-test`, `--frame-test`, `--tooltip-test`, `--click-test`,
+  `--hub-tour`: OK.
+- The packaged ZIP was extracted and run from another working directory:
+  - the headless runner won 2/2;
+  - the game smoke test passed;
+  - a Vault demo won, and `saves/profile.json` was created next to the exe.
+
+### Bugs found and fixed during 0.5
+- **Hash drift after the polygon refactor.** Fixed with exact rectangle fast
+  paths.
+- **Healer pinned on a diagonal ramp side.** Sliding only worked along the
+  axes; fixed with polygon sliding.
+- **Mid-boss overpull from a healer spot.** Fixed by the aggro radius check.
+- **Lava that looked like floor.** Fixed with a darker base and crust plates.
+- **Slag pit hidden by full walls.** Fixed with lava lips.
+- **10-player timeout.** Actors on a slanted portal edge slid along it
+  forever.
+- **12 s melee shuttle on the Kiln Span.**
+- **Healer spots across lava.**
+- **Clippy lint that slipped into 594f738.** Caused by `| tail` hiding the exit
+  code; checks are now gated without a pipe.
+
+### Not verified (needs a human)
+- Everything a person would feel:
+  - how long a first human clear takes (target 8–15 min);
+  - whether Normal is too easy at level 5;
+  - whether the routes, drop and return tunnel read clearly;
+  - camera comfort in tunnels and at the boss.
+- Companion movement as seen by a player (stacking when converging, remaining
+  dithers).
+- The package on other machines, GPUs and Windows 10; SmartScreen behaviour.
+- The GitHub Actions workflow (never run; nothing pushed).
 
 ## 0.4 — three-dimensional navigation and dungeon environments
 
