@@ -73,3 +73,34 @@ lava cave that leads down to a boss" (see DUNGEON_0_5.md). The layout,
 regions, enemies, abilities, numbers and names are original. Convex polygon
 clipping (Cyrus–Beck) and convex intersection are standard textbook
 algorithms, written from scratch.
+
+## wowdecomp and Benilla review (post-0.7)
+
+Full report: WOW_335_DECOMP_RESEARCH.md. Reviewed on 2026-10-15 from shallow
+read-only clones kept outside this repository.
+
+* **wowdecomp** (https://github.com/SatyPardus/wowdecomp, commit `0e4e9fe`):
+  * a C++ reconstruction of Blizzard's `Wow.exe` 3.3.5a, with every function
+    tagged with its original address;
+  * **no license** (GitHub `license: null`); it requires retail game data.
+  * Looked at: README, `CMakeLists.txt`, the module and file layout,
+    function names of tagged definitions, `SMSG_*` handler registrations
+    (to separate client logic from server data), and license texts in
+    `ThirdParty/` and `fmodex/`.
+  * **Not looked at**: function bodies as a design source.
+  * **Nothing used.** Category D for all reconstructed code.
+* **Benilla** (https://github.com/samwhosung/benilla, commit `8c35874`):
+  * MIT OR Apache-2.0, Bevy 0.18.1;
+  * README, AGENTS.md, `Cargo.toml`, `docs/METHOD.md`, `docs/MAP.md`,
+    `reference/README.md`, and module doc comments of `player/camera.rs`,
+    `wmo_portal/mod.rs` and `collision.rs`.
+  * **No code used.**
+* Also checked with the GitHub API: benilla-re, binana, thunderbrew and whoa.
+
+**Clean-room rule for future presentation work** (rendering, visibility,
+animation, camera): build from public literature (for example Teller and
+Séquin 1991, Luebke and Georges 1995 for cells and portals) and Bevy's own
+documentation and examples.
+* Do not consult wowdecomp source bodies.
+* Do not translate code from it.
+* Do not read or require Blizzard formats or data.
