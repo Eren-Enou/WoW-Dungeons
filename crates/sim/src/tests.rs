@@ -2210,3 +2210,71 @@ fn cavern_runs_replay_identically() {
     assert_eq!(a.log_hash, b.log_hash);
     assert_eq!(a.outcome, RunOutcome::Victory);
 }
+
+/// Diagnostic replay (not a regular test): `DIAG_DUNGEON=<file stem>
+/// DIAG_SEED=n DIAG_LEVEL=n DIAG_TIME=s cargo test --release -p dungeon_sim
+/// diag_replay -- --ignored --nocapture` prints everyone's state at that time.
+#[test]
+#[ignore]
+fn diag_replay() {
+    let var = |k: &str, d: &str| std::env::var(k).unwrap_or_else(|_| d.to_string());
+    let path = format!(
+        "../../assets/content/dungeons/{}.toml",
+        var("DIAG_DUNGEON", "06_cinderdeep_hollows")
+    );
+    let content = Content::load(&path).unwrap();
+    let seed: u64 = var("DIAG_SEED", "1").parse().unwrap();
+    let level: u32 = var("DIAG_LEVEL", "5").parse().unwrap();
+    let until: f32 = var("DIAG_TIME", "300").parse().unwrap();
+    let size: usize = var("DIAG_SIZE", "5").parse().unwrap();
+    let party = if size == 5 {
+        party_at_level(ClassId::Striker, level, AiProfile::Balanced)
+    } else {
+        raid_party(size, level, AiProfile::Balanced)
+    };
+    let options = crate::sim::RunOptions {
+        autopilot: true,
+        ..Default::default()
+    };
+    let mut sim = Sim::with_options(&content, &party, seed, options);
+    while sim.time < until && sim.outcome == RunOutcome::InProgress {
+        sim.step();
+    }
+    eprintln!(
+        "t {:.1} outcome {:?} leader {}",
+        sim.time, sim.outcome, sim.leader
+    );
+    for (i, e) in sim.encounters.iter().enumerate() {
+        eprintln!("enc {i} {} cleared {}", e.id, e.cleared);
+    }
+    for (id, a) in sim.actors.iter().enumerate() {
+        if !a.alive {
+            continue;
+        }
+        if a.is_enemy() && a.mode() == Some(EnemyMode::Idle) && std::env::var("DIAG_ALL").is_err() {
+            continue;
+        }
+        let wp = a
+            .move_goal
+            .map(|g| sim.nav.next_waypoint(a.pos, a.surface, g));
+        eprintln!(
+            "{id} {} ({:.1},{:.1}) y {:.1} '{}' goal {:?} wp {:?} mode {:?} tgt {:?} hp {:.0} nav {:?}",
+            a.name,
+            a.pos.x,
+            a.pos.z,
+            a.y,
+            sim.nav.surfaces[a.surface as usize].name(),
+            a.move_goal.map(|g| (g.x, g.y, g.z)),
+            wp.map(|w| (w.point.x, w.point.z, w.reachable)),
+            a.mode(),
+            a.target,
+            a.hp,
+            (
+                a.nav.unreachable,
+                a.nav.stalled,
+                a.nav.commit,
+                a.nav.dithers
+            )
+        );
+    }
+}

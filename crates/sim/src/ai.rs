@@ -504,6 +504,20 @@ fn spot_sees(sim: &Sim, spot: V3, target: ActorId) -> bool {
         .line_of_sight(V3::at(spot.xz(), spot.y + 1.7), t.chest())
 }
 
+/// Would standing at `spot` pull an idle pack (within its aggro radius plus a
+/// margin, on its level)? Repositioning mid-fight must not start another fight.
+fn spot_pulls(sim: &Sim, spot: V3) -> bool {
+    sim.enemies.iter().any(|&e| {
+        let a = sim.actor(e);
+        a.alive
+            && a.mode() == Some(EnemyMode::Idle)
+            && a.enemy
+                .as_ref()
+                .is_some_and(|es| a.pos.dist(spot.xz()) <= es.aggro_radius + 3.0)
+            && (a.y - spot.y).abs() <= 2.5
+    })
+}
+
 /// Snap a horizontal point onto the floor nearest elevation `y`.
 fn ground(sim: &Sim, p: V2, y: f32) -> V3 {
     sim.nav.project(p, y).0
@@ -1265,6 +1279,7 @@ fn ranged_spot(sim: &Sim, id: ActorId, dist: f32) -> Option<V3> {
             let want = epos + base.rotate(angle) * (dist * k);
             let spot = ground(sim, want, e.y);
             if spot.xz().dist(want) < 2.0
+                && !spot_pulls(sim, spot)
                 && spot_sees(sim, spot, enemy)
                 && watch.is_none_or(|t| spot_sees(sim, spot, t))
             {

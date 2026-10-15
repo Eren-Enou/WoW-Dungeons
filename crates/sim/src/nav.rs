@@ -1100,6 +1100,19 @@ impl Nav {
     /// position, surface and whether the actor stepped off a drop.
     pub fn try_move(&self, from: V2, s: SurfaceId, delta: V2) -> (V2, SurfaceId, bool) {
         let target = from + delta;
+        let surf = &self.surfaces[s as usize];
+        if !surf.is_rect {
+            // Polygons: leave through a link if the step crosses one, otherwise
+            // slide along the edge (the nearest walkable point to the target
+            // projects the step onto the wall, at any angle).
+            if let Some(r) = self.attempt(from, s, target) {
+                return r;
+            }
+            let slide = surf.walk.clamp(target);
+            if slide.dist(from) > 1e-4 {
+                return (slide, s, false);
+            }
+        }
         for t in [
             target,
             V2::new(from.x + delta.x, from.z),
@@ -1109,7 +1122,6 @@ impl Nav {
                 return r;
             }
         }
-        let surf = &self.surfaces[s as usize];
         if surf.walk.contains(from) {
             (from, s, false)
         } else {

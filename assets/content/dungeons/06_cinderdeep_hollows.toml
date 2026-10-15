@@ -1,0 +1,1252 @@
+# Dungeon Sandbox content file: The Cinderdeep Hollows (levels 5-7).
+#
+# An original lava-cavern descent. The Scaldkin, a tribe of fire-worshipping
+# salamander-folk, have dug down to the molten heart of the mountain. Go down
+# through the cold Frostvent Gate, choose the low Ashgrub Run or the high
+# Ridge Path, break the Kilnmaster in his Smelter Gallery, cross the Kiln
+# Span over the lava river, fight across the Magma Cistern and face Ignarax,
+# the Molten Heart, on its island.
+#
+# Walkable areas are convex polygons (`points`) with heights (`y`, ramps via
+# `y_to` + `slope_from`/`slope_to`). Areas connect only where they overlap and
+# are level with each other. See RULES.md ("Navigation") and DUNGEON_0_5.md.
+
+[dungeon]
+id = "cinderdeep_hollows"
+name = "The Cinderdeep Hollows"
+description = "An original lava-cavern descent: winding tunnels, a choice of high or low road, the Kiln Span over a lava river, the Magma Cistern and Ignarax, the Molten Heart."
+recommended_level = 5
+hp_multiplier = 1.0
+damage_multiplier = 1.0
+entrance = [0.0, -8.0]
+leash_radius = 55.0
+theme = { floor = [0.24, 0.21, 0.19], wall = [0.30, 0.25, 0.23], light = [1.0, 0.6, 0.35], fog = [0.07, 0.04, 0.04], ambient = [0.55, 0.45, 0.42], rough_walls = true }
+
+[[difficulties]]
+id = "normal"
+name = "Normal"
+
+[[difficulties]]
+id = "heroic"
+name = "Heroic"
+hp = 1.5
+damage = 1.35
+level_bonus = 2
+reward_multiplier = 2.0
+rarity_bonus = 1
+
+[[difficulties]]
+id = "raid10"
+name = "Raid (10)"
+hp = 2.6
+damage = 1.6
+level_bonus = 1
+reward_multiplier = 1.5
+rarity_bonus = 1
+
+# ------------------------------------------------------------------ layout --
+
+# 1. Frostvent Gate: cool, rocky entrance cavern
+[[dungeon.areas]]
+name = "Frostvent Gate"
+points = [[-10.0, -12.0], [10.0, -12.0], [16.0, -2.0], [12.0, 10.0], [-12.0, 10.0], [-16.0, -2.0]]
+tint = [0.22, 0.26, 0.31]
+
+
+# 2. Winding passage, sloping down
+[[dungeon.areas]]
+name = "Frostvent Passage (top)"
+points = [[-4.95, 4.48], [-2.53, 10.78], [3.07, 8.62], [0.65, 2.32]]
+tint = [0.22, 0.26, 0.31]
+
+[[dungeon.areas]]
+name = "Frostvent Passage"
+points = [[-3.07, 9.38], [2.47, 23.78], [8.07, 21.62], [2.53, 7.22]]
+y_to = -2.0
+slope_from = [0.0, 9.0]
+slope_to = [5.0, 22.0]
+tint = [0.22, 0.26, 0.31]
+
+[[dungeon.areas]]
+name = "Frostvent Passage (foot)"
+points = [[1.93, 22.38], [4.35, 28.68], [9.95, 26.52], [7.53, 20.22]]
+y = -2.0
+tint = [0.22, 0.26, 0.31]
+
+[[dungeon.areas]]
+name = "Glowworm Bend"
+points = [[5.0, 26.0], [11.0, 24.5], [20.0, 32.0], [14.0, 36.0]]
+y = -2.0
+tint = [0.17, 0.24, 0.24]
+
+
+# The fork: west goes down (Ashgrub Run), east climbs (Ridge Path)
+[[dungeon.areas]]
+name = "Glowworm Fork"
+points = [[8.0, 30.0], [22.0, 28.0], [30.0, 38.0], [26.0, 48.0], [10.0, 50.0], [4.0, 40.0]]
+y = -2.0
+tint = [0.17, 0.24, 0.24]
+
+
+# 3a. West branch: low, smoky and winding
+[[dungeon.areas]]
+name = "Ashgrub Run (top)"
+points = [[6.38, 39.45], [0.92, 43.42], [3.86, 47.46], [9.32, 43.49]]
+y = -2.0
+tint = [0.27, 0.22, 0.19]
+
+[[dungeon.areas]]
+name = "Ashgrub Run"
+points = [[2.14, 42.54], [-10.08, 51.42], [-7.14, 55.46], [5.08, 46.58]]
+y = -2.0
+y_to = -3.5
+slope_from = [3.0, 45.0]
+slope_to = [-8.0, 53.0]
+tint = [0.27, 0.22, 0.19]
+
+[[dungeon.areas]]
+name = "Ashgrub Run (foot)"
+points = [[-8.86, 50.54], [-14.32, 54.51], [-11.38, 58.55], [-5.92, 54.58]]
+y = -3.5
+tint = [0.27, 0.22, 0.19]
+
+[[dungeon.areas]]
+name = "Ashgrub Hollow"
+points = [[-18.0, 46.0], [-6.0, 50.0], [-4.0, 62.0], [-17.0, 65.0]]
+y = -3.5
+tint = [0.27, 0.22, 0.19]
+
+[[dungeon.areas]]
+name = "Ashgrub Slide (top)"
+points = [[-14.99, 57.87], [-13.21, 64.38], [-8.39, 63.07], [-10.17, 56.55]]
+y = -3.5
+tint = [0.27, 0.22, 0.19]
+
+[[dungeon.areas]]
+name = "Ashgrub Slide"
+points = [[-13.61, 62.93], [-10.21, 75.38], [-5.39, 74.07], [-8.79, 61.62]]
+y = -3.5
+y_to = -4.0
+slope_from = [-11.0, 63.0]
+slope_to = [-8.0, 74.0]
+tint = [0.27, 0.22, 0.19]
+
+[[dungeon.areas]]
+name = "Ashgrub Slide (foot)"
+points = [[-10.61, 73.93], [-8.83, 80.45], [-4.01, 79.13], [-5.79, 72.62]]
+y = -4.0
+tint = [0.27, 0.22, 0.19]
+
+
+# 3b. East branch: climbs to a ledge above the Smelter Gallery
+[[dungeon.areas]]
+name = "Ridge Ascent (foot)"
+points = [[23.8, 40.6], [27.85, 46.0], [31.85, 43.0], [27.8, 37.6]]
+y = -2.0
+tint = [0.31, 0.29, 0.28]
+
+[[dungeon.areas]]
+name = "Ridge Ascent"
+points = [[26.95, 44.8], [35.05, 55.6], [39.05, 52.6], [30.95, 41.8]]
+y = -2.0
+y_to = 1.0
+slope_from = [29.4, 43.9]
+slope_to = [36.6, 53.5]
+tint = [0.31, 0.29, 0.28]
+
+[[dungeon.areas]]
+name = "Ridge Ascent (top)"
+points = [[34.15, 54.4], [38.2, 59.8], [42.2, 56.8], [38.15, 51.4]]
+y = 1.0
+tint = [0.31, 0.29, 0.28]
+
+[[dungeon.areas]]
+name = "Ridge Ledge"
+points = [[32.0, 56.0], [40.0, 54.0], [40.0, 96.0], [32.0, 96.0]]
+y = 1.0
+walls = false
+tint = [0.31, 0.29, 0.28]
+
+
+# 4. Smelter Gallery: orange slag around a central pit (boss 1)
+[[dungeon.areas]]
+name = "Smelter South"
+points = [[-12.0, 74.0], [6.0, 72.0], [31.0, 70.0], [32.0, 84.0], [-14.0, 86.0]]
+y = -4.0
+tint = [0.34, 0.22, 0.15]
+
+[[dungeon.areas]]
+name = "Smelter West"
+points = [[-14.0, 82.0], [4.0, 82.0], [4.0, 108.0], [-16.0, 112.0]]
+y = -4.0
+tint = [0.34, 0.22, 0.15]
+
+[[dungeon.areas]]
+name = "Smelter East"
+points = [[12.0, 82.0], [32.0, 82.0], [32.0, 96.0], [12.0, 96.0]]
+y = -4.0
+tint = [0.34, 0.22, 0.15]
+
+[[dungeon.areas]]
+name = "Smelter North"
+points = [[2.0, 92.0], [32.0, 94.0], [28.0, 110.0], [-8.0, 110.0]]
+y = -4.0
+tint = [0.34, 0.22, 0.15]
+
+
+# 5. Optional: a violet glass grotto up a side passage
+[[dungeon.areas]]
+name = "Glass Passage (foot)"
+points = [[-9.44, 93.63], [-16.12, 94.64], [-15.37, 99.58], [-8.69, 98.58]]
+y = -4.0
+tint = [0.19, 0.15, 0.24]
+
+[[dungeon.areas]]
+name = "Glass Passage"
+points = [[-14.63, 94.42], [-30.02, 96.74], [-29.27, 101.68], [-13.88, 99.36]]
+y = -4.0
+y_to = -1.0
+slope_from = [-15.0, 97.0]
+slope_to = [-28.9, 99.1]
+tint = [0.19, 0.15, 0.24]
+
+[[dungeon.areas]]
+name = "Glass Passage (top)"
+points = [[-28.53, 96.52], [-35.21, 97.52], [-34.46, 102.47], [-27.78, 101.46]]
+y = -1.0
+tint = [0.19, 0.15, 0.24]
+
+[[dungeon.areas]]
+name = "Obsidian Grotto"
+points = [[-30.0, 92.0], [-42.0, 86.0], [-54.0, 96.0], [-50.0, 112.0], [-32.0, 110.0]]
+y = -1.0
+tint = [0.19, 0.15, 0.24]
+
+
+# 6. Kiln Span: a 36 m bridge over the lava river; the cistern glows ahead
+[[dungeon.areas]]
+name = "Kiln Span"
+points = [[7.53, 106.41], [13.53, 142.41], [18.47, 141.59], [12.47, 105.59]]
+y = -4.0
+walls = false
+under = "open"
+tint = [0.3, 0.22, 0.18]
+
+[[dungeon.areas]]
+name = "Cistern Rim"
+points = [[4.0, 140.0], [30.0, 138.0], [34.0, 148.0], [4.0, 150.0]]
+y = -4.0
+tint = [0.3, 0.22, 0.18]
+
+
+# Return connection: a tunnel from the rim back round to the gallery
+[[dungeon.areas]]
+name = "Rim Tunnel North"
+points = [[-18.0, 136.0], [6.0, 140.0], [6.0, 148.0], [-18.0, 150.0]]
+y = -4.0
+tint = [0.34, 0.22, 0.15]
+
+[[dungeon.areas]]
+name = "Rim Tunnel"
+points = [[-22.0, 106.0], [-13.0, 108.0], [-11.0, 140.0], [-20.0, 140.0]]
+y = -4.0
+tint = [0.34, 0.22, 0.15]
+
+
+# 7. Winding stair down into the Magma Cistern
+[[dungeon.areas]]
+name = "Cinder Stair (top)"
+points = [[22.84, 144.05], [26.21, 149.9], [30.54, 147.4], [27.17, 141.55]]
+y = -4.0
+tint = [0.19, 0.14, 0.12]
+
+[[dungeon.areas]]
+name = "Cinder Stair"
+points = [[25.46, 148.6], [32.21, 160.3], [36.54, 157.8], [29.79, 146.1]]
+y = -4.0
+y_to = -6.0
+slope_from = [28.0, 148.0]
+slope_to = [34.0, 158.4]
+tint = [0.19, 0.14, 0.12]
+
+[[dungeon.areas]]
+name = "Cinder Stair (foot)"
+points = [[31.46, 159.0], [34.83, 164.85], [39.16, 162.35], [35.79, 156.5]]
+y = -6.0
+tint = [0.19, 0.14, 0.12]
+
+[[dungeon.areas]]
+name = "Cinder Stair Turn"
+points = [[31.0, 158.0], [40.0, 156.0], [42.0, 165.0], [33.0, 167.0]]
+y = -6.0
+tint = [0.19, 0.14, 0.12]
+
+[[dungeon.areas]]
+name = "Cinder Stair Lower (top)"
+points = [[34.35, 159.62], [35.7, 166.23], [40.6, 165.23], [39.25, 158.62]]
+y = -6.0
+tint = [0.19, 0.14, 0.12]
+
+[[dungeon.areas]]
+name = "Cinder Stair Lower"
+points = [[35.4, 164.77], [37.7, 176.03], [42.6, 175.03], [40.3, 163.77]]
+y = -6.0
+y_to = -8.0
+slope_from = [38.0, 165.0]
+slope_to = [40.0, 174.8]
+tint = [0.19, 0.14, 0.12]
+
+[[dungeon.areas]]
+name = "Cinder Stair Lower (foot)"
+points = [[37.4, 174.57], [38.75, 181.18], [43.65, 180.18], [42.3, 173.57]]
+y = -8.0
+tint = [0.19, 0.14, 0.12]
+
+
+# The Magma Cistern: basalt causeways between lava pools
+[[dungeon.areas]]
+name = "Cistern Shore"
+points = [[28.0, 176.0], [56.0, 174.0], [58.0, 182.0], [30.0, 184.0]]
+y = -8.0
+tint = [0.19, 0.14, 0.12]
+
+[[dungeon.areas]]
+name = "West Causeway"
+points = [[30.0, 182.0], [37.0, 182.0], [41.0, 204.0], [34.0, 204.0]]
+y = -8.0
+walls = false
+tint = [0.19, 0.14, 0.12]
+
+[[dungeon.areas]]
+name = "East Causeway"
+points = [[50.0, 180.0], [58.0, 180.0], [54.0, 204.0], [47.0, 204.0]]
+y = -8.0
+walls = false
+tint = [0.19, 0.14, 0.12]
+
+[[dungeon.areas]]
+name = "Basalt Island"
+points = [[35.0, 200.0], [54.0, 200.0], [56.0, 212.0], [46.0, 219.0], [34.0, 212.0]]
+y = -8.0
+walls = false
+tint = [0.19, 0.14, 0.12]
+
+[[dungeon.areas]]
+name = "North Shore"
+points = [[34.0, 214.0], [58.0, 214.0], [58.0, 226.0], [34.0, 226.0]]
+y = -8.0
+tint = [0.19, 0.14, 0.12]
+
+
+# 8. Switchbacks down to the Heart of Cinderdeep
+[[dungeon.areas]]
+name = "Heartward Descent (top)"
+points = [[46.4, 218.3], [43.03, 224.15], [48.22, 227.15], [51.6, 221.3]]
+y = -8.0
+tint = [0.31, 0.12, 0.09]
+
+[[dungeon.areas]]
+name = "Heartward Descent"
+points = [[43.78, 222.85], [37.03, 234.55], [42.22, 237.55], [48.97, 225.85]]
+y = -8.0
+y_to = -10.0
+slope_from = [46.0, 225.0]
+slope_to = [40.0, 235.4]
+tint = [0.31, 0.12, 0.09]
+
+[[dungeon.areas]]
+name = "Heartward Descent (foot)"
+points = [[37.78, 233.25], [34.4, 239.1], [39.6, 242.1], [42.97, 236.25]]
+y = -10.0
+tint = [0.31, 0.12, 0.09]
+
+[[dungeon.areas]]
+name = "Heartward Stair (top)"
+points = [[35.0, 237.0], [39.05, 242.4], [43.85, 238.8], [39.8, 233.4]]
+y = -10.0
+tint = [0.31, 0.12, 0.09]
+
+[[dungeon.areas]]
+name = "Heartward Stair"
+points = [[38.15, 241.2], [46.25, 252.0], [51.05, 248.4], [42.95, 237.6]]
+y = -10.0
+y_to = -12.0
+slope_from = [41.0, 240.0]
+slope_to = [48.2, 249.6]
+tint = [0.31, 0.12, 0.09]
+
+[[dungeon.areas]]
+name = "Heartward Stair (foot)"
+points = [[45.35, 250.8], [49.4, 256.2], [54.2, 252.6], [50.15, 247.2]]
+y = -12.0
+tint = [0.31, 0.12, 0.09]
+
+[[dungeon.areas]]
+name = "Heart Causeway"
+points = [[47.01, 250.72], [45.01, 271.72], [50.99, 272.28], [52.99, 251.28]]
+y = -12.0
+walls = false
+tint = [0.31, 0.12, 0.09]
+
+
+# The final arena: an island in a lava moat
+[[dungeon.areas]]
+name = "Heart Island"
+points = [[60.93, 286.36], [53.36, 293.93], [42.64, 293.93], [35.07, 286.36], [35.07, 275.64], [42.64, 268.07], [53.36, 268.07], [60.93, 275.64]]
+y = -12.0
+walls = false
+tint = [0.31, 0.12, 0.09]
+
+# Shortcut: jump off the ridge into the gallery (one-way, 5 m)
+[[dungeon.links]]
+from = "Ridge Ledge"
+to = "Smelter East"
+kind = "drop"
+min = [30.5, 86.0]
+max = [33.5, 92.0]
+
+# Lava: decoration below the walkable floors (never walkable).
+[[dungeon.lava]]
+points = [[4.0, 84.0], [12.0, 84.0], [12.0, 92.0], [4.0, 92.0]]
+y = -4.8
+
+[[dungeon.lava]]
+points = [[-11.0, 112.0], [46.0, 112.0], [46.0, 138.0], [-11.0, 138.0]]
+y = -16.0
+
+[[dungeon.lava]]
+points = [[22.0, 184.0], [64.0, 184.0], [66.0, 216.0], [20.0, 216.0]]
+y = -9.4
+
+[[dungeon.lava]]
+points = [[72.02, 290.95], [57.95, 305.02], [38.05, 305.02], [23.98, 290.95], [23.98, 271.05], [38.05, 256.98], [57.95, 256.98], [72.02, 271.05]]
+y = -13.2
+
+# Decoration: always outside walkable space (validated).
+[[dungeon.decor]]
+kind = "crystal"
+pos = [-19.0, 0.0]
+y = 0.0
+radius = 1.4
+height = 3.0
+color = [0.55, 0.8, 1.0]
+
+[[dungeon.decor]]
+kind = "crystal"
+pos = [18.0, 6.0]
+y = 0.0
+radius = 1.2
+height = 2.6
+color = [0.55, 0.8, 1.0]
+
+[[dungeon.decor]]
+kind = "pillar"
+pos = [-15.0, 14.0]
+y = 0.0
+radius = 1.6
+height = 7.0
+
+[[dungeon.decor]]
+kind = "stalagmite"
+pos = [15.0, 13.0]
+y = 0.0
+radius = 1.2
+height = 5.0
+
+[[dungeon.decor]]
+kind = "crystal"
+pos = [33.0, 32.0]
+y = -2.0
+radius = 1.2
+height = 2.5
+color = [0.3, 1.0, 0.8]
+
+[[dungeon.decor]]
+kind = "crystal"
+pos = [1.0, 33.0]
+y = -2.0
+radius = 1.0
+height = 2.2
+color = [0.3, 1.0, 0.8]
+
+[[dungeon.decor]]
+kind = "boulder"
+pos = [-22.0, 54.0]
+y = -3.5
+radius = 2.0
+height = 2.5
+
+[[dungeon.decor]]
+kind = "stalagmite"
+pos = [1.0, 60.0]
+y = -3.5
+radius = 1.0
+height = 4.0
+
+[[dungeon.decor]]
+kind = "pillar"
+pos = [-19.0, 78.0]
+y = -4.0
+radius = 1.8
+height = 9.0
+
+[[dungeon.decor]]
+kind = "pillar"
+pos = [26.0, 116.0]
+y = -4.0
+radius = 1.4
+height = 9.0
+
+[[dungeon.decor]]
+kind = "crystal"
+pos = [-58.0, 104.0]
+y = -1.0
+radius = 1.6
+height = 3.5
+color = [0.7, 0.35, 1.0]
+
+[[dungeon.decor]]
+kind = "crystal"
+pos = [-42.0, 116.0]
+y = -1.0
+radius = 1.4
+height = 3.0
+color = [0.7, 0.35, 1.0]
+
+[[dungeon.decor]]
+kind = "crystal"
+pos = [-38.0, 82.0]
+y = -1.0
+radius = 1.2
+height = 2.8
+color = [0.7, 0.35, 1.0]
+
+[[dungeon.decor]]
+kind = "pillar"
+pos = [25.0, 198.0]
+y = -9.4
+radius = 1.6
+height = 10.0
+
+[[dungeon.decor]]
+kind = "pillar"
+pos = [61.0, 192.0]
+y = -9.4
+radius = 1.4
+height = 9.0
+
+[[dungeon.decor]]
+kind = "stalagmite"
+pos = [44.0, 190.0]
+y = -9.4
+radius = 1.4
+height = 5.0
+
+[[dungeon.decor]]
+kind = "stalagmite"
+pos = [62.85, 295.85]
+y = -13.2
+radius = 1.3
+height = 7.0
+
+[[dungeon.decor]]
+kind = "stalagmite"
+pos = [33.15, 295.85]
+y = -13.2
+radius = 1.3
+height = 7.0
+
+[[dungeon.decor]]
+kind = "stalagmite"
+pos = [33.15, 266.15]
+y = -13.2
+radius = 1.3
+height = 7.0
+
+[[dungeon.decor]]
+kind = "stalagmite"
+pos = [62.85, 266.15]
+y = -13.2
+radius = 1.3
+height = 7.0
+
+# Lights: cool at the gate, glowworm teal at the fork, hotter and redder deeper down.
+[[dungeon.lights]]
+pos = [0.0, 0.0]
+y = 6.0
+color = [0.55, 0.7, 1.0]
+intensity = 1.0
+range = 28.0
+
+[[dungeon.lights]]
+pos = [3.0, 17.0]
+y = 4.0
+color = [0.55, 0.75, 1.0]
+intensity = 0.6
+range = 24.0
+
+[[dungeon.lights]]
+pos = [16.0, 40.0]
+y = 3.0
+color = [0.4, 1.0, 0.85]
+intensity = 0.8
+range = 26.0
+
+[[dungeon.lights]]
+pos = [-11.0, 56.0]
+y = 2.0
+color = [1.0, 0.6, 0.35]
+intensity = 0.7
+range = 24.0
+
+[[dungeon.lights]]
+pos = [36.0, 76.0]
+y = 6.0
+color = [0.9, 0.8, 0.7]
+intensity = 0.6
+range = 30.0
+
+[[dungeon.lights]]
+pos = [8.0, 88.0]
+y = 1.0
+color = [1.0, 0.45, 0.1]
+intensity = 1.4
+range = 30.0
+
+[[dungeon.lights]]
+pos = [16.0, 102.0]
+y = 3.0
+color = [1.0, 0.55, 0.25]
+intensity = 1.0
+range = 30.0
+
+[[dungeon.lights]]
+pos = [-42.0, 100.0]
+y = 4.0
+color = [0.7, 0.4, 1.0]
+intensity = 1.0
+range = 28.0
+
+[[dungeon.lights]]
+pos = [13.0, 124.0]
+y = 0.0
+color = [1.0, 0.4, 0.08]
+intensity = 1.6
+range = 40.0
+
+[[dungeon.lights]]
+pos = [18.0, 144.0]
+y = 1.0
+color = [1.0, 0.55, 0.2]
+intensity = 0.8
+range = 24.0
+
+[[dungeon.lights]]
+pos = [-16.0, 124.0]
+y = 1.0
+color = [1.0, 0.6, 0.35]
+intensity = 0.6
+range = 26.0
+
+[[dungeon.lights]]
+pos = [44.0, 196.0]
+y = -4.0
+color = [1.0, 0.4, 0.05]
+intensity = 1.8
+range = 40.0
+
+[[dungeon.lights]]
+pos = [46.0, 220.0]
+y = -4.0
+color = [1.0, 0.45, 0.1]
+intensity = 1.0
+range = 24.0
+
+[[dungeon.lights]]
+pos = [38.0, 240.0]
+y = -7.0
+color = [1.0, 0.3, 0.08]
+intensity = 1.0
+range = 24.0
+
+[[dungeon.lights]]
+pos = [48.0, 281.0]
+y = -6.0
+color = [1.0, 0.25, 0.05]
+intensity = 2.0
+range = 44.0
+
+
+# ----------------------------------------------------------------- hazards --
+# (fire vents are attached to their encounters below)
+
+# --------------------------------------------------------------- enemies --
+
+[templates.scout]
+name = "Scaldkin Scout"
+rank = "trash"
+level = 5
+hp = 950.0
+melee_damage = 68.0
+attack_interval = 2.0
+aggro_radius = 10.0
+speed = 6.5
+radius = 0.6
+armor = 80.0
+dodge = 0.05
+
+[templates.torchbearer]
+name = "Scaldkin Torchbearer"
+rank = "trash"
+level = 5
+hp = 800.0
+melee_damage = 30.0
+attack_interval = 2.0
+aggro_radius = 10.0
+speed = 6.0
+radius = 0.6
+
+[[templates.torchbearer.abilities]]
+name = "Flame Lance"         # interruptible: kick it
+kind = "bolt"
+interval = 7.0
+initial = 2.0
+cast_time = 1.5
+interruptible = true
+target = "random"
+damage = 170.0
+school = "fire"
+
+[templates.brute]
+name = "Scaldkin Brute"
+rank = "elite"
+level = 5
+hp = 3200.0
+melee_damage = 105.0
+attack_interval = 2.4
+aggro_radius = 11.0
+speed = 6.0
+radius = 1.0
+armor = 140.0
+parry = 0.05
+
+[[templates.brute.abilities]]
+name = "Ash Sweep"
+kind = "cleave"
+interval = 9.0
+initial = 5.0
+damage = 115.0
+radius = 5.0
+
+[templates.pyromancer]
+name = "Scaldkin Pyromancer"
+rank = "elite"
+level = 5
+hp = 2200.0
+melee_damage = 38.0
+attack_interval = 2.2
+aggro_radius = 12.0
+speed = 6.0
+radius = 0.7
+
+[[templates.pyromancer.abilities]]
+name = "Cauterize"           # heals the most hurt Scaldkin: interrupt it or CC the caster
+kind = "heal_ally"
+interval = 10.0
+initial = 5.0
+cast_time = 2.0
+interruptible = true
+amount = 700.0
+
+[[templates.pyromancer.abilities]]
+name = "Fireball"
+kind = "bolt"
+interval = 6.0
+initial = 3.0
+cast_time = 2.0
+interruptible = true
+target = "random"
+damage = 200.0
+school = "fire"
+
+[templates.hound]
+name = "Slag Hound"
+rank = "trash"
+level = 5
+hp = 1300.0
+melee_damage = 72.0
+attack_interval = 1.8
+aggro_radius = 11.0
+speed = 7.0
+radius = 0.8
+armor = 100.0
+
+[[templates.hound.abilities]]
+name = "Molten Bite"         # frontal: never stand in front of a hound on the narrow ridge
+kind = "cleave"
+interval = 6.0
+initial = 3.0
+damage = 165.0
+radius = 4.5
+frontal = true
+
+[templates.kilnmaster]
+name = "Kilnmaster Vorsk"
+rank = "boss"
+level = 6
+hp = 20000.0
+melee_damage = 205.0
+attack_interval = 2.0
+attack_range = 2.5
+aggro_radius = 14.0
+speed = 6.5
+radius = 1.7
+armor = 160.0
+resist = 10.0
+parry = 0.08
+enrage_seconds = 300.0
+
+[[templates.kilnmaster.phases]]
+hp_below = 0.5
+damage_multiplier = 1.15
+announce = "Vorsk tips the crucibles! Slag spills across the gallery!"
+summon = [{ template = "slagling", count = 2 }]
+
+[[templates.kilnmaster.abilities]]
+name = "Searing Brand"       # dispellable burn on a non-tank
+kind = "debuff"
+interval = 8.0
+initial = 4.0
+target = "random_non_tank"
+aura = { name = "Searing Brand", effect = "dot", value = 40.0, duration = 12.0, max_stacks = 3, dispellable = true, school = "fire" }
+
+[[templates.kilnmaster.abilities]]
+name = "Smelting Slam"       # frontal: tank faces him away from the party
+kind = "cleave"
+interval = 9.0
+initial = 6.0
+damage = 260.0
+radius = 6.0
+frontal = true
+
+[[templates.kilnmaster.abilities]]
+name = "Call the Slaglings"
+kind = "summon"
+interval = 20.0
+initial = 6.0
+template = "slagling"
+count = 2
+phases = [2]
+
+[[templates.kilnmaster.abilities]]
+name = "Slag Spill"          # phase 2: spread out around the pit
+kind = "ring"
+interval = 11.0
+initial = 3.0
+delay = 2.5
+radius = 4.5
+damage = 450.0
+school = "fire"
+target = "random"
+count = 2
+phases = [2]
+
+[templates.slagling]
+name = "Slagling"
+rank = "trash"
+level = 5
+hp = 450.0
+melee_damage = 40.0
+attack_interval = 1.6
+aggro_radius = 25.0
+speed = 7.0
+radius = 0.5
+
+[templates.matriarch]
+name = "The Glass Matriarch"
+rank = "boss"
+level = 6
+hp = 16000.0
+melee_damage = 185.0
+attack_interval = 2.0
+attack_range = 2.5
+aggro_radius = 14.0
+speed = 6.0
+radius = 1.8
+armor = 200.0
+resist = 20.0
+enrage_seconds = 300.0
+
+[[templates.matriarch.phases]]
+hp_below = 0.4
+announce = "The Matriarch's glass shell cracks - she gathers a nova!"
+
+[[templates.matriarch.abilities]]
+name = "Shard Storm"         # three rings at once: spread out
+kind = "ring"
+interval = 9.0
+initial = 4.0
+delay = 2.2
+radius = 4.0
+damage = 360.0
+school = "arcane"
+target = "random"
+count = 3
+
+[[templates.matriarch.abilities]]
+name = "Splintered"          # stacking -10% healing taken on the tank
+kind = "debuff"
+interval = 7.0
+initial = 3.0
+target = "current"
+aura = { name = "Splintered", effect = "healing_taken", value = 0.1, duration = 15.0, max_stacks = 5, dispellable = false }
+
+[[templates.matriarch.abilities]]
+name = "Glass Nova"          # phase 2: party-wide, interruptible
+kind = "pulse"
+interval = 13.0
+initial = 3.0
+cast_time = 2.5
+interruptible = true
+damage = 250.0
+school = "arcane"
+phases = [2]
+
+[templates.shieldbearer]
+name = "Scaldkin Shieldbearer"
+rank = "trash"
+level = 5
+hp = 1500.0
+melee_damage = 78.0
+attack_interval = 2.0
+aggro_radius = 10.0
+speed = 6.0
+radius = 0.8
+armor = 180.0
+block = 0.1
+
+[[templates.shieldbearer.abilities]]
+name = "Shield Slam"         # frontal on a narrow bridge
+kind = "cleave"
+interval = 7.0
+initial = 4.0
+damage = 150.0
+radius = 4.0
+frontal = true
+
+[templates.flamecaller]
+name = "Scaldkin Flamecaller"
+rank = "elite"
+level = 5
+hp = 2400.0
+melee_damage = 40.0
+attack_interval = 2.2
+aggro_radius = 12.0
+speed = 6.0
+radius = 0.7
+
+[[templates.flamecaller.abilities]]
+name = "Cinder Volley"       # party-wide: interrupt it
+kind = "pulse"
+interval = 11.0
+initial = 4.0
+cast_time = 2.5
+interruptible = true
+damage = 170.0
+school = "fire"
+
+[templates.magma_brute]
+name = "Magma Brute"
+rank = "elite"
+level = 6
+hp = 5000.0
+melee_damage = 120.0
+attack_interval = 2.3
+aggro_radius = 12.0
+speed = 6.0
+radius = 1.3
+armor = 180.0
+
+[[templates.magma_brute.abilities]]
+name = "Magma Fist"          # frontal
+kind = "cleave"
+interval = 8.0
+initial = 5.0
+damage = 230.0
+radius = 5.0
+frontal = true
+
+[templates.imp]
+name = "Cinder Imp"
+rank = "trash"
+level = 5
+hp = 650.0
+melee_damage = 25.0
+attack_interval = 2.0
+aggro_radius = 13.0
+speed = 7.0
+radius = 0.5
+
+[[templates.imp.abilities]]
+name = "Ember Spit"
+kind = "bolt"
+interval = 4.5
+initial = 1.5
+cast_time = 1.2
+target = "random"
+damage = 110.0
+school = "fire"
+
+[templates.ignarax]
+name = "Ignarax, the Molten Heart"
+rank = "boss"
+level = 7
+hp = 32000.0
+melee_damage = 255.0
+attack_interval = 2.0
+attack_range = 3.0
+aggro_radius = 16.0
+speed = 6.0
+radius = 2.2
+armor = 200.0
+resist = 15.0
+parry = 0.06
+enrage_seconds = 420.0
+
+[[templates.ignarax.phases]]
+hp_below = 0.6
+announce = "Ignarax splits the island! Eruptions and spawn rise from the moat!"
+
+[[templates.ignarax.phases]]
+hp_below = 0.25
+damage_multiplier = 1.2
+announce = "The Molten Heart beats - brace for every pulse!"
+
+[[templates.ignarax.abilities]]
+name = "Magma Lash"          # frontal: only the tank in front
+kind = "cleave"
+interval = 8.0
+initial = 5.0
+damage = 300.0
+radius = 7.0
+frontal = true
+
+[[templates.ignarax.abilities]]
+name = "Slag Bolt"           # interruptible, on a non-tank
+kind = "bolt"
+interval = 10.0
+initial = 6.0
+cast_time = 2.0
+interruptible = true
+target = "random_non_tank"
+damage = 420.0
+school = "fire"
+phases = [1, 2]
+
+[[templates.ignarax.abilities]]
+name = "Rise, Magma Spawn"
+kind = "summon"
+interval = 25.0
+initial = 1.0
+template = "magma_spawn"
+count = 2
+phases = [2, 3]
+
+[[templates.ignarax.abilities]]
+name = "Eruption"            # two rings: on a small island, spread with care
+kind = "ring"
+interval = 9.0
+initial = 3.0
+delay = 2.5
+radius = 5.0
+damage = 500.0
+school = "fire"
+target = "random"
+count = 2
+phases = [2, 3]
+
+[[templates.ignarax.abilities]]
+name = "Heart Pulse"         # phase 3: uninterruptible party damage
+kind = "pulse"
+interval = 10.0
+initial = 3.0
+cast_time = 2.0
+damage = 210.0
+school = "fire"
+phases = [3]
+
+[templates.magma_spawn]
+name = "Magma Spawn"
+rank = "trash"
+level = 6
+hp = 900.0
+melee_damage = 70.0
+attack_interval = 1.8
+aggro_radius = 25.0
+speed = 6.5
+radius = 0.7
+
+# ------------------------------------------------------------- encounters --
+# The autopilot clears encounters in this order; optional ones are the side
+# choices (Ashgrub, Ridge, Grotto).
+
+[[encounters]]
+id = "gate_scouts"
+name = "Frostvent Scouts"
+mobs = [
+  { template = "scout", pos = [-4.0, 4.0] },
+  { template = "scout", pos = [4.0, 4.0] },
+  { template = "torchbearer", pos = [0.0, 7.0] },
+]
+
+# West route: a caster protected by two brutes in a low hollow.
+[[encounters]]
+id = "ashgrub_den"
+name = "Ashgrub Den"
+optional = true
+mobs = [
+  { template = "brute", pos = [-9.0, 53.0] },
+  { template = "brute", pos = [-13.0, 55.0] },
+  { template = "pyromancer", pos = [-11.0, 60.0] },
+]
+
+# East route: hounds on the narrow ridge (frontal bites).
+[[encounters]]
+id = "ridge_hounds"
+name = "Ridge Hounds"
+optional = true
+mobs = [
+  { template = "hound", pos = [36.0, 68.0] },
+  { template = "hound", pos = [36.0, 78.0] },
+]
+
+[[encounters]]
+id = "kilnmaster"
+name = "Kilnmaster Vorsk"
+mobs = [
+  { template = "kilnmaster", pos = [16.0, 102.0] },
+]
+
+[[encounters]]
+id = "glass_matriarch"
+name = "The Glass Matriarch"
+optional = true
+mobs = [
+  { template = "matriarch", pos = [-42.0, 100.0] },
+]
+
+# On the Kiln Span: a volley caster between two shieldbearers.
+[[encounters]]
+id = "span_guard"
+name = "Span Guard"
+mobs = [
+  { template = "shieldbearer", pos = [12.4, 121.0], y = -4.0 },
+  { template = "flamecaller", pos = [13.6, 128.0], y = -4.0 },
+  { template = "shieldbearer", pos = [14.8, 135.0], y = -4.0 },
+]
+
+# The Magma Cistern: a brute with two imps on the basalt island; fire vents on
+# both causeways.
+[[encounters]]
+id = "cistern_pack"
+name = "Cistern Guardians"
+mobs = [
+  { template = "magma_brute", pos = [45.0, 208.0] },
+  { template = "imp", pos = [40.0, 211.0] },
+  { template = "imp", pos = [50.0, 211.0] },
+]
+hazards = [
+  { name = "Fire Vent", pos = [35.3, 191.0], radius = 2.5, damage = 140.0, school = "fire", on = 2.0, off = 3.0 },
+  { name = "Fire Vent", pos = [52.4, 191.0], radius = 2.5, damage = 140.0, school = "fire", on = 2.0, off = 3.0, offset = 2.5 },
+]
+
+[[encounters]]
+id = "ignarax"
+name = "Ignarax, the Molten Heart"
+mobs = [
+  { template = "ignarax", pos = [48.0, 283.0] },
+]
+
+# ------------------------------------------------------------------ loot --
+
+[[loot]]
+id = "ashgrub_wraps"
+name = "Ashgrub Wraps"
+slot = "legs"
+rarity = "uncommon"
+role = "melee"
+stats = { stamina = 12, power = 6, hit = 1.0 }
+weight = 2
+source = "ashgrub_den"
+
+[[loot]]
+id = "ridge_treads"
+name = "Ridgewalker Treads"
+slot = "feet"
+rarity = "uncommon"
+role = "any"
+stats = { stamina = 14, armor = 60 }
+weight = 2
+source = "ridge_hounds"
+
+[[loot]]
+id = "kilnmaster_tongs"
+name = "Kilnmaster's Tongs"
+slot = "main_hand"
+rarity = "rare"
+role = "melee"
+stats = { power = 10, crit = 1.5, stamina = 8 }
+weight = 2
+source = "kilnmaster"
+
+[[loot]]
+id = "crucible_bulwark"
+name = "Crucible Bulwark"
+slot = "off_hand"
+rarity = "rare"
+role = "tank"
+stats = { stamina = 22, armor = 320 }
+weight = 2
+source = "kilnmaster"
+
+[[loot]]
+id = "glass_mantle"
+name = "Mantle of Black Glass"
+slot = "head"
+rarity = "rare"
+role = "caster"
+stats = { power = 10, stamina = 10, crit = 1.0 }
+weight = 2
+source = "glass_matriarch"
+
+[[loot]]
+id = "molten_heartstone"
+name = "Molten Heartstone"
+slot = "trinket"
+rarity = "rare"
+role = "any"
+stats = { power = 8, stamina = 12 }
+weight = 2
+
+[[loot]]
+id = "ignarax_scale"
+name = "Ignarax-Scale Hauberk"
+slot = "chest"
+rarity = "rare"
+role = "tank"
+stats = { stamina = 30, armor = 380, dodge = 1.0 }
+weight = 2
+
+[[loot]]
+id = "cinderdeep_staff"
+name = "Staff of the Cinderdeep"
+slot = "main_hand"
+rarity = "rare"
+role = "caster"
+stats = { power = 14, crit = 1.0 }
+weight = 2
+
+[rewards]
+marks_per_clear = 14
+marks_per_wipe = 1
+xp_per_clear = 900
