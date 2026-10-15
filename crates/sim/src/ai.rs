@@ -725,7 +725,10 @@ fn los_pulse_caster(sim: &Sim, id: ActorId) -> Option<ActorId> {
 
 /// Nearest reachable spot (within ~20 m) where `caster` can't see us: behind
 /// a pillar or around a corner. Deterministic ring search, nearest first.
-fn cover_point(sim: &Sim, id: ActorId, caster: ActorId) -> Option<V3> {
+/// Would standing at `p` hide `id` from `caster`? Deep in the shadow: still
+/// hidden 0.7 m to either side, so standing there doesn't flicker in and out
+/// of sight.
+pub(crate) fn is_cover(sim: &Sim, id: ActorId, caster: ActorId, p: V3) -> bool {
     let me = sim.actor(id);
     let c = sim.actor(caster);
     let (eye_h, chest_h) = (me.eye().y - me.y, me.chest().y - me.y);
@@ -735,15 +738,27 @@ fn cover_point(sim: &Sim, id: ActorId, caster: ActorId) -> Option<V3> {
                 .nav
                 .line_of_sight(c.eye(), V3::at(p.xz(), p.y + chest_h))
     };
-    // Deep in the shadow: still hidden 0.7 m to either side, so standing
-    // there doesn't flicker in and out of sight.
-    let hidden = |p: V3| {
-        let side = (p.xz() - c.pos).normalize_or_zero();
-        let side = V2::new(-side.z, side.x) * 0.7;
-        hidden_at(p)
-            && hidden_at(V3::at(p.xz() + side, p.y))
-            && hidden_at(V3::at(p.xz() - side, p.y))
-    };
+    let side = (p.xz() - c.pos).normalize_or_zero();
+    let side = V2::new(-side.z, side.x) * 0.7;
+    hidden_at(p) && hidden_at(V3::at(p.xz() + side, p.y)) && hidden_at(V3::at(p.xz() - side, p.y))
+}
+
+fn cover_point(sim: &Sim, id: ActorId, caster: ActorId) -> Option<V3> {
+    let me = sim.actor(id);
+    // Keep heading for the cover already chosen while it still hides us:
+    // two shadows at similar distances must not take turns as we move.
+    if let Some(g) = me.move_goal
+        && g.xz().dist(me.pos) <= 20.0
+        && is_cover(sim, id, caster, g)
+    {
+        return Some(g);
+    }
+    let hidden = |p: V3| is_cover(sim, id, caster, p);
+    // Cover reached by walking through a cleave cone gets rewritten into a
+    // detour (`party_decision`), which is not cover: the next tick would pick
+    // another shadow and the two would take turns. Prefer cover we can walk
+    // to directly; fall back to the nearest other cover.
+    let mut fallback: Option<V3> = None;
     for k in 1..=10 {
         let r = 2.0 * k as f32;
         let mut best: Option<(f32, V3)> = None;
@@ -761,14 +776,18 @@ fn cover_point(sim: &Sim, id: ActorId, caster: ActorId) -> Option<V3> {
             if best.is_none_or(|(bd, _)| d < bd - 1e-4)
                 && sim.nav.path_points(me.pos, me.surface, p).is_some()
             {
-                best = Some((d, p));
+                if sim.is_tank(id) || cone_detour(sim, id, p).0 == p {
+                    best = Some((d, p));
+                } else if fallback.is_none() {
+                    fallback = Some(p);
+                }
             }
         }
         if let Some((_, p)) = best {
             return Some(p);
         }
     }
-    None
+    fallback
 }
 
 fn party_decision_inner(sim: &Sim, id: ActorId) -> Decision {
@@ -1416,7 +1435,68 @@ fn ranged_spot(sim: &Sim, id: ActorId, dist: f32) -> Option<V3> {
     Some(ground(sim, epos + dir * (e.radius + 3.0), e.y))
 }
 
+/// Seconds a parked damage dealer may go without attacking anything before it
+/// switches to an enemy it can hit from where it stands.
+const RETARGET_IDLE: f32 = 3.0;
+
 fn dps(sim: &Sim, id: ActorId) -> Decision {
+    let mut d = dps_inner(sim, id);
+    let me = sim.actor(id);
+    if me.cast.is_some() {
+        return d;
+    }
+    let Some(Some(t)) = d.target else {
+        return d;
+    };
+    let ranged = me.role() == Some(Role::RangedDps);
+    let can = |e: ActorId| {
+        if ranged {
+            sim.has_los(id, e) && sim.reach(id, e, 26.0)
+        } else {
+            can_hit(sim, id, e, 1.6)
+        }
+    };
+    // Only where we chose to stand and arrived: a ranged member whose
+    // sightline is blocked, or a melee member kept off its target.
+    let parked = d.move_goal.is_some_and(|g| g.xz().dist(me.pos) < 1.0);
+    let blocked = if ranged { !sim.has_los(id, t) } else { !can(t) };
+    let idle = sim.time - me.last_attack >= RETARGET_IDLE;
+    if !parked || !blocked || !idle {
+        return d;
+    }
+    // Parked where the target can't be hit (a pillar, or the cleave cone of
+    // whoever guards it, in the way): hit something the tank holds that can
+    // be hit from here instead of standing idle.
+    if let Some(alt) = sim
+        .board
+        .engaged
+        .iter()
+        .copied()
+        .filter(|&e| {
+            e != t
+                && !sim.actor(e).is_incapacitated()
+                && sim
+                    .actor(e)
+                    .target
+                    .is_some_and(|x| sim.actor(x).role() == Some(Role::Tank))
+                && can(e)
+        })
+        .min_by(|&a, &b| {
+            sim.actor(a)
+                .pos
+                .dist(me.pos)
+                .total_cmp(&sim.actor(b).pos.dist(me.pos))
+                .then(a.cmp(&b))
+        })
+    {
+        d.target = Some(Some(alt));
+        d.cast = None;
+        d.auto_attack = true;
+    }
+    d
+}
+
+fn dps_inner(sim: &Sim, id: ActorId) -> Decision {
     let me = sim.actor(id);
     let p = params_of(me);
     let ranged = me.role() == Some(Role::RangedDps);

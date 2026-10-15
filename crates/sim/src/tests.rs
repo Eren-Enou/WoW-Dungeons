@@ -2341,8 +2341,14 @@ fn diag_replay() {
     let level: u32 = var("DIAG_LEVEL", "5").parse().unwrap();
     let until: f32 = var("DIAG_TIME", "300").parse().unwrap();
     let size: usize = var("DIAG_SIZE", "5").parse().unwrap();
+    let class = match var("DIAG_CLASS", "striker").as_str() {
+        "warden" => ClassId::Warden,
+        "mender" => ClassId::Mender,
+        "arcanist" => ClassId::Arcanist,
+        _ => ClassId::Striker,
+    };
     let party = if size == 5 {
-        party_at_level(ClassId::Striker, level, AiProfile::Balanced)
+        party_at_level(class, level, AiProfile::Balanced)
     } else {
         raid_party(size, level, AiProfile::Balanced)
     };
@@ -2353,6 +2359,45 @@ fn diag_replay() {
     let mut sim = Sim::with_options(&content, &party, seed, options);
     while sim.time < until && sim.outcome == RunOutcome::InProgress {
         sim.step();
+    }
+    if let Ok(n) = std::env::var("DIAG_TRACE") {
+        // Every half second: each engaged boss (position, cast) and each
+        // party member (position, goal, whether the boss can see them).
+        for k in 0..n.parse::<usize>().unwrap() {
+            if k % 10 == 0 {
+                for &b in &sim.enemies {
+                    let e = &sim.actors[b];
+                    if !e.alive
+                        || !e.is_engaged_enemy()
+                        || e.enemy.as_ref().unwrap().rank != crate::content::EnemyRank::Boss
+                    {
+                        continue;
+                    }
+                    eprintln!(
+                        "t {:.2} boss ({:.1},{:.1}) cast {:?}",
+                        sim.time,
+                        e.pos.x,
+                        e.pos.z,
+                        e.cast.as_ref().map(|c| (c.name.clone(), c.remaining))
+                    );
+                    for &m in &sim.party {
+                        let a = &sim.actors[m];
+                        eprintln!(
+                            "    {:8} ({:.1},{:.1}) goal {:?} seen {} cover-here {} cover-goal {:?} hp {:.0}",
+                            a.name,
+                            a.pos.x,
+                            a.pos.z,
+                            a.move_goal.map(|g| (g.x, g.z)),
+                            sim.has_los(b, m),
+                            crate::ai::is_cover(&sim, m, b, a.loc()),
+                            a.move_goal.map(|g| crate::ai::is_cover(&sim, m, b, g)),
+                            a.hp
+                        );
+                    }
+                }
+            }
+            sim.step();
+        }
     }
     if let Ok(w) = std::env::var("DIAG_WATCH") {
         let w: usize = w.parse().unwrap();

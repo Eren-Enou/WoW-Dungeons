@@ -351,6 +351,24 @@ impl EnemyState {
     }
 }
 
+/// A navigation problem worth showing on a map.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NavEvent {
+    pub time: f32,
+    pub actor: ActorId,
+    pub pos: V2,
+    pub y: f32,
+    pub kind: NavEventKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NavEventKind {
+    /// Turned back on itself twice in quick succession.
+    Dither,
+    /// Made no headway for a second and started a recovery.
+    Stuck,
+}
+
 /// Patrols walk at this fraction of their running speed.
 pub const PATROL_PACE: f32 = 0.45;
 
@@ -402,6 +420,8 @@ pub struct Actor {
     pub target: Option<ActorId>,
     pub auras: Vec<Aura>,
     pub last_combat: f32,
+    /// When this actor last took a hostile action (hit or miss).
+    pub last_attack: f32,
     /// AI steering goal (with elevation: it says which floor).
     pub move_goal: Option<V3>,
     /// Player steering direction (world space, unnormalized).
@@ -793,6 +813,9 @@ pub struct Sim {
     pub hazards: Vec<HazardState>,
     next_telegraph_id: u32,
     pub events: Vec<Event>,
+    /// Navigation trouble (dithers, stuck recoveries) with positions, for
+    /// diagnostics. Kept out of `events` so replay hashes are unaffected.
+    pub nav_log: Vec<NavEvent>,
     pub metrics: Metrics,
     pub outcome: RunOutcome,
     pub player: Option<ActorId>,
@@ -849,6 +872,7 @@ impl Sim {
             hazards: Vec::new(),
             next_telegraph_id: 1,
             events: Vec::new(),
+            nav_log: Vec::new(),
             metrics: Metrics::default(),
             outcome: RunOutcome::InProgress,
             player: None,
@@ -936,6 +960,7 @@ impl Sim {
                 target: None,
                 auras: Vec::new(),
                 last_combat: f32::NEG_INFINITY,
+                last_attack: f32::NEG_INFINITY,
                 move_goal: None,
                 move_dir: V2::ZERO,
                 moved_last_tick: false,
@@ -1081,6 +1106,7 @@ impl Sim {
             target: None,
             auras: Vec::new(),
             last_combat: f32::NEG_INFINITY,
+            last_attack: f32::NEG_INFINITY,
             move_goal: None,
             move_dir: V2::ZERO,
             moved_last_tick: false,
@@ -2077,6 +2103,7 @@ impl Sim {
         let now = self.time;
         self.actors[dst].last_combat = now;
         self.actors[src].last_combat = now;
+        self.actors[src].last_attack = now;
 
         let att = self.actors[src].stats;
         let mut def = self.actors[dst].stats;
@@ -2567,6 +2594,13 @@ impl Sim {
             };
             a.nav.recover = RECOVER_FOR;
             a.nav.stalled = 0.0;
+            self.nav_log.push(NavEvent {
+                time: self.time,
+                actor: id,
+                pos: a.pos,
+                y: a.y,
+                kind: NavEventKind::Stuck,
+            });
         }
         if a.nav.stalled > 0.0 || a.nav.recover > 0.0 {
             a.nav.stuck_time += DT;
@@ -2601,6 +2635,13 @@ impl Sim {
             n.commit_goal = n.prev_goal.unwrap_or(goal);
             n.dither = 0.0;
             n.dithers += 1;
+            self.nav_log.push(NavEvent {
+                time: self.time,
+                actor: id,
+                pos: a.pos,
+                y: a.y,
+                kind: NavEventKind::Dither,
+            });
         }
         n.last_step = dir;
         // Remember the AI's own goal, not a commitment target, so a repeated
