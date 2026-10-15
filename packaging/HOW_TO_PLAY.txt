@@ -1,0 +1,101 @@
+DUNGEON SANDBOX - HOW TO PLAY
+=============================
+
+An original third-person dungeon game in the style of classic tab-target MMO
+dungeons. You play one character; four AI companions (or nine, in a raid
+group) fill the tank, healer and damage roles. Everything here - names, maps,
+numbers, art - is original and made of simple shapes.
+
+STARTING THE GAME
+-----------------
+1. Unzip the whole folder somewhere you can write to (e.g. Desktop or
+   Documents). Do not run it from inside the ZIP.
+2. Double-click dungeon-sandbox.exe.
+3. Windows SmartScreen may warn about an unrecognised app because the build
+   is not code-signed. Choose "More info" -> "Run anyway" only if you got the
+   ZIP from someone you trust.
+
+Your progress is saved in the "saves" folder next to the exe (created on
+first save). Delete that folder to start over. To keep saves elsewhere, set
+the environment variable DUNGEON_SAVE_DIR to a folder path.
+
+Requirements: 64-bit Windows 10/11 and a graphics card with DirectX 12 or
+Vulkan support. Integrated graphics work.
+
+THE LOOP
+--------
+Hub -> recruit companions and pick their AI style -> pick a dungeon and a
+difficulty -> walk to the portal and press E -> fight through the dungeon ->
+loot and XP -> back to the hub (Enter on the results screen).
+
+In the hub, click the panel tabs (or press 1-8): Party, Character, Dungeons,
+Classes, History, Sandbox, Vendor and Editor. Hover anything for a tooltip.
+
+CONTROLS
+--------
+  W / S              move forward / back (moving cancels casts)
+  A / D              turn (strafe while holding the right mouse button)
+  Q / E              strafe
+  Right mouse drag   turn camera and character
+  Left mouse drag    look around; a short click selects
+  Both mouse buttons run forward
+  Mouse wheel        zoom
+  V                  camera auto-follow on/off
+
+  Tab / Shift+Tab    cycle enemies
+  Click              select any character or party frame
+  F1-F5              select a party member
+  T                  target of target
+  G                  the party's kill target
+  1-5                your class abilities (heals go to the ally under the
+                     mouse, else your selected ally, else you)
+  F                  auto-attack
+  Esc                clear target
+  L                  detailed combat log
+  N / Shift+N        navigation overlay (debug)
+  Backspace          leave the dungeon (counts as a failed run)
+  E                  (hub) enter the selected dungeon at the portal
+  F5                 (hub) reload dungeon files
+
+CLASSES
+-------
+  Warden   - tank: hold enemies' attention (threat), taunt, interrupt
+  Mender   - healer: heals, heal-over-time, absorb shield, dispel
+  Striker  - melee damage: fight from behind, interrupt
+  Arcanist - ranged damage: crowd control (Hex), interrupt
+
+READING THE FIGHT
+-----------------
+- Enemy nameplate colours show threat: red means it is attacking you.
+- Orange/red rings on the ground are telegraphs: step out before they fill.
+- Cast bars on enemies can often be interrupted.
+- Lava is bright and glowing; raised rock lips mark its edge. Orange strips on
+  ledges mark one-way drops.
+- Walls and floors block line of sight: "no line of sight" means move.
+
+THE CINDERDEEP HOLLOWS (new in 0.5, level 5+)
+---------------------------------------------
+A lava cavern descent, about 8-15 minutes on a first clear:
+- Frostvent Gate: a cool, blue-lit entrance guarded by scouts.
+- Glowworm Fork: choose the low Ashgrub Run (optional den) or the high Ridge
+  Path (optional hounds) - the ridge ends in a one-way drop into the Smelter.
+- Smelter Gallery: Kilnmaster Vorsk fights beside a slag pit. Spread out when
+  the slag spills.
+- Obsidian Grotto (optional): the Glass Matriarch - interrupt her Glass Nova.
+- Kiln Span: a narrow bridge over a lava river, held by shield-bearers with
+  frontal cleaves guarding a caster. Don't stand in front of them.
+- Magma Cistern: a brute and imps on a basalt island between lava channels,
+  with fire vents.
+- Heart Island: Ignarax, the Molten Heart. Three phases: eruptions and spawn
+  from the moat at 60%, a relentless Heart Pulse at 25%.
+
+Difficulty: Normal, Heroic (harder, better loot) and Raid (10). The Sandbox tab
+can make any dungeon easier or harder without editing files.
+
+TROUBLESHOOTING
+---------------
+- "could not read content file": the assets folder must sit next to
+  dungeon-sandbox.exe. Re-extract the whole ZIP.
+- Black window or crash at start: update your graphics driver.
+- Optional: dungeon-headless.exe runs simulated AI-only clears from a
+  command prompt, e.g.  dungeon-headless.exe --dungeon cinderdeep_hollows --runs 5

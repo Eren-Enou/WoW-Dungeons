@@ -1504,9 +1504,22 @@ pub struct ContentLibrary {
 }
 
 impl ContentLibrary {
-    /// Content location from `DUNGEON_CONTENT` or the default directory.
+    /// Content location from `DUNGEON_CONTENT` or the default directory
+    /// (relative to the working directory, else next to the executable, as
+    /// in the packaged build started from elsewhere).
     pub fn default_path() -> String {
-        std::env::var(CONTENT_ENV_VAR).unwrap_or_else(|_| DEFAULT_CONTENT_DIR.to_string())
+        if let Ok(p) = std::env::var(CONTENT_ENV_VAR) {
+            return p;
+        }
+        if !Path::new(DEFAULT_CONTENT_DIR).is_dir()
+            && let Some(beside) = std::env::current_exe()
+                .ok()
+                .and_then(|exe| exe.parent().map(|d| d.join(DEFAULT_CONTENT_DIR)))
+                .filter(|d| d.is_dir())
+        {
+            return beside.to_string_lossy().into_owned();
+        }
+        DEFAULT_CONTENT_DIR.to_string()
     }
 
     /// Load every `*.toml` in a directory (sorted by file name), or one file.

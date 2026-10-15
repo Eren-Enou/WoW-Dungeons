@@ -3,3 +3,4 @@
 /logs
 /screenshots
 *.swp
+/dist

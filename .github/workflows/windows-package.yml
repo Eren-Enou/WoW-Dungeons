@@ -1,0 +1,57 @@
+# Builds the Windows package and keeps it as a workflow artifact (downloadable
+# from the run page for 14 days). Manual only: it never runs on push and never
+# creates or publishes a GitHub Release. See RELEASE_BUILD.md.
+name: Windows package
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy
+          rustup default stable
+          rustc --version
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: windows-cargo-${{ hashFiles('Cargo.lock') }}
+
+      - name: Checks
+        run: |
+          cargo fmt --all -- --check
+          cargo test --workspace --release --locked
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Package
+        shell: pwsh
+        run: ./scripts/package-windows.ps1 -Build
+
+      - name: Headless smoke test of the packaged runner
+        shell: pwsh
+        run: |
+          $dir = Get-ChildItem dist -Directory | Select-Object -First 1
+          Push-Location $env:RUNNER_TEMP
+          & (Join-Path $dir.FullName 'dungeon-headless.exe') --dungeon cinderdeep_hollows --runs 2 --quiet
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Pop-Location
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dungeon-sandbox-windows-x64
+          path: dist/*.zip
+          retention-days: 14
+          if-no-files-found: error

@@ -22,7 +22,27 @@ use bevy::prelude::*;
 use bevy::window::WindowResolution;
 use common::{AppState, GameData};
 
+/// Content and saves are found relative to the working directory. Started
+/// from a shortcut or another folder, fall back to the folder holding the
+/// executable when that is where `assets/` is (the packaged layout).
+fn find_game_folder() {
+    let here = std::path::Path::new(dungeon_sim::content::DEFAULT_CONTENT_DIR);
+    if here.is_dir() {
+        return;
+    }
+    let Some(exe_dir) = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+    else {
+        return;
+    };
+    if exe_dir.join(here).is_dir() && std::env::set_current_dir(&exe_dir).is_ok() {
+        eprintln!("using game folder {}", exe_dir.display());
+    }
+}
+
 fn main() {
+    find_game_folder();
     // `--smoke-test N`: run for N seconds then exit (used to verify the window starts).
     let smoke_seconds: Option<f32> = std::env::args()
         .skip_while(|a| a != "--smoke-test")
