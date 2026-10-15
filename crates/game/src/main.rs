@@ -68,14 +68,26 @@ fn main() {
     }
 
     let mut app = App::new();
-    app.add_plugins(DefaultPlugins.set(WindowPlugin {
-        primary_window: Some(Window {
-            title: "Dungeon Sandbox".into(),
-            resolution: WindowResolution::new(1280, 760),
-            ..default()
-        }),
-        ..default()
-    }))
+    // Models load from <game folder>/assets (the working directory was set
+    // to the game folder above), the same place content is read from.
+    let asset_root = std::env::current_dir()
+        .map(|d| d.join("assets"))
+        .unwrap_or_else(|_| "assets".into());
+    app.add_plugins(
+        DefaultPlugins
+            .set(WindowPlugin {
+                primary_window: Some(Window {
+                    title: "Dungeon Sandbox".into(),
+                    resolution: WindowResolution::new(1280, 760),
+                    ..default()
+                }),
+                ..default()
+            })
+            .set(bevy::asset::AssetPlugin {
+                file_path: asset_root.to_string_lossy().into_owned(),
+                ..default()
+            }),
+    )
     .insert_resource(ClearColor(Color::srgb(0.05, 0.05, 0.08)))
     .insert_resource(data)
     .init_state::<AppState>()

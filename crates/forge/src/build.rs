@@ -156,6 +156,7 @@ fn finish(bp: &Blueprint, kit: &Kit, plan: Plan) -> Result<Generated, String> {
             lava: comp.lava.clone(),
             decor: comp.decor.clone(),
             lights: comp.lights.clone(),
+            props: comp.props.clone(),
             theme: kit.palette.theme,
         },
         difficulties: difficulties(),

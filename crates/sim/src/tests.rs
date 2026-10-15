@@ -2443,3 +2443,47 @@ fn diag_replay() {
         );
     }
 }
+
+#[test]
+fn props_validate_paths_and_stay_off_walkable_floor() {
+    use crate::content::{DecorKind, PropConfig};
+    let base = Content::builtin();
+    let prop = |model: &str, pos: V2| PropConfig {
+        model: model.into(),
+        pos,
+        y: 0.0,
+        yaw: 0.0,
+        scale: 1.0,
+        radius: 0.8,
+        height: 2.0,
+        fallback: DecorKind::Pillar,
+    };
+    // Outside every area of the Sunken Vault: fine.
+    let mut ok = base.clone();
+    ok.dungeon.props.push(prop(
+        "models/props/forge_brazier.glb",
+        V2::new(-30.0, -30.0),
+    ));
+    assert!(ok.validate("ok").is_ok());
+    let text = ok.to_toml().expect("serialises");
+    assert!(Content::from_toml_str(&text, "round trip").is_ok());
+    for (model, pos, expect) in [
+        (
+            "../secrets/x.glb",
+            V2::new(-30.0, -30.0),
+            "must not leave assets/",
+        ),
+        ("C:/x.glb", V2::new(-30.0, -30.0), "must be relative"),
+        ("models/x.fbx", V2::new(-30.0, -30.0), ".glb or .gltf"),
+        (
+            "models/props/forge_brazier.glb",
+            V2::new(0.0, 0.0),
+            "must stay off walkable floor",
+        ),
+    ] {
+        let mut c = base.clone();
+        c.dungeon.props.push(prop(model, pos));
+        let err = c.validate("bad").expect_err(model).to_string();
+        assert!(err.contains(expect), "{model}: {err}");
+    }
+}

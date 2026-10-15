@@ -108,6 +108,20 @@ Get-ChildItem -Path $content -Recurse -File | Where-Object {
     Copy-Item $_.FullName $dest
 }
 
+# Models (glTF/GLB props) and their provenance record.
+$models = Join-Path $repo 'assets\models'
+if (Test-Path $models) {
+    $destModels = Join-Path $stage 'assets\models'
+    Get-ChildItem -Path $models -Recurse -File | Where-Object {
+        $_.Extension -in @('.glb', '.gltf', '.bin', '.png', '.ktx2') -or $_.Name -eq 'PROVENANCE.md'
+    } | ForEach-Object {
+        $rel = $_.FullName.Substring($models.Length).TrimStart('\')
+        $dest = Join-Path $destModels $rel
+        New-Item -ItemType Directory -Force (Split-Path -Parent $dest) | Out-Null
+        Copy-Item $_.FullName $dest
+    }
+}
+
 # Verify the package before zipping.
 $required = @('dungeon-sandbox.exe', 'HOW_TO_PLAY.txt', 'assets\content\dungeons')
 foreach ($r in $required) {

@@ -235,6 +235,7 @@ fn spawn_world(
     mut blockers: ResMut<CameraBlockers>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    asset_server: Res<AssetServer>,
 ) {
     let scoped = DespawnOnExit(AppState::Dungeon);
     let theme = run.sim.content.dungeon.theme;
@@ -272,6 +273,8 @@ fn spawn_world(
         &mut meshes,
         &mut materials,
     );
+    let props = crate::cave::spawn_props(&mut commands, &run, &asset_server);
+    blockers.0.extend(props);
     // Exit portal at the entrance.
     let entrance = run.sim.content.dungeon.entrance;
     let entrance_y = run.sim.content.dungeon.entrance_y.unwrap_or_else(|| {

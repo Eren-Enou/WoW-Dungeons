@@ -1250,6 +1250,58 @@ color = [
 intensity = 1.2000000476837158
 range = 16.0
 
+[[dungeon.props]]
+model = "models/props/forge_brazier.glb"
+pos = [
+    -132.5,
+    11.5,
+]
+y = -5.5
+yaw = 45.0
+scale = 2.0
+radius = 0.8999999761581421
+height = 4.400000095367432
+fallback = "crystal"
+
+[[dungeon.props]]
+model = "models/props/forge_brazier.glb"
+pos = [
+    -155.5,
+    11.5,
+]
+y = -5.5
+yaw = 135.0
+scale = 2.0
+radius = 0.8999999761581421
+height = 4.400000095367432
+fallback = "crystal"
+
+[[dungeon.props]]
+model = "models/props/forge_brazier.glb"
+pos = [
+    -155.5,
+    -11.5,
+]
+y = -5.5
+yaw = 225.0
+scale = 2.0
+radius = 0.8999999761581421
+height = 4.400000095367432
+fallback = "crystal"
+
+[[dungeon.props]]
+model = "models/props/forge_brazier.glb"
+pos = [
+    -132.5,
+    -11.5,
+]
+y = -5.5
+yaw = 315.0
+scale = 2.0
+radius = 0.8999999761581421
+height = 4.400000095367432
+fallback = "crystal"
+
 [dungeon.theme]
 floor = [
     0.2199999988079071,

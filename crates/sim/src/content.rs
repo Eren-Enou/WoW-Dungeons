@@ -74,6 +74,10 @@ pub struct DungeonConfig {
     /// Extra coloured point lights.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub lights: Vec<LightConfig>,
+    /// Model props (glTF/GLB) with a primitive fallback. Visual only, and
+    /// kept off walkable space like decor.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub props: Vec<PropConfig>,
     #[serde(default)]
     pub theme: Theme,
 }
@@ -240,6 +244,55 @@ pub struct DecorConfig {
     /// Crystal glow colour.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<[f32; 3]>,
+}
+
+/// A visual prop loaded from a glTF/GLB model under `assets/`. Navigation
+/// never depends on it: its footprint must stay off walkable floor (like
+/// decor), and when the model file is missing the game draws `fallback`.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PropConfig {
+    /// Path relative to `assets/`, ending in `.glb` or `.gltf`.
+    pub model: String,
+    pub pos: V2,
+    /// Base height.
+    #[serde(default)]
+    pub y: f32,
+    /// Rotation about the vertical axis, degrees.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub yaw: f32,
+    #[serde(default = "one")]
+    pub scale: f32,
+    /// Footprint radius and height used for validation and the fallback.
+    #[serde(default = "one")]
+    pub radius: f32,
+    #[serde(default = "four")]
+    pub height: f32,
+    /// Primitive drawn when the model can't be loaded.
+    pub fallback: DecorKind,
+}
+
+impl PropConfig {
+    /// Problems with the model path (relative, inside `assets/`, glTF).
+    pub fn path_problem(&self) -> Option<String> {
+        let m = &self.model;
+        if m.is_empty() {
+            return Some("model is empty".into());
+        }
+        if m.starts_with('/') || m.starts_with('\\') || m.contains(':') {
+            return Some(format!(
+                "model '{m}' must be relative to assets/ (no drive or leading slash)"
+            ));
+        }
+        if m.split(['/', '\\']).any(|part| part == "..") {
+            return Some(format!("model '{m}' must not leave assets/ ('..')"));
+        }
+        let lower = m.to_ascii_lowercase();
+        if !(lower.ends_with(".glb") || lower.ends_with(".gltf")) {
+            return Some(format!("model '{m}' must be a .glb or .gltf file"));
+        }
+        None
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -1129,6 +1182,28 @@ impl Content {
 
         // Decoration must stand outside walkable space: a pillar inside an area
         // would look like an obstacle the navigation walks through.
+        // Footprints (decor and props) must stand outside walkable space.
+        let blocks_floor = |pos: V2, y: f32, r: f32, height: f32| -> Option<String> {
+            let nav = nav.as_ref()?;
+            let foot = Poly::from_rect(Rect::new(
+                V2::new(pos.x - r, pos.z - r),
+                V2::new(pos.x + r, pos.z + r),
+            ));
+            for s in &nav.surfaces {
+                let Some(ov) = s.def.shape.intersect(&foot) else {
+                    continue;
+                };
+                if ov.area() < 0.01 {
+                    continue;
+                }
+                // Walkable space: from the floor up to head height.
+                let floor = s.height_at(ov.centroid());
+                if y < floor + 2.2 && y + height > floor - 0.3 {
+                    return Some(s.name().to_string());
+                }
+            }
+            None
+        };
         for (i, dc) in d.decor.iter().enumerate() {
             let ok_numbers = dc.pos.is_finite()
                 && dc.y.is_finite()
@@ -1138,34 +1213,42 @@ impl Content {
                 ok_numbers,
                 format!("dungeon.decor[{i}]: radius must be in 0.1..=30 and height in 0.1..=60"),
             );
-            if let (true, Some(nav)) = (ok_numbers, &nav) {
-                let r = dc.radius;
-                let foot = Poly::from_rect(Rect::new(
-                    V2::new(dc.pos.x - r, dc.pos.z - r),
-                    V2::new(dc.pos.x + r, dc.pos.z + r),
-                ));
-                for s in &nav.surfaces {
-                    let Some(ov) = s.def.shape.intersect(&foot) else {
-                        continue;
-                    };
-                    if ov.area() < 0.01 {
-                        continue;
-                    }
-                    // Walkable space: from the floor up to head height.
-                    let floor = s.height_at(ov.centroid());
-                    if dc.y < floor + 2.2 && dc.y + dc.height > floor - 0.3 {
-                        check(
-                            false,
-                            format!(
-                                "dungeon.decor[{i}] ({:?}) at {:?} stands in walkable area '{}'; move it outside the area (decoration must never block or fake a path)",
-                                dc.kind,
-                                <[f32; 2]>::from(dc.pos),
-                                s.name()
-                            ),
-                        );
-                        break;
-                    }
-                }
+            if ok_numbers && let Some(area) = blocks_floor(dc.pos, dc.y, dc.radius, dc.height) {
+                check(
+                    false,
+                    format!(
+                        "dungeon.decor[{i}] ({:?}) at {:?} stands in walkable area '{area}'; move it outside the area (decoration must never block or fake a path)",
+                        dc.kind,
+                        <[f32; 2]>::from(dc.pos),
+                    ),
+                );
+            }
+        }
+        for (i, p) in d.props.iter().enumerate() {
+            let what = format!("dungeon.props[{i}] ('{}')", p.model);
+            if let Some(problem) = p.path_problem() {
+                check(false, format!("{what}: {problem}"));
+            }
+            let ok_numbers = p.pos.is_finite()
+                && p.y.is_finite()
+                && p.yaw.is_finite()
+                && (0.05..=20.0).contains(&p.scale)
+                && (0.1..=30.0).contains(&p.radius)
+                && (0.1..=60.0).contains(&p.height);
+            check(
+                ok_numbers,
+                format!(
+                    "{what}: scale must be in 0.05..=20, radius in 0.1..=30, height in 0.1..=60"
+                ),
+            );
+            if ok_numbers && let Some(area) = blocks_floor(p.pos, p.y, p.radius, p.height) {
+                check(
+                    false,
+                    format!(
+                        "{what} at {:?} stands in walkable area '{area}'; props are scenery and must stay off walkable floor (give it a smaller radius or move it)",
+                        <[f32; 2]>::from(p.pos)
+                    ),
+                );
             }
         }
 

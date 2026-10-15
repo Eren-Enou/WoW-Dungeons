@@ -8,7 +8,7 @@ use crate::kit::Kit;
 use crate::layout::{CELL, Corridor, OVERLAP, Plan, Room, RoomKind, Route, Style};
 use dungeon_sim::content::{
     AreaConfig, AxisConfig, DecorConfig, DecorKind, LavaConfig, LightConfig, LinkConfig,
-    LinkKindConfig, UnderConfig,
+    LinkKindConfig, PropConfig, UnderConfig,
 };
 use dungeon_sim::math::V2;
 use dungeon_sim::poly::Poly;
@@ -28,6 +28,7 @@ pub struct Composed {
     pub lava: Vec<LavaConfig>,
     pub decor: Vec<DecorConfig>,
     pub lights: Vec<LightConfig>,
+    pub props: Vec<PropConfig>,
     pub entrance: V2,
     /// Walkable pieces of each room (world space), for placing mobs.
     pub floors: Vec<Vec<Poly>>,
@@ -123,6 +124,7 @@ pub fn compose(plan: &Plan, kit: &Kit) -> Composed {
         lava: Vec::new(),
         decor: Vec::new(),
         lights: Vec::new(),
+        props: Vec::new(),
         entrance: V2::ZERO,
         floors: vec![Vec::new(); plan.rooms.len()],
     };
@@ -213,6 +215,29 @@ pub fn compose(plan: &Plan, kit: &Kit) -> Composed {
             intensity,
             range: (r.half * 2.4).round(),
         });
+        // Model props in an arena's cut corners: inside the room's square,
+        // outside its walkable octagon (radius at most a sixth of the cut).
+        if let (RoomKind::Arena, Some(spec)) = (r.kind, &kit.palette.arena_prop)
+            && r.chamfer > 0.0
+        {
+            let radius = spec.radius.min(r.chamfer / 6.0);
+            let d = r.half - r.chamfer / 3.0;
+            for (k, (sx, sz)) in [(1.0, 1.0), (-1.0, 1.0), (-1.0, -1.0), (1.0, -1.0)]
+                .into_iter()
+                .enumerate()
+            {
+                out.props.push(PropConfig {
+                    model: spec.model.clone(),
+                    pos: r2(c + V2::new(sx * d, sz * d)),
+                    y: r.y,
+                    yaw: 45.0 + 90.0 * k as f32,
+                    scale: spec.scale,
+                    radius,
+                    height: spec.height,
+                    fallback: spec.fallback,
+                });
+            }
+        }
         // Rock columns just outside the room's corners, poking above the walls.
         let mix = &kit.palette.decor;
         for (k, (sx, sz)) in [(1.0, 1.0), (-1.0, 1.0), (-1.0, -1.0), (1.0, -1.0)]

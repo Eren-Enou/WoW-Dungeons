@@ -256,7 +256,25 @@ pub fn spawn_decor(
         ..default()
     });
     let mut blockers = Vec::new();
-    for (i, d) in run.sim.content.dungeon.decor.iter().enumerate() {
+    // Props whose model file is missing are drawn as their fallback decor.
+    let mut list = run.sim.content.dungeon.decor.clone();
+    for p in &run.sim.content.dungeon.props {
+        if !prop_model_available(&p.model) {
+            warn!(
+                "prop model 'assets/{}' not found; drawing the {:?} fallback",
+                p.model, p.fallback
+            );
+            list.push(dungeon_sim::content::DecorConfig {
+                kind: p.fallback,
+                pos: p.pos,
+                y: p.y,
+                radius: p.radius,
+                height: p.height,
+                color: None,
+            });
+        }
+    }
+    for (i, d) in list.iter().enumerate() {
         let r = d.radius;
         let h = d.height;
         let jitter = hash01(d.pos.x, d.pos.z, i as u32);
@@ -337,6 +355,42 @@ pub fn spawn_decor(
             }
         }
         blockers.push((base - Vec3::new(r, 0.0, r), base + Vec3::new(r, h, r)));
+    }
+    blockers
+}
+
+/// Is a prop's model file present under `assets/`?
+pub fn prop_model_available(model: &str) -> bool {
+    std::path::Path::new("assets").join(model).is_file()
+}
+
+/// Spawn the glTF/GLB props whose model files exist (the rest were drawn as
+/// fallback decor). Returns camera blockers.
+pub fn spawn_props(
+    commands: &mut Commands,
+    run: &ActiveRun,
+    asset_server: &AssetServer,
+) -> Vec<(Vec3, Vec3)> {
+    let scoped = DespawnOnExit(AppState::Dungeon);
+    let mut blockers = Vec::new();
+    for p in &run.sim.content.dungeon.props {
+        if !prop_model_available(&p.model) {
+            continue;
+        }
+        let base = Vec3::new(p.pos.x, p.y, p.pos.z);
+        commands.spawn((
+            WorldAssetRoot(
+                asset_server.load(bevy::gltf::GltfAssetLabel::Scene(0).from_asset(p.model.clone())),
+            ),
+            Transform::from_translation(base)
+                .with_rotation(Quat::from_rotation_y(p.yaw.to_radians()))
+                .with_scale(Vec3::splat(p.scale)),
+            scoped.clone(),
+        ));
+        blockers.push((
+            base - Vec3::new(p.radius, 0.0, p.radius),
+            base + Vec3::new(p.radius, p.height, p.radius),
+        ));
     }
     blockers
 }

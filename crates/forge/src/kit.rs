@@ -43,6 +43,26 @@ pub struct Palette {
     pub decor: Vec<DecorKind>,
     /// Name pools per room kind (unique names are drawn by seed).
     pub names: RoomNames,
+    /// Model prop for the cut corners of boss arenas (visual only).
+    #[serde(default)]
+    pub arena_prop: Option<PropSpec>,
+}
+
+/// A model prefab: a glTF/GLB file under `assets/` with a primitive fallback.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PropSpec {
+    pub model: String,
+    pub fallback: DecorKind,
+    #[serde(default = "one_f")]
+    pub scale: f32,
+    /// Footprint radius and height (validation and fallback size).
+    pub radius: f32,
+    pub height: f32,
+}
+
+fn one_f() -> f32 {
+    1.0
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
