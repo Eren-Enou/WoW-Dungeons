@@ -256,6 +256,9 @@ pub struct LightConfig {
     pub range: f32,
 }
 
+/// Height of the lip along an edge that faces lava.
+pub const LAVA_LIP: f32 = 0.6;
+
 fn four() -> f32 {
     4.0
 }
@@ -820,6 +823,12 @@ impl Content {
             .expect("builtin content is valid")
     }
 
+    /// The shipped Cinderdeep Hollows (used by tests).
+    pub fn builtin_cinderdeep() -> Content {
+        Content::from_toml_str(BUILTIN_CINDERDEEP, "<builtin cinderdeep_hollows>")
+            .expect("builtin content is valid")
+    }
+
     /// The shipped Cavern Traverse navigation test dungeon (used by tests).
     pub fn builtin_cavern() -> Content {
         Content::from_toml_str(BUILTIN_CAVERN, "<builtin cavern_traverse>")
@@ -918,7 +927,20 @@ impl Content {
         if !errors.is_empty() {
             return Err(errors);
         }
-        Nav::build(defs, links, params)
+        let mut nav = Nav::build(defs, links, params)?;
+        // An edge that drops away to lava is a low lip, not a wall: you can
+        // see across a slag pit or a lava river (rendering and line of sight).
+        let pools: Vec<Poly> = d.lava.iter().filter_map(|l| l.shape().ok()).collect();
+        if !pools.is_empty() {
+            for w in nav.walls.iter_mut() {
+                let mid = (w.a + w.b) * 0.5;
+                let outside = mid + w.out * 0.8;
+                if pools.iter().any(|p| p.contains(outside)) {
+                    w.height = w.height.min(LAVA_LIP);
+                }
+            }
+        }
+        Ok(nav)
     }
 
     /// Resolve a horizontal position (and optional elevation) onto a surface.
@@ -1548,6 +1570,8 @@ impl ContentLibrary {
 }
 
 /// The shipped content files, embedded for tests.
+pub const BUILTIN_CINDERDEEP: &str =
+    include_str!("../../../assets/content/dungeons/06_cinderdeep_hollows.toml");
 pub const BUILTIN_CAVERN: &str =
     include_str!("../../../assets/content/dungeons/05_cavern_traverse.toml");
 pub const BUILTIN_SUNKEN_VAULT: &str =
@@ -1579,6 +1603,7 @@ mod tests {
             Content::builtin(),
             Content::builtin_warrens(),
             Content::builtin_cavern(),
+            Content::builtin_cinderdeep(),
         ] {
             let text = c.to_toml().expect("serializes");
             let back = Content::from_toml_str(&text, "roundtrip").expect("re-parses and validates");

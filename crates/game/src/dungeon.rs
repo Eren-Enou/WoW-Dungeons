@@ -795,6 +795,9 @@ pub fn pick_actor(sim: &Sim, ray: Ray3d, filter: impl Fn(&Actor) -> bool) -> Opt
 }
 
 fn step_sim(time: Res<Time>, mut run: ResMut<ActiveRun>, demo: Option<Res<DemoConfig>>) {
+    if demo.as_ref().is_some_and(|d| d.area_tour.is_some()) {
+        return;
+    }
     let speed = demo.map(|d| d.speed).unwrap_or(1.0);
     run.acc += time.delta_secs().min(0.25) * speed;
     let max_steps = (8.0 * speed).ceil() as usize;

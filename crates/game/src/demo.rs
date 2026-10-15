@@ -47,6 +47,9 @@ pub struct DemoConfig {
     pub profile: Option<String>,
     /// Camera distance for overview screenshots (`--zoom 30`); also tilts down.
     pub zoom: Option<f32>,
+    /// `--area-tour "Area A,Area B"` (or `all`): pause the run and screenshot
+    /// each named area from an overview camera.
+    pub area_tour: Option<String>,
 }
 
 #[derive(Resource, Default)]
@@ -88,6 +91,7 @@ pub fn parse_args() -> DemoConfig {
         class: text("--class"),
         profile: text("--profile"),
         zoom: value("--zoom"),
+        area_tour: text("--area-tour"),
     }
 }
 
@@ -108,6 +112,12 @@ impl Plugin for DemoPlugin {
                     editor_test,
                     tooltip_test,
                 ),
+            )
+            .add_systems(
+                Update,
+                area_tour
+                    .run_if(in_state(AppState::Dungeon))
+                    .run_if(resource_exists::<ActiveRun>),
             )
             .add_systems(
                 Update,
@@ -135,7 +145,7 @@ fn demo_driver(
     mut next: ResMut<NextState<AppState>>,
     mut last: Local<Option<AppState>>,
 ) {
-    if !cfg.autoplay && !cfg.input_test && !cfg.frame_test {
+    if !cfg.autoplay && !cfg.input_test && !cfg.frame_test && cfg.area_tour.is_none() {
         return;
     }
     let current = *state.get();
@@ -490,6 +500,93 @@ fn click_test(
         let _ = std::fs::create_dir_all("logs");
         let _ = std::fs::write("logs/click_test.txt", msg);
         exit.write(AppExit::Success);
+    }
+}
+
+#[derive(Component)]
+struct TourFocus;
+
+#[derive(Default)]
+struct AreaTour {
+    t: f32,
+    step: usize,
+    started: bool,
+}
+
+/// `--area-tour`: overview screenshots of named areas (the run is paused).
+#[allow(clippy::too_many_arguments)]
+fn area_tour(
+    mut commands: Commands,
+    time: Res<Time>,
+    cfg: Res<DemoConfig>,
+    run: Res<ActiveRun>,
+    mut orbit: ResMut<crate::camera::OrbitCamera>,
+    focus: Query<Entity, With<crate::camera::CameraFocus>>,
+    mut tour_focus: Query<&mut Transform, With<TourFocus>>,
+    mut st: Local<AreaTour>,
+    mut exit: MessageWriter<AppExit>,
+) {
+    let Some(list) = &cfg.area_tour else { return };
+    let nav = &run.sim.nav;
+    let names: Vec<String> = if list == "all" {
+        nav.surfaces.iter().map(|s| s.name().to_string()).collect()
+    } else {
+        list.split(',').map(|s| s.trim().to_string()).collect()
+    };
+    if !st.started {
+        st.started = true;
+        for e in &focus {
+            commands.entity(e).remove::<crate::camera::CameraFocus>();
+        }
+        commands.spawn((
+            Transform::default(),
+            TourFocus,
+            crate::camera::CameraFocus,
+            DespawnOnExit(AppState::Dungeon),
+        ));
+        return;
+    }
+    st.t += time.delta_secs();
+    if st.step >= names.len() {
+        if st.t > 1.5 {
+            exit.write(AppExit::Success);
+        }
+        return;
+    }
+    let name = &names[st.step];
+    let Some(id) = nav.find(name) else {
+        warn!("area tour: no area named '{name}'");
+        st.step += 1;
+        return;
+    };
+    let s = nav.surface(id);
+    let c = s.def.shape.centroid();
+    if let Ok(mut t) = tour_focus.single_mut() {
+        t.translation = Vec3::new(c.x, s.height_at(c), c.z);
+    }
+    orbit.distance = cfg.zoom.unwrap_or(26.0);
+    orbit.pitch = 0.75;
+    orbit.yaw = 0.6 + st.step as f32 * 0.9;
+    if st.t > 2.2 {
+        let file: String = name
+            .chars()
+            .map(|ch| {
+                if ch.is_ascii_alphanumeric() {
+                    ch.to_ascii_lowercase()
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        let _ = std::fs::create_dir_all("screenshots");
+        commands
+            .spawn(Screenshot::primary_window())
+            .observe(save_to_disk(format!(
+                "screenshots/area_{:02}_{file}.png",
+                st.step
+            )));
+        st.step += 1;
+        st.t = 0.0;
     }
 }
 

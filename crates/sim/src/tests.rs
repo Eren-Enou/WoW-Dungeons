@@ -2115,17 +2115,25 @@ fn enemies_give_up_on_targets_they_cannot_reach_or_see() {
 /// floor of its surface, never moves faster than it can run (plus a drop
 /// landing), never rises more than a step and falls at most `FALL_SPEED`.
 fn traverse(size: usize, seed: u64) -> (RunOutcome, f32, f32, u32) {
-    let content = Content::builtin_cavern();
+    traverse_in(&Content::builtin_cavern(), 2, size, seed)
+}
+
+fn traverse_in(
+    content: &Content,
+    level: u32,
+    size: usize,
+    seed: u64,
+) -> (RunOutcome, f32, f32, u32) {
     let party = if size == 5 {
-        party_at_level(ClassId::Striker, 2, AiProfile::Balanced)
+        party_at_level(ClassId::Striker, level, AiProfile::Balanced)
     } else {
-        raid_party(size, 2, AiProfile::Balanced)
+        raid_party(size, level, AiProfile::Balanced)
     };
     let options = crate::sim::RunOptions {
         autopilot: true,
         ..Default::default()
     };
-    let mut sim = Sim::with_options(&content, &party, seed, options);
+    let mut sim = Sim::with_options(content, &party, seed, options);
     let max_step = sim.nav.params.max_step;
     while sim.outcome == RunOutcome::InProgress && sim.time < 900.0 {
         let before: Vec<(V2, f32, bool)> =
@@ -2209,6 +2217,87 @@ fn cavern_runs_replay_identically() {
     let (_, b) = run_headless(&content, &party, 11, 900.0);
     assert_eq!(a.log_hash, b.log_hash);
     assert_eq!(a.outcome, RunOutcome::Victory);
+}
+
+// ------------------------------------------ 0.5: The Cinderdeep Hollows ---
+
+#[test]
+fn cinderdeep_layout_has_routes_shortcut_and_return_connection() {
+    let c = Content::builtin_cinderdeep();
+    let nav = c.nav();
+    let id = |n: &str| nav.find(n).unwrap_or_else(|| panic!("no area {n}"));
+    let linked = |a: u16, b: u16| nav.links.iter().any(|l| l.from == a && l.to == b);
+    let walk_linked = |a: u16, b: u16| {
+        nav.links
+            .iter()
+            .any(|l| l.from == a && l.to == b && l.kind == crate::nav::LinkKind::Walk)
+    };
+    // Natural shapes: most areas are non-rectangular polygons.
+    let polys = nav
+        .surfaces
+        .iter()
+        .filter(|s| !s.def.shape.is_axis_rect())
+        .count();
+    assert!(
+        polys * 2 > nav.surfaces.len(),
+        "{polys} of {}",
+        nav.surfaces.len()
+    );
+    // Branch: the fork leads to both the low and the high road.
+    let fork = id("Glowworm Fork");
+    assert!(
+        walk_linked(fork, id("Ashgrub Run (top)")) && walk_linked(fork, id("Ridge Ascent (foot)"))
+    );
+    // Shortcut: the ridge drops into the gallery, one way.
+    let (ledge, east) = (id("Ridge Ledge"), id("Smelter East"));
+    assert!(
+        nav.links
+            .iter()
+            .any(|l| l.from == ledge && l.to == east && l.kind == crate::nav::LinkKind::Drop)
+    );
+    assert!(!linked(east, ledge));
+    // Return connection: the Rim Tunnel joins the rim back to the gallery.
+    assert!(walk_linked(id("Cistern Rim"), id("Rim Tunnel North")));
+    assert!(walk_linked(id("Rim Tunnel"), id("Smelter West")));
+    // The Kiln Span touches only its two ends (nothing below it connects).
+    let span = id("Kiln Span");
+    let ends: Vec<&str> = nav
+        .links
+        .iter()
+        .filter(|l| l.from == span)
+        .map(|l| nav.surfaces[l.to as usize].name())
+        .collect();
+    assert_eq!(ends, vec!["Smelter North", "Cistern Rim"], "{ends:?}");
+    // Every area is reachable from the entrance; the final island too.
+    let (_, start) = Content::place(&nav, c.dungeon.entrance, c.dungeon.entrance_y).unwrap();
+    assert!(nav.reachable(start, id("Heart Island")));
+    // You can see across the slag pit (its edges are lips, not walls) ...
+    assert!(nav.line_of_sight(V3::new(1.0, -2.3, 88.0), V3::new(15.0, -3.0, 88.0)));
+    // ... but not through the gallery's outer rock.
+    assert!(!nav.line_of_sight(V3::new(-10.0, -2.3, 90.0), V3::new(-40.0, 0.5, 100.0)));
+}
+
+#[test]
+fn five_person_party_clears_the_cinderdeep() {
+    let c = Content::builtin_cinderdeep();
+    for seed in 1..=2 {
+        let (outcome, stuck, unreachable, _) = traverse_in(&c, 5, 5, seed);
+        assert_eq!(outcome, RunOutcome::Victory, "seed {seed}");
+        assert!(stuck < 5.0, "seed {seed}: stuck {stuck} s");
+        assert!(
+            unreachable < 2.0,
+            "seed {seed}: unreachable {unreachable} s"
+        );
+    }
+}
+
+#[test]
+fn ten_person_raid_clears_the_cinderdeep() {
+    let c = Content::builtin_cinderdeep();
+    let (outcome, stuck, unreachable, _) = traverse_in(&c, 5, 10, 1);
+    assert_eq!(outcome, RunOutcome::Victory);
+    assert!(stuck < 10.0, "stuck {stuck} s");
+    assert!(unreachable < 4.0, "unreachable {unreachable} s");
 }
 
 /// Diagnostic replay (not a regular test): `DIAG_DUNGEON=<file stem>

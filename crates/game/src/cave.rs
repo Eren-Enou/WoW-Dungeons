@@ -224,8 +224,8 @@ fn pulse_lava(
     let t = time.elapsed_secs();
     for g in &q {
         if let Some(mut m) = materials.get_mut(&g.material) {
-            let k = 3.0 + 1.2 * (t * 0.9 + g.phase).sin() + 0.5 * (t * 2.3 + g.phase * 1.7).sin();
-            m.emissive = LinearRgba::rgb(k, k * 0.28, k * 0.03);
+            let k = 1.5 + 0.45 * (t * 0.9 + g.phase).sin() + 0.2 * (t * 2.3 + g.phase * 1.7).sin();
+            m.emissive = LinearRgba::rgb(k, k * 0.3, k * 0.04);
         }
     }
 }
@@ -357,12 +357,18 @@ pub fn spawn_lava(
         ..default()
     });
     let explicit_lights = !run.sim.content.dungeon.lights.is_empty();
+    let crust_mesh = meshes.add(Cuboid::new(1.0, 0.06, 1.0));
+    let crust_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.06, 0.04, 0.035),
+        perceptual_roughness: 1.0,
+        ..default()
+    });
     for (i, l) in run.sim.content.dungeon.lava.iter().enumerate() {
         let Ok(shape) = l.shape() else { continue };
         let mat = materials.add(StandardMaterial {
-            base_color: Color::srgb(1.0, 0.32, 0.04),
-            emissive: LinearRgba::rgb(3.0, 0.85, 0.1),
-            perceptual_roughness: 0.4,
+            base_color: Color::srgb(0.35, 0.07, 0.01),
+            emissive: LinearRgba::rgb(1.5, 0.45, 0.06),
+            perceptual_roughness: 0.35,
             ..default()
         });
         commands.spawn((
@@ -376,6 +382,36 @@ pub fn spawn_lava(
             scoped.clone(),
         ));
         let c = shape.centroid();
+        // Dark crust floating on the molten surface: reads as liquid rock,
+        // never as floor (it sits in the lava, below every walkable edge).
+        let bb = shape.bounds();
+        let plates = ((shape.area() / 7.0) as usize).clamp(2, 160);
+        let mut placed = 0;
+        let mut k = 100u32;
+        while placed < plates && k < 100 + plates as u32 * 8 {
+            k += 1;
+            let p = V2::new(
+                bb.min.x + hash01(c.x, c.z, k) * (bb.max.x - bb.min.x),
+                bb.min.z + hash01(c.z, c.x, k + 11) * (bb.max.z - bb.min.z),
+            );
+            if !shape.contains(p) {
+                continue;
+            }
+            placed += 1;
+            let (r1, r2, r3) = (
+                hash01(p.x, p.z, 1),
+                hash01(p.x, p.z, 2),
+                hash01(p.x, p.z, 3),
+            );
+            commands.spawn((
+                Mesh3d(crust_mesh.clone()),
+                MeshMaterial3d(crust_mat.clone()),
+                Transform::from_xyz(p.x, l.y + 0.02, p.z)
+                    .with_rotation(Quat::from_rotation_y(r3 * 6.28))
+                    .with_scale(Vec3::new(0.7 + r1 * 1.8, 1.0, 0.5 + r2 * 1.4)),
+                scoped.clone(),
+            ));
+        }
         if !explicit_lights {
             commands.spawn((
                 PointLight {
