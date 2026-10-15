@@ -2434,8 +2434,8 @@ impl Sim {
             // being crossed) and try again; never teleport.
             let surf = &self.nav.surfaces[a.surface as usize];
             a.nav.recover_to = match wp.link {
-                Some(l) => self.nav.links[l as usize].portal.center(),
-                None => surf.walk.center(),
+                Some(l) => self.nav.links[l as usize].portal.centroid(),
+                None => surf.walk.centroid(),
             };
             a.nav.recover = RECOVER_FOR;
             a.nav.stalled = 0.0;

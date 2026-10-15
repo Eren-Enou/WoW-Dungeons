@@ -5,6 +5,7 @@
 //! results screens.
 
 mod camera;
+mod cave;
 mod common;
 mod controls;
 mod demo;
@@ -42,6 +43,7 @@ fn main() {
     .init_state::<AppState>()
     .add_plugins((
         camera::CameraPlugin,
+        cave::CavePlugin,
         controls::ControlsPlugin,
         tooltip::TooltipPlugin,
         hub::HubPlugin,

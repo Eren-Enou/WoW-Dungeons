@@ -2136,9 +2136,9 @@ fn traverse(size: usize, seed: u64) -> (RunOutcome, f32, f32, u32) {
             if !a.alive || !before[p].2 {
                 continue;
             }
-            let walk = sim.nav.surfaces[a.surface as usize].walk;
+            let walk = &sim.nav.surfaces[a.surface as usize].walk;
             assert!(
-                walk.shrunk(-0.01).contains(a.pos),
+                walk.contains_tol(a.pos, 0.01),
                 "seed {seed}: {} left the floor of '{}' at {:?}",
                 a.name,
                 sim.nav.surfaces[a.surface as usize].name(),

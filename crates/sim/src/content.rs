@@ -7,6 +7,7 @@
 use crate::items::{ItemSlot, ItemStats, Rarity, RoleAffinity};
 use crate::math::{V2, V3};
 use crate::nav::{Axis, LinkDef, LinkKind, Nav, NavParams, Rect, SurfaceDef, SurfaceId};
+use crate::poly::Poly;
 use crate::stats::School;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -63,9 +64,16 @@ pub struct DungeonConfig {
     /// Navigation limits (step, slope, drop, headroom).
     #[serde(default, skip_serializing_if = "NavConfig::is_default")]
     pub nav: NavConfig,
-    /// Decorative lava pools (not walkable).
+    /// Decorative lava pools and rivers (not walkable).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub lava: Vec<LavaConfig>,
+    /// Decoration: rock pillars, stalagmites, boulders, crystals. Never inside
+    /// walkable space (validated), so it never lies about where you can go.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub decor: Vec<DecorConfig>,
+    /// Extra coloured point lights.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lights: Vec<LightConfig>,
     #[serde(default)]
     pub theme: Theme,
 }
@@ -167,10 +175,93 @@ impl NavConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct LavaConfig {
-    pub min: V2,
-    pub max: V2,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min: Option<V2>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<V2>,
+    /// Convex outline instead of min/max (rivers are several pieces).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub points: Option<Vec<V2>>,
     #[serde(default)]
     pub y: f32,
+}
+
+/// Footprint given either as `min`/`max` or as convex `points`.
+fn footprint(min: Option<V2>, max: Option<V2>, points: &Option<Vec<V2>>) -> Result<Poly, String> {
+    match (min, max, points) {
+        (Some(a), Some(b), None) => {
+            let r = Rect::new(a, b);
+            if r.is_valid() {
+                Ok(Poly::from_rect(r))
+            } else {
+                Err(format!(
+                    "min {:?} must be smaller than max {:?} on both axes",
+                    <[f32; 2]>::from(a),
+                    <[f32; 2]>::from(b)
+                ))
+            }
+        }
+        (None, None, Some(p)) => Poly::new(p),
+        _ => Err("give either min and max, or points (not both)".into()),
+    }
+}
+
+impl LavaConfig {
+    pub fn shape(&self) -> Result<Poly, String> {
+        footprint(self.min, self.max, &self.points)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DecorKind {
+    /// A tall rock column.
+    Pillar,
+    /// A pointed rock rising from the floor.
+    Stalagmite,
+    /// A low irregular rock.
+    Boulder,
+    /// A glowing crystal cluster (takes the light colour).
+    Crystal,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DecorConfig {
+    pub kind: DecorKind,
+    pub pos: V2,
+    /// Base height.
+    #[serde(default)]
+    pub y: f32,
+    #[serde(default = "one")]
+    pub radius: f32,
+    #[serde(default = "four")]
+    pub height: f32,
+    /// Crystal glow colour.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<[f32; 3]>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LightConfig {
+    pub pos: V2,
+    #[serde(default = "four")]
+    pub y: f32,
+    pub color: [f32; 3],
+    /// Multiplies the default brightness.
+    #[serde(default = "one")]
+    pub intensity: f32,
+    #[serde(default = "twenty")]
+    pub range: f32,
+}
+
+fn four() -> f32 {
+    4.0
+}
+
+fn twenty() -> f32 {
+    20.0
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
@@ -179,6 +270,15 @@ pub struct Theme {
     pub floor: [f32; 3],
     pub wall: [f32; 3],
     pub light: [f32; 3],
+    /// Distance fog colour (none = no fog).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fog: Option<[f32; 3]>,
+    /// Ambient light colour.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ambient: Option<[f32; 3]>,
+    /// Draw walls as jagged rock instead of flat slabs.
+    #[serde(skip_serializing_if = "is_false")]
+    pub rough_walls: bool,
 }
 
 impl Default for Theme {
@@ -187,6 +287,9 @@ impl Default for Theme {
             floor: [0.22, 0.24, 0.27],
             wall: [0.32, 0.3, 0.34],
             light: [1.0, 0.75, 0.45],
+            fog: None,
+            ambient: None,
+            rough_walls: false,
         }
     }
 }
@@ -241,8 +344,21 @@ impl Difficulty {
 #[serde(deny_unknown_fields)]
 pub struct AreaConfig {
     pub name: String,
-    pub min: V2,
-    pub max: V2,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min: Option<V2>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<V2>,
+    /// Convex outline `[[x, z], ...]` instead of `min`/`max`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub points: Option<Vec<V2>>,
+    /// Ramp in any direction: height `y` at `slope_from`, `y_to` at `slope_to`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slope_from: Option<V2>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slope_to: Option<V2>,
+    /// Floor colour override (regions read differently).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tint: Option<[f32; 3]>,
     /// Floor height (at the `min` edge for a ramp). Default 0.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub y: f32,
@@ -719,26 +835,44 @@ impl Content {
     /// Build and validate the navigation from `dungeon.areas` / `dungeon.links`.
     pub fn build_nav(&self) -> Result<Nav, Vec<String>> {
         let d = &self.dungeon;
-        let defs = d
-            .areas
-            .iter()
-            .map(|a| SurfaceDef {
+        let mut errors = Vec::new();
+        let mut defs = Vec::new();
+        for (i, a) in d.areas.iter().enumerate() {
+            let shape = match footprint(a.min, a.max, &a.points) {
+                Ok(s) => s,
+                Err(e) => {
+                    errors.push(format!("dungeon.areas[{i}] ('{}'): {e}", a.name));
+                    continue;
+                }
+            };
+            let slope = match (a.slope_from, a.slope_to) {
+                (Some(f), Some(t)) => Some((f, t)),
+                (None, None) => None,
+                _ => {
+                    errors.push(format!(
+                        "dungeon.areas[{i}] ('{}'): slope_from and slope_to go together",
+                        a.name
+                    ));
+                    None
+                }
+            };
+            defs.push(SurfaceDef {
                 name: a.name.clone(),
-                rect: Rect::new(a.min, a.max),
+                shape,
                 y: a.y,
                 y_to: a.y_to,
                 axis: match a.axis {
                     AxisConfig::X => Axis::X,
                     AxisConfig::Z => Axis::Z,
                 },
+                slope,
                 stairs: a.stairs,
                 walls: a.walls,
                 wall_height: a.wall_height.unwrap_or(crate::nav::WALL_HEIGHT),
                 open_under: a.under == UnderConfig::Open,
                 unreachable: a.unreachable,
-            })
-            .collect();
-        let mut errors = Vec::new();
+            });
+        }
         let links = d
             .links
             .iter()
@@ -914,9 +1048,24 @@ impl Content {
             "dungeon.areas must list at least one walkable rectangle".into(),
         );
         for (i, l) in d.lava.iter().enumerate() {
+            if let Err(e) = l.shape() {
+                check(false, format!("dungeon.lava[{i}]: {e}"));
+            }
             check(
-                Rect::new(l.min, l.max).is_valid() && l.y.is_finite(),
-                format!("dungeon.lava[{i}]: min must be smaller than max on both axes"),
+                l.y.is_finite(),
+                format!("dungeon.lava[{i}]: y must be finite"),
+            );
+        }
+        for (i, l) in d.lights.iter().enumerate() {
+            check(
+                l.pos.is_finite()
+                    && l.y.is_finite()
+                    && (0.0..=20.0).contains(&l.intensity)
+                    && (1.0..=200.0).contains(&l.range)
+                    && l.color.iter().all(|c| (0.0..=1.0).contains(c)),
+                format!(
+                    "dungeon.lights[{i}]: intensity must be in 0..=20, range in 1..=200 and colour components in 0..=1"
+                ),
             );
         }
         let nav = match self.build_nav() {
@@ -951,6 +1100,48 @@ impl Content {
                                 )
                             },
                         );
+                    }
+                }
+            }
+        }
+
+        // Decoration must stand outside walkable space: a pillar inside an area
+        // would look like an obstacle the navigation walks through.
+        for (i, dc) in d.decor.iter().enumerate() {
+            let ok_numbers = dc.pos.is_finite()
+                && dc.y.is_finite()
+                && (0.1..=30.0).contains(&dc.radius)
+                && (0.1..=60.0).contains(&dc.height);
+            check(
+                ok_numbers,
+                format!("dungeon.decor[{i}]: radius must be in 0.1..=30 and height in 0.1..=60"),
+            );
+            if let (true, Some(nav)) = (ok_numbers, &nav) {
+                let r = dc.radius;
+                let foot = Poly::from_rect(Rect::new(
+                    V2::new(dc.pos.x - r, dc.pos.z - r),
+                    V2::new(dc.pos.x + r, dc.pos.z + r),
+                ));
+                for s in &nav.surfaces {
+                    let Some(ov) = s.def.shape.intersect(&foot) else {
+                        continue;
+                    };
+                    if ov.area() < 0.01 {
+                        continue;
+                    }
+                    // Walkable space: from the floor up to head height.
+                    let floor = s.height_at(ov.centroid());
+                    if dc.y < floor + 2.2 && dc.y + dc.height > floor - 0.3 {
+                        check(
+                            false,
+                            format!(
+                                "dungeon.decor[{i}] ({:?}) at {:?} stands in walkable area '{}'; move it outside the area (decoration must never block or fake a path)",
+                                dc.kind,
+                                <[f32; 2]>::from(dc.pos),
+                                s.name()
+                            ),
+                        );
+                        break;
                     }
                 }
             }
@@ -1400,6 +1591,65 @@ mod tests {
             assert_eq!(a.links.len(), b.links.len());
             assert_eq!(a.walls.len(), b.walls.len());
         }
+    }
+
+    #[test]
+    fn polygon_areas_decor_and_lava_polygons_load_and_validate() {
+        // Replace the cavern's narrow tunnel with a diagonal polygon of the same
+        // reach, add lava as a polygon and two decorations.
+        let text = BUILTIN_CAVERN.replace(
+            "name = \"Narrow Tunnel\"
+min = [26.0, 40.0]
+max = [44.0, 43.0]",
+            "name = \"Narrow Tunnel\"
+points = [[26.0, 40.0], [44.0, 40.0], [44.0, 43.0], [26.0, 44.0]]",
+        );
+        assert_ne!(text, BUILTIN_CAVERN, "replacement applied");
+        let ok = format!(
+            "{text}
+[[dungeon.decor]]
+kind = \"pillar\"
+pos = [5.0, 30.0]
+radius = 1.5
+height = 6.0
+
+[[dungeon.lava]]
+points = [[60.0, 0.0], [70.0, 0.0], [65.0, 8.0]]
+y = -0.5
+"
+        );
+        let c = Content::from_toml_str(&ok, "test").expect("valid");
+        let nav = c.nav();
+        let tunnel = nav.find("Narrow Tunnel").unwrap();
+        assert!(!nav.surfaces[tunnel as usize].def.shape.is_axis_rect());
+        assert!(c.dungeon.lava.last().unwrap().shape().is_ok());
+        // A pillar standing in the entrance cavern is rejected with the fix.
+        let bad = format!(
+            "{text}
+[[dungeon.decor]]
+kind = \"pillar\"
+pos = [0.0, 0.0]
+"
+        );
+        let err = Content::from_toml_str(&bad, "test")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("stands in walkable area 'Entrance Cavern'"),
+            "{err}"
+        );
+        // Non-convex areas are explained.
+        let concave = BUILTIN_CAVERN.replace(
+            "name = \"Narrow Tunnel\"
+min = [26.0, 40.0]
+max = [44.0, 43.0]",
+            "name = \"Narrow Tunnel\"
+points = [[26.0, 40.0], [44.0, 40.0], [35.0, 41.0], [44.0, 43.0], [26.0, 43.0]]",
+        );
+        let err = Content::from_toml_str(&concave, "test")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("not convex"), "{err}");
     }
 
     #[test]

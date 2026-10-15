@@ -32,9 +32,12 @@ impl Plugin for DungeonPlugin {
         )
         .add_systems(
             OnExit(AppState::Dungeon),
-            |mut c: Commands, mut blockers: ResMut<CameraBlockers>| {
+            |mut c: Commands,
+             mut blockers: ResMut<CameraBlockers>,
+             camera: Single<Entity, With<MainCamera>>| {
                 c.remove_resource::<ActiveRun>();
                 blockers.0.clear();
+                c.entity(*camera).remove::<bevy::pbr::DistanceFog>();
             },
         )
         .add_systems(
@@ -218,19 +221,35 @@ fn start_run(
     commands.insert_resource(run);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_world(
     mut commands: Commands,
     run: Res<ActiveRun>,
+    camera: Single<Entity, With<MainCamera>>,
     mut blockers: ResMut<CameraBlockers>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     let scoped = DespawnOnExit(AppState::Dungeon);
+    let theme = run.sim.content.dungeon.theme;
     commands.insert_resource(GlobalAmbientLight {
-        color: Color::srgb(0.6, 0.65, 0.8),
+        color: theme
+            .ambient
+            .map(rgb)
+            .unwrap_or(Color::srgb(0.6, 0.65, 0.8)),
         brightness: 220.0,
         ..default()
     });
+    if let Some(fog) = theme.fog {
+        commands.entity(*camera).insert(bevy::pbr::DistanceFog {
+            color: rgb(fog),
+            falloff: bevy::pbr::FogFalloff::Linear {
+                start: 18.0,
+                end: 75.0,
+            },
+            ..default()
+        });
+    }
     commands.spawn((
         DirectionalLight {
             illuminance: 1800.0,
@@ -302,8 +321,9 @@ fn spawn_world(
     }
 }
 
-/// Build floors, ramps, stairs, bridges, rock supports, walls, drop markers and
-/// lava from the simulation's `Nav`, so what you see is what the sim walks on.
+/// Build floors, ramps, stairs, bridges, rock supports, walls, drop markers,
+/// decoration and lava from the simulation's `Nav` and content, so what you
+/// see is what the sim walks on.
 fn spawn_level_geometry(
     commands: &mut Commands,
     run: &ActiveRun,
@@ -311,10 +331,13 @@ fn spawn_level_geometry(
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
 ) {
+    use crate::cave::{prism_mesh, wall_chunks};
     use dungeon_sim::nav::{Axis, LinkKind, SLAB};
+    use dungeon_sim::poly::Poly;
     let scoped = DespawnOnExit(AppState::Dungeon);
     let nav = &run.sim.nav;
-    let theme = run.sim.content.dungeon.theme;
+    let dungeon = &run.sim.content.dungeon;
+    let theme = dungeon.theme;
     let [fr, fg, fb] = theme.floor;
     // Floors get lighter with height so levels read at a glance.
     let (lo, hi) = nav
@@ -323,185 +346,163 @@ fn spawn_level_geometry(
         .fold((f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), s| {
             (lo.min(s.min_y()), hi.max(s.max_y()))
         });
-    let shade = |y: f32| {
+    let shade = |base: [f32; 3], y: f32| {
         let t = if hi > lo { (y - lo) / (hi - lo) } else { 0.0 };
-        Color::srgb(fr + 0.14 * t, fg + 0.12 * t, fb + 0.08 * t)
+        Color::srgb(base[0] + 0.12 * t, base[1] + 0.1 * t, base[2] + 0.07 * t)
     };
-    let rock = materials.add(Color::srgb(fr * 0.55, fg * 0.55, fb * 0.6));
-    let mut boxes: Vec<(Vec3, Vec3, Handle<StandardMaterial>, bool)> = Vec::new();
+    let rock = materials.add(StandardMaterial {
+        base_color: Color::srgb(fr * 0.55, fg * 0.55, fb * 0.6),
+        perceptual_roughness: 0.95,
+        ..default()
+    });
     blockers.0.clear();
+    let auto_lights = dungeon.lights.is_empty();
     for (i, s) in nav.surfaces.iter().enumerate() {
-        let r = s.def.rect;
-        let size = r.size();
-        let c = r.center();
-        let tint = if i % 2 == 0 { 0.0 } else { 0.025 };
-        let top_mat = materials.add(if s.def.open_under {
-            Color::srgb(0.42, 0.3, 0.2)
-        } else {
-            let base = shade(s.max_y());
-            base.mix(&Color::srgb(fr + tint, fg + tint, fb), 0.3)
+        let tint = dungeon
+            .areas
+            .get(i)
+            .and_then(|a| a.tint)
+            .unwrap_or(theme.floor);
+        let alt = if i % 2 == 0 { 0.0 } else { 0.02 };
+        let top_mat = materials.add(StandardMaterial {
+            base_color: if s.def.open_under {
+                Color::srgb(0.42, 0.3, 0.2)
+            } else {
+                shade([tint[0] + alt, tint[1] + alt, tint[2]], s.max_y())
+            },
+            perceptual_roughness: 0.9,
+            double_sided: true,
+            cull_mode: None,
+            ..default()
         });
-        let base = if s.def.open_under {
-            None
+        let bottom = if s.def.open_under {
+            s.min_y() - SLAB
         } else {
-            Some(nav.base_y)
+            nav.base_y
         };
-        if !s.is_ramp() {
-            let y = s.def.y;
-            let bottom = base.unwrap_or(y - SLAB);
-            // Top slab (slight per-area offset avoids z-fighting on overlaps).
-            let top_bottom = y - 0.2;
-            boxes.push((
-                Vec3::new(r.min.x, top_bottom - i as f32 * 0.001, r.min.z),
-                Vec3::new(r.max.x, y - i as f32 * 0.001, r.max.z),
-                top_mat.clone(),
-                false,
-            ));
-            if bottom < top_bottom - 0.01 {
-                boxes.push((
-                    Vec3::new(r.min.x, bottom, r.min.z),
-                    Vec3::new(r.max.x, top_bottom, r.max.z),
-                    if s.def.open_under {
-                        top_mat.clone()
-                    } else {
-                        rock.clone()
-                    },
-                    false,
-                ));
-            }
-            blockers.0.push((
-                Vec3::new(r.min.x, bottom, r.min.z),
-                Vec3::new(r.max.x, y - 0.05, r.max.z),
-            ));
-        } else {
-            // Ramps and stairs: steps of at most 0.5 m along the slope; a ramp
-            // also gets a smooth sloped deck on top.
+        let shape = &s.def.shape;
+        let b = s.bounds;
+        let rect_stairs = s.def.stairs && s.def.slope.is_none() && shape.is_axis_rect();
+        if rect_stairs {
+            // Steps of at most 0.5 m along an axis ramp.
             let len = match s.def.axis {
-                Axis::Z => size.z,
-                Axis::X => size.x,
+                Axis::Z => b.size().z,
+                Axis::X => b.size().x,
             };
             let n = ((len / 0.5).ceil() as usize).max(1);
             let step = len / n as f32;
             for k in 0..n {
-                let a0 = k as f32 * step;
-                let a1 = a0 + step;
+                let (a0, a1) = (k as f32 * step, (k + 1) as f32 * step);
                 let (min, max) = match s.def.axis {
                     Axis::Z => (
-                        V2::new(r.min.x, r.min.z + a0),
-                        V2::new(r.max.x, r.min.z + a1),
+                        V2::new(b.min.x, b.min.z + a0),
+                        V2::new(b.max.x, b.min.z + a1),
                     ),
                     Axis::X => (
-                        V2::new(r.min.x + a0, r.min.z),
-                        V2::new(r.min.x + a1, r.max.z),
+                        V2::new(b.min.x + a0, b.min.z),
+                        V2::new(b.min.x + a1, b.max.z),
                     ),
                 };
-                let mid = (min + max) * 0.5;
-                let h = s.height_at(mid);
-                let top = if s.def.stairs { h } else { h - 0.15 };
-                let bottom = base.unwrap_or(top - SLAB);
-                boxes.push((
-                    Vec3::new(min.x, bottom, min.z),
-                    Vec3::new(max.x, top, max.z),
-                    if s.def.stairs {
-                        top_mat.clone()
-                    } else {
-                        rock.clone()
-                    },
-                    false,
+                let h = s.height_at((min + max) * 0.5);
+                let piece = Poly::from_rect(dungeon_sim::nav::Rect::new(min, max));
+                commands.spawn((
+                    Mesh3d(meshes.add(prism_mesh(&piece, |_| h, bottom))),
+                    MeshMaterial3d(top_mat.clone()),
+                    Transform::IDENTITY,
+                    scoped.clone(),
                 ));
                 blockers.0.push((
                     Vec3::new(min.x, bottom, min.z),
-                    Vec3::new(max.x, top - 0.1, max.z),
+                    Vec3::new(max.x, h - 0.1, max.z),
                 ));
             }
-            if !s.def.stairs {
-                let y0 = s.height_at(r.min);
-                let y1 = s.height_at(r.max);
-                let rise = y1 - y0;
-                let (deck, rot) = match s.def.axis {
-                    Axis::Z => {
-                        let l = (len * len + rise * rise).sqrt();
-                        (
-                            Cuboid::new(size.x, 0.12, l),
-                            Quat::from_rotation_x(-(rise / len).atan()),
-                        )
-                    }
-                    Axis::X => {
-                        let l = (len * len + rise * rise).sqrt();
-                        (
-                            Cuboid::new(l, 0.12, size.z),
-                            Quat::from_rotation_z((rise / len).atan()),
-                        )
-                    }
-                };
+        } else {
+            // A prism whose top follows the surface (flat floor, ramp, deck).
+            let z = -(i as f32) * 0.001;
+            commands.spawn((
+                Mesh3d(meshes.add(prism_mesh(shape, |p| s.height_at(p) + z, bottom))),
+                MeshMaterial3d(top_mat.clone()),
+                Transform::IDENTITY,
+                scoped.clone(),
+            ));
+            if !s.def.open_under && bottom < s.min_y() - 0.25 {
+                // Rock under raised floors reads as rock, not floor.
                 commands.spawn((
-                    Mesh3d(meshes.add(deck)),
-                    MeshMaterial3d(top_mat.clone()),
-                    Transform::from_xyz(c.x, (y0 + y1) * 0.5 - 0.04, c.z).with_rotation(rot),
+                    Mesh3d(meshes.add(prism_mesh(shape, |p| s.height_at(p) - 0.25, bottom))),
+                    MeshMaterial3d(rock.clone()),
+                    Transform::from_scale(Vec3::new(1.0, 1.0, 1.0)),
                     scoped.clone(),
                 ));
             }
-        }
-        commands.spawn((
-            PointLight {
-                color: rgb(theme.light),
-                intensity: 600_000.0,
-                range: 35.0,
-                shadow_maps_enabled: false,
-                ..default()
-            },
-            Transform::from_xyz(c.x, s.max_y() + 7.0, c.z),
-            scoped.clone(),
-        ));
-    }
-    for (min, max, mat, _) in boxes {
-        let size = max - min;
-        commands.spawn((
-            Mesh3d(meshes.add(Cuboid::new(size.x, size.y, size.z))),
-            MeshMaterial3d(mat),
-            Transform::from_translation((min + max) * 0.5),
-            scoped.clone(),
-        ));
-    }
-    // Walls follow the floor they stand on (in short pieces along ramps).
-    for w in &nav.walls {
-        let len = w.a.dist(w.b);
-        let pieces = if (w.bottom0 - w.bottom1).abs() > 0.05 {
-            (len / 1.0).ceil().max(1.0) as usize
-        } else {
-            1
-        };
-        for k in 0..pieces {
-            let f0 = k as f32 / pieces as f32;
-            let f1 = (k + 1) as f32 / pieces as f32;
-            let a = w.a + (w.b - w.a) * f0;
-            let b = w.a + (w.b - w.a) * f1;
-            let bottom = w.bottom0 + (w.bottom1 - w.bottom0) * (f0 + f1) * 0.5;
-            let plen = a.dist(b);
-            let mid = (a + b) * 0.5;
-            let horizontal = (a.z - b.z).abs() < 1e-3;
-            let (sx, sz) = if horizontal {
-                (plen + 0.4, 0.4)
+            // Camera blockers: ramps in 1 m slices along their bounds, floors whole.
+            if s.is_ramp() {
+                let n = (b.size().x.max(b.size().z).ceil() as usize).max(1);
+                for k in 0..n {
+                    let f0 = k as f32 / n as f32;
+                    let f1 = (k + 1) as f32 / n as f32;
+                    let along_x = b.size().x >= b.size().z;
+                    let (min, max) = if along_x {
+                        (
+                            V2::new(b.min.x + b.size().x * f0, b.min.z),
+                            V2::new(b.min.x + b.size().x * f1, b.max.z),
+                        )
+                    } else {
+                        (
+                            V2::new(b.min.x, b.min.z + b.size().z * f0),
+                            V2::new(b.max.x, b.min.z + b.size().z * f1),
+                        )
+                    };
+                    let low = s
+                        .height_at(min)
+                        .min(s.height_at(max))
+                        .min(s.height_at(V2::new(min.x, max.z)))
+                        .min(s.height_at(V2::new(max.x, min.z)));
+                    blockers.0.push((
+                        Vec3::new(min.x, bottom, min.z),
+                        Vec3::new(max.x, low - 0.15, max.z),
+                    ));
+                }
             } else {
-                (0.4, plen + 0.4)
-            };
-            let half = Vec3::new(sx * 0.5, w.height * 0.5, sz * 0.5);
-            let center = Vec3::new(mid.x, bottom + w.height * 0.5, mid.z);
-            blockers.0.push((center - half, center + half));
+                blockers.0.push((
+                    Vec3::new(b.min.x, bottom, b.min.z),
+                    Vec3::new(b.max.x, s.max_y() - 0.05, b.max.z),
+                ));
+            }
+        }
+        if auto_lights {
+            let c = shape.centroid();
+            commands.spawn((
+                PointLight {
+                    color: rgb(theme.light),
+                    intensity: 600_000.0,
+                    range: 35.0,
+                    shadow_maps_enabled: false,
+                    ..default()
+                },
+                Transform::from_xyz(c.x, s.max_y() + 7.0, c.z),
+                scoped.clone(),
+            ));
+        }
+    }
+    // Walls: smooth slabs or jagged rock, at any angle, never over the floor.
+    for w in &nav.walls {
+        for c in wall_chunks(w, theme.rough_walls) {
+            blockers.0.push((c.min, c.max));
             let material = materials.add(StandardMaterial {
                 base_color: run.wall_color,
                 alpha_mode: AlphaMode::Blend,
+                perceptual_roughness: 0.95,
                 ..default()
             });
             commands.spawn((
-                Mesh3d(meshes.add(Cuboid::new(sx, w.height, sz))),
+                Mesh3d(meshes.add(Cuboid::new(c.size.x, c.size.y, c.size.z))),
                 MeshMaterial3d(material.clone()),
                 Occluder {
                     material,
-                    min: center - half,
-                    max: center + half,
+                    min: c.min,
+                    max: c.max,
                 },
-                Transform::from_translation(center),
+                Transform::from_translation(c.center).with_rotation(c.rotation),
                 scoped.clone(),
             ));
         }
@@ -515,39 +516,27 @@ fn spawn_level_geometry(
         ..default()
     });
     for l in nav.links.iter().filter(|l| l.kind == LinkKind::Drop) {
-        let p = l.portal;
-        let size = p.size();
+        let y = l.entry.y;
         commands.spawn((
-            Mesh3d(meshes.add(Cuboid::new(size.x.max(0.2), 0.04, size.z.max(0.2)))),
+            Mesh3d(meshes.add(prism_mesh(&l.portal, |_| y + 0.04, y + 0.01))),
             MeshMaterial3d(drop_mat.clone()),
-            Transform::from_xyz(p.center().x, l.entry.y + 0.03, p.center().z),
+            Transform::IDENTITY,
             scoped.clone(),
         ));
     }
-    // Lava pools (decorative; not walkable).
-    let lava = materials.add(StandardMaterial {
-        base_color: Color::srgb(1.0, 0.35, 0.05),
-        emissive: LinearRgba::rgb(4.0, 1.0, 0.1),
-        ..default()
-    });
-    for l in &run.sim.content.dungeon.lava {
-        let size = l.max - l.min;
-        let c = (l.min + l.max) * 0.5;
-        commands.spawn((
-            Mesh3d(meshes.add(Cuboid::new(size.x, 0.1, size.z))),
-            MeshMaterial3d(lava.clone()),
-            Transform::from_xyz(c.x, l.y - 0.05, c.z),
-            scoped.clone(),
-        ));
+    crate::cave::spawn_lava(commands, run, meshes, materials);
+    let decor = crate::cave::spawn_decor(commands, run, meshes, materials);
+    blockers.0.extend(decor);
+    for l in &dungeon.lights {
         commands.spawn((
             PointLight {
-                color: Color::srgb(1.0, 0.45, 0.1),
-                intensity: 400_000.0,
-                range: 14.0,
+                color: rgb(l.color),
+                intensity: 500_000.0 * l.intensity,
+                range: l.range,
                 shadow_maps_enabled: false,
                 ..default()
             },
-            Transform::from_xyz(c.x, l.y + 1.5, c.z),
+            Transform::from_xyz(l.pos.x, l.y, l.pos.z),
             scoped.clone(),
         ));
     }

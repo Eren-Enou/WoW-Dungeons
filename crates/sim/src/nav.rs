@@ -19,6 +19,7 @@
 //! otherwise).
 
 use crate::math::{V2, V3};
+use crate::poly::Poly;
 
 /// Distance actors keep from the edges of a surface.
 pub const WALL_MARGIN: f32 = 0.4;
@@ -89,15 +90,6 @@ impl Rect {
         (min.x <= max.x && min.z <= max.z).then_some(Rect::new(min, max))
     }
 
-    fn corners(&self) -> [V2; 4] {
-        [
-            self.min,
-            V2::new(self.max.x, self.min.z),
-            self.max,
-            V2::new(self.min.x, self.max.z),
-        ]
-    }
-
     /// Parameter interval `[t0, t1]` (within 0..1) where segment `a`→`b` is
     /// inside the rectangle (Liang–Barsky clipping).
     pub fn clip(&self, a: V2, b: V2) -> Option<(f32, f32)> {
@@ -137,12 +129,16 @@ pub enum Axis {
 #[derive(Clone, Debug, PartialEq)]
 pub struct SurfaceDef {
     pub name: String,
-    pub rect: Rect,
-    /// Height (at the `min` edge for a ramp).
+    /// Convex footprint (a rectangle is a 4-point polygon).
+    pub shape: Poly,
+    /// Height (at the `min` edge, or at `slope.0`, for a ramp).
     pub y: f32,
-    /// Ramp: height at the `max` edge along `axis`.
+    /// Ramp: height at the `max` edge along `axis` (or at `slope.1`).
     pub y_to: Option<f32>,
     pub axis: Axis,
+    /// Ramp direction given by two points (height `y` at the first, `y_to`
+    /// at the second); overrides `axis`.
+    pub slope: Option<(V2, V2)>,
     /// Draw a ramp as steps (navigation is identical).
     pub stairs: bool,
     pub walls: bool,
@@ -156,12 +152,22 @@ pub struct SurfaceDef {
 
 impl SurfaceDef {
     pub fn flat(name: &str, min: V2, max: V2, y: f32) -> SurfaceDef {
+        SurfaceDef::with_shape(name, Poly::from_rect(Rect::new(min, max)), y)
+    }
+
+    /// A flat convex polygon.
+    pub fn poly(name: &str, points: &[V2], y: f32) -> Result<SurfaceDef, String> {
+        Ok(SurfaceDef::with_shape(name, Poly::new(points)?, y))
+    }
+
+    pub fn with_shape(name: &str, shape: Poly, y: f32) -> SurfaceDef {
         SurfaceDef {
             name: name.into(),
-            rect: Rect::new(min, max),
+            shape,
             y,
             y_to: None,
             axis: Axis::Z,
+            slope: None,
             stairs: false,
             walls: true,
             wall_height: WALL_HEIGHT,
@@ -183,6 +189,17 @@ impl SurfaceDef {
         self.walls = false;
         self
     }
+
+    /// Make this a ramp from height `y` at `from` to `y_to` at `to`.
+    pub fn sloped(mut self, from: V2, to: V2, y_to: f32) -> SurfaceDef {
+        self.slope = Some((from, to));
+        self.y_to = Some(y_to);
+        self
+    }
+
+    pub fn bounds(&self) -> Rect {
+        self.shape.bounds()
+    }
 }
 
 /// A surface ready for queries.
@@ -190,18 +207,30 @@ impl SurfaceDef {
 pub struct Surface {
     pub def: SurfaceDef,
     /// Footprint shrunk by the wall margin (where actor centres may be).
-    pub walk: Rect,
+    pub walk: Poly,
+    /// Bounding box of the footprint.
+    pub bounds: Rect,
     /// Height plane: `c0 + cx·x + cz·z` inside the footprint.
     c0: f32,
     cx: f32,
     cz: f32,
+    min_y: f32,
+    max_y: f32,
+    is_rect: bool,
 }
 
 impl Surface {
+    /// `def` must have been validated (non-empty walkable inset).
     fn new(def: SurfaceDef) -> Surface {
         let (mut c0, mut cx, mut cz) = (def.y, 0.0, 0.0);
-        if let Some(to) = def.y_to {
-            let r = def.rect;
+        if let (Some(to), Some((a, b))) = (def.y_to, def.slope) {
+            let d = b - a;
+            let k = (to - def.y) / (d.x * d.x + d.z * d.z).max(1e-9);
+            cx = k * d.x;
+            cz = k * d.z;
+            c0 = def.y - cx * a.x - cz * a.z;
+        } else if let Some(to) = def.y_to {
+            let r = def.bounds();
             match def.axis {
                 Axis::Z => {
                     let k = (to - def.y) / (r.max.z - r.min.z);
@@ -215,12 +244,29 @@ impl Surface {
                 }
             }
         }
+        let (min_y, max_y) = if def.slope.is_none() && def.shape.is_axis_rect() {
+            // Exact for rectangles (as in 0.4).
+            let to = def.y_to.unwrap_or(def.y);
+            (def.y.min(to), def.y.max(to))
+        } else {
+            let heights = def.shape.points().iter().map(|p| c0 + cx * p.x + cz * p.z);
+            heights.fold((f32::INFINITY, f32::NEG_INFINITY), |(lo, hi), h| {
+                (lo.min(h), hi.max(h))
+            })
+        };
         Surface {
-            walk: def.rect.shrunk(WALL_MARGIN),
+            walk: def
+                .shape
+                .inset(WALL_MARGIN)
+                .expect("validated: wide enough"),
+            bounds: def.bounds(),
+            is_rect: def.shape.is_axis_rect(),
             def,
             c0,
             cx,
             cz,
+            min_y,
+            max_y,
         }
     }
 
@@ -230,7 +276,13 @@ impl Surface {
 
     /// Height at horizontal point `p` (clamped to the footprint).
     pub fn height_at(&self, p: V2) -> f32 {
-        let p = self.def.rect.clamp(p);
+        let p = if self.is_rect {
+            self.bounds.clamp(p)
+        } else if self.def.shape.contains(p) {
+            p
+        } else {
+            self.def.shape.clamp(p)
+        };
         self.c0 + self.cx * p.x + self.cz * p.z
     }
 
@@ -238,12 +290,13 @@ impl Surface {
         self.def.y_to.is_some()
     }
 
+    /// Lowest and highest point of the surface.
     pub fn min_y(&self) -> f32 {
-        self.def.y.min(self.def.y_to.unwrap_or(self.def.y))
+        self.min_y
     }
 
     pub fn max_y(&self) -> f32 {
-        self.def.y.max(self.def.y_to.unwrap_or(self.def.y))
+        self.max_y
     }
 
     /// Rise over run.
@@ -277,8 +330,10 @@ pub struct Link {
     pub to: SurfaceId,
     pub kind: LinkKind,
     /// Walk: the region inside both surfaces. Drop: the take-off area on `from`.
-    pub portal: Rect,
-    /// Drop: the authored zone (empty rect for walk links).
+    pub portal: Poly,
+    /// Walk: the portal kept clear of its sides, where steering aims.
+    pub inner: Poly,
+    /// Drop: the authored zone (the portal's bounds for walk links).
     pub zone: Rect,
     /// Where the traversal starts (on `from`) and ends (on `to`).
     pub entry: V3,
@@ -319,6 +374,8 @@ pub struct Wall {
     pub bottom1: f32,
     pub height: f32,
     pub surface: SurfaceId,
+    /// Unit normal pointing away from the walkable side.
+    pub out: V2,
 }
 
 /// Result of a steering query.
@@ -355,38 +412,52 @@ fn height_diff(a: &Surface, b: &Surface) -> (f32, f32, f32) {
     (a.c0 - b.c0, a.cx - b.cx, a.cz - b.cz)
 }
 
-/// Sub-rectangle of `r` where `|c0 + cx·x + cz·z| <= tol`.
-fn level_region(r: Rect, (c0, cx, cz): (f32, f32, f32), tol: f32) -> Option<Rect> {
+/// Part of `r` where `|c0 + cx·x + cz·z| <= tol` (a band between two lines,
+/// so the result stays convex for any slope direction).
+fn level_region(r: Poly, (c0, cx, cz): (f32, f32, f32), tol: f32) -> Option<Poly> {
     let eps = 1e-6;
-    let solve = |c: f32, k: f32, lo: f32, hi: f32| -> Option<(f32, f32)> {
-        let (mut a, mut b) = ((-tol - c) / k, (tol - c) / k);
-        if a > b {
-            std::mem::swap(&mut a, &mut b);
-        }
-        let (a, b) = (a.max(lo), b.min(hi));
-        (a <= b).then_some((a, b))
-    };
     if cx.abs() < eps && cz.abs() < eps {
         return (c0.abs() <= tol).then_some(r);
     }
-    if cx.abs() < eps {
-        let (z0, z1) = solve(c0, cz, r.min.z, r.max.z)?;
-        return Some(Rect::new(V2::new(r.min.x, z0), V2::new(r.max.x, z1)));
+    // Rectangles with an axis-aligned slope: the exact 0.4 computation.
+    if r.is_axis_rect() && (cx.abs() < eps || cz.abs() < eps) {
+        let r = r.bounds();
+        let solve = |c: f32, k: f32, lo: f32, hi: f32| -> Option<(f32, f32)> {
+            let (mut a, mut b) = ((-tol - c) / k, (tol - c) / k);
+            if a > b {
+                std::mem::swap(&mut a, &mut b);
+            }
+            let (a, b) = (a.max(lo), b.min(hi));
+            (a <= b).then_some((a, b))
+        };
+        let out = if cx.abs() < eps {
+            let (z0, z1) = solve(c0, cz, r.min.z, r.max.z)?;
+            Rect::new(V2::new(r.min.x, z0), V2::new(r.max.x, z1))
+        } else {
+            let (x0, x1) = solve(c0, cx, r.min.x, r.max.x)?;
+            Rect::new(V2::new(x0, r.min.z), V2::new(x1, r.max.z))
+        };
+        return Some(Poly::from_rect(out));
     }
-    if cz.abs() < eps {
-        let (x0, x1) = solve(c0, cx, r.min.x, r.max.x)?;
-        return Some(Rect::new(V2::new(x0, r.min.z), V2::new(x1, r.max.z)));
-    }
-    // Two slopes in different directions: only accept a fully level overlap.
-    r.corners()
-        .iter()
-        .all(|p| (c0 + cx * p.x + cz * p.z).abs() <= tol)
-        .then_some(r)
+    r.clip_halfplane(V2::new(-cx, -cz), tol - c0)?
+        .clip_halfplane(V2::new(cx, cz), tol + c0)
 }
 
-/// Does segment `a`→`b` touch rectangle `r`?
-fn segment_touches(r: &Rect, a: V2, b: V2) -> bool {
+/// Does segment `a`→`b` touch polygon `r`?
+fn segment_touches(r: &Poly, a: V2, b: V2) -> bool {
     r.clip(a, b).is_some()
+}
+
+/// Where steering aims inside a portal: away from its sides when it is wide
+/// enough.
+fn portal_inner(p: &Poly) -> Poly {
+    let b = p.bounds().size();
+    let m = (b.x.min(b.z) * 0.5).min(0.3);
+    if p.is_axis_rect() {
+        // May collapse to a centre line, exactly as 0.4 aimed.
+        return Poly::from_rect(p.bounds().shrunk(m));
+    }
+    p.inset(m).unwrap_or_else(|| p.clone())
 }
 
 impl Nav {
@@ -418,19 +489,28 @@ impl Nav {
         }
         for (i, d) in defs.iter().enumerate() {
             let what = format!("area '{}'", d.name);
-            if !d.rect.is_valid() {
+            let b = d.bounds();
+            if !b.is_valid() || d.shape.area() < 1e-3 {
                 errors.push(format!(
                     "{what}: min {:?} must be smaller than max {:?} on both axes",
-                    <[f32; 2]>::from(d.rect.min),
-                    <[f32; 2]>::from(d.rect.max)
+                    <[f32; 2]>::from(b.min),
+                    <[f32; 2]>::from(b.max)
                 ));
                 continue;
             }
-            let s = d.rect.size();
-            if s.x < 2.0 * WALL_MARGIN + 0.2 || s.z < 2.0 * WALL_MARGIN + 0.2 {
+            if d.shape.inset(WALL_MARGIN + 0.1).is_none() {
+                let s = b.size();
                 errors.push(format!(
-                    "{what} is too narrow ({:.1} x {:.1} m); areas must be at least 1.0 m wide",
+                    "{what} is too narrow ({:.1} x {:.1} m); areas must be at least 1.0 m wide everywhere",
                     s.x, s.z
+                ));
+                continue;
+            }
+            if let Some((a, c)) = d.slope
+                && (a.dist(c) < 0.5 || d.y_to.is_none())
+            {
+                errors.push(format!(
+                    "{what}: slope_from and slope_to must be at least 0.5 m apart and need y_to"
                 ));
             }
             if !d.y.is_finite()
@@ -469,17 +549,26 @@ impl Nav {
             for j in (i + 1)..surfaces.len() {
                 let (a, b) = (&surfaces[i], &surfaces[j]);
                 let diff = height_diff(a, b);
+                if !a
+                    .bounds
+                    .intersection(&b.bounds)
+                    .is_some_and(|r| r.size().x > 0.0 || r.size().z > 0.0)
+                {
+                    continue;
+                }
                 let portal = a
                     .walk
-                    .intersection(&b.walk)
+                    .intersect(&b.walk)
                     .and_then(|ov| level_region(ov, diff, params.max_step))
-                    .filter(|p| p.size().x >= 0.02 && p.size().z >= 0.02);
-                if let Some(raw) = a.def.rect.intersection(&b.def.rect)
-                    && raw.size().x > 0.01
-                    && raw.size().z > 0.01
+                    .filter(|p| {
+                        let s = p.bounds().size();
+                        s.x >= 0.02 && s.z >= 0.02 && p.area() >= 4e-4
+                    });
+                if let Some(raw) = a.def.shape.intersect(&b.def.shape)
+                    && raw.area() > 1e-4
                 {
                     let d: Vec<f32> = raw
-                        .corners()
+                        .points()
                         .iter()
                         .map(|p| diff.0 + diff.1 * p.x + diff.2 * p.z)
                         .collect();
@@ -500,11 +589,8 @@ impl Nav {
                         }
                     } else if portal.is_some() {
                         // A ramp's foot or head may overlap the floor it joins a little.
-                        let extent = if diff.1.abs() > diff.2.abs() {
-                            raw.size().x
-                        } else {
-                            raw.size().z
-                        };
+                        let g = V2::new(diff.1, diff.2).normalize_or_zero();
+                        let extent = raw.extent_along(g);
                         if extent > RAMP_OVERLAP_MAX + 1e-3 {
                             errors.push(format!(
                                 "areas '{}' and '{}' overlap over {:.1} m but are only level with each other over part of it; a ramp may overlap the floor it joins by at most {RAMP_OVERLAP_MAX} m - shorten one of them",
@@ -526,15 +612,17 @@ impl Nav {
                     }
                 }
                 if let Some(p) = portal {
-                    let c = p.center();
+                    let c = p.centroid();
+                    let inner = portal_inner(&p);
                     for (from, to) in [(i, j), (j, i)] {
                         let (sf, st) = (&surfaces[from], &surfaces[to]);
                         links.push(Link {
                             from: from as SurfaceId,
                             to: to as SurfaceId,
                             kind: LinkKind::Walk,
-                            portal: p,
-                            zone: p,
+                            portal: p.clone(),
+                            inner: inner.clone(),
+                            zone: p.bounds(),
                             entry: V3::at(c, sf.height_at(c)),
                             exit: V3::at(c, st.height_at(c)),
                             cost: 0.0,
@@ -576,22 +664,23 @@ impl Nav {
                         continue;
                     }
                     let (sf, st) = (&surfaces[f], &surfaces[t]);
-                    let Some(takeoff) = l.zone.intersection(&sf.walk) else {
+                    let zone = Poly::from_rect(l.zone);
+                    let Some(takeoff) = zone.intersect(&sf.walk) else {
                         errors.push(format!(
                             "{what}: the drop zone does not cover any walkable part of '{}'; it must straddle that area's edge",
                             l.from
                         ));
                         continue;
                     };
-                    let Some(landing) = l.zone.intersection(&st.walk) else {
+                    let Some(landing) = zone.intersect(&st.walk) else {
                         errors.push(format!(
                             "{what}: the drop zone does not reach any walkable part of '{}' (the landing area)",
                             l.to
                         ));
                         continue;
                     };
-                    let entry = V3::at(takeoff.center(), sf.height_at(takeoff.center()));
-                    let exit_p = landing.center();
+                    let entry = V3::at(takeoff.centroid(), sf.height_at(takeoff.centroid()));
+                    let exit_p = landing.centroid();
                     let exit = V3::at(exit_p, st.height_at(exit_p));
                     let fall = entry.y - exit.y;
                     if fall <= params.max_step || fall > params.max_drop {
@@ -602,7 +691,9 @@ impl Nav {
                         continue;
                     }
                     // The gap between the edges must be small enough to step across.
-                    let gap = takeoff.clamp(exit_p).dist(landing.clamp(takeoff.center()));
+                    let gap = takeoff
+                        .clamp(exit_p)
+                        .dist(landing.clamp(takeoff.centroid()));
                     if gap > 3.0 {
                         errors.push(format!(
                             "{what}: the landing area is {gap:.1} m away from the edge; a drop zone must cover the edge of '{}' and the floor right next to or below it",
@@ -614,6 +705,7 @@ impl Nav {
                         from: f as SurfaceId,
                         to: t as SurfaceId,
                         kind: LinkKind::Drop,
+                        inner: takeoff.clone(),
                         portal: takeoff,
                         zone: l.zone,
                         entry,
@@ -674,7 +766,7 @@ impl Nav {
                 if lj.kind == LinkKind::Walk
                     && li.kind == LinkKind::Walk
                     && lj.to == li.from
-                    && lj.portal == li.portal
+                    && lj.from == li.to
                 {
                     continue;
                 }
@@ -719,67 +811,111 @@ impl Nav {
         self.reach = reach;
     }
 
-    /// Wall faces: each walled surface's outline minus the parts shared with a
-    /// surface it is connected to, and minus drop zones leaving it.
+    /// Wall faces: each walled surface's outline minus the parts running
+    /// through a surface it is connected to, and minus drop zones leaving it.
     fn build_walls(&self) -> Vec<Wall> {
         let mut out = Vec::new();
         for (i, s) in self.surfaces.iter().enumerate() {
             if !s.def.walls {
                 continue;
             }
-            let r = s.def.rect;
-            let linked: Vec<&Rect> = self
+            // Cutters: walk-linked neighbours (their footprints) and drop zones
+            // leaving this surface.
+            let cutters: Vec<(&Poly, Option<Poly>, bool)> = self
                 .links
                 .iter()
-                .filter(|l| l.kind == LinkKind::Walk && l.from as usize == i)
-                .map(|l| &self.surfaces[l.to as usize].def.rect)
+                .filter(|l| l.from as usize == i)
+                .map(|l| match l.kind {
+                    LinkKind::Walk => (&self.surfaces[l.to as usize].def.shape, None, false),
+                    LinkKind::Drop => (&s.def.shape, Some(Poly::from_rect(l.zone)), true),
+                })
                 .collect();
-            let drops: Vec<&Rect> = self
-                .links
-                .iter()
-                .filter(|l| l.kind == LinkKind::Drop && l.from as usize == i)
-                .map(|l| &l.zone)
-                .collect();
-            let mut push = |a: V2, b: V2| {
-                out.push(Wall {
-                    a,
-                    b,
-                    bottom0: s.height_at(a),
-                    bottom1: s.height_at(b),
-                    height: s.def.wall_height,
-                    surface: i as SurfaceId,
-                });
-            };
-            for &z in &[r.min.z, r.max.z] {
-                let cuts: Vec<(f32, f32)> = linked
-                    .iter()
-                    .filter(|o| o.min.z < z && z < o.max.z)
-                    .map(|o| (o.min.x, o.max.x))
-                    .chain(
-                        drops
-                            .iter()
-                            .filter(|o| o.min.z <= z && z <= o.max.z)
-                            .map(|o| (o.min.x, o.max.x)),
-                    )
-                    .collect();
-                for (a, b) in subtract_intervals((r.min.x, r.max.x), &cuts) {
-                    push(V2::new(a, z), V2::new(b, z));
+            for (a, b) in s.def.shape.edges() {
+                let len = a.dist(b);
+                if len < 1e-4 {
+                    continue;
                 }
-            }
-            for &x in &[r.min.x, r.max.x] {
-                let cuts: Vec<(f32, f32)> = linked
-                    .iter()
-                    .filter(|o| o.min.x < x && x < o.max.x)
-                    .map(|o| (o.min.z, o.max.z))
-                    .chain(
-                        drops
-                            .iter()
-                            .filter(|o| o.min.x <= x && x <= o.max.x)
-                            .map(|o| (o.min.z, o.max.z)),
-                    )
-                    .collect();
-                for (a, b) in subtract_intervals((r.min.z, r.max.z), &cuts) {
-                    push(V2::new(x, a), V2::new(x, b));
+                let e = b - a;
+                let normal = V2::new(e.z, -e.x) * (1.0 / len);
+                let mut push = |pa: V2, pb: V2| {
+                    out.push(Wall {
+                        a: pa,
+                        b: pb,
+                        bottom0: s.height_at(pa),
+                        bottom1: s.height_at(pb),
+                        height: s.def.wall_height,
+                        surface: i as SurfaceId,
+                        out: normal,
+                    });
+                };
+                let horizontal = (a.z - b.z).abs() < 1e-6;
+                let vertical = (a.x - b.x).abs() < 1e-6;
+                if horizontal || vertical {
+                    // Axis-aligned edge: work in coordinates along it, exactly as
+                    // 0.4 did for rectangles (a neighbour cuts it when the edge
+                    // line is strictly inside it; the cut is inclusive along).
+                    let (c, lo, hi) = if horizontal {
+                        (a.z, a.x.min(b.x), a.x.max(b.x))
+                    } else {
+                        (a.x, a.z.min(b.z), a.z.max(b.z))
+                    };
+                    let mut cuts = Vec::new();
+                    for (shape, zone, is_drop) in &cutters {
+                        let poly = zone.as_ref().unwrap_or(shape);
+                        if poly.is_axis_rect() {
+                            let r = poly.bounds();
+                            let (pmin, pmax, smin, smax) = if horizontal {
+                                (r.min.z, r.max.z, r.min.x, r.max.x)
+                            } else {
+                                (r.min.x, r.max.x, r.min.z, r.max.z)
+                            };
+                            let inside = if *is_drop {
+                                pmin <= c && c <= pmax
+                            } else {
+                                pmin < c && c < pmax
+                            };
+                            if inside {
+                                cuts.push((smin, smax));
+                            }
+                        } else if let Some(p) = if *is_drop {
+                            Some(poly.clone())
+                        } else {
+                            poly.inset(1e-3)
+                        } && let Some((t0, t1)) = p.clip(a, b)
+                        {
+                            let (u0, u1) = (
+                                if horizontal {
+                                    a.x + e.x * t0
+                                } else {
+                                    a.z + e.z * t0
+                                },
+                                if horizontal {
+                                    a.x + e.x * t1
+                                } else {
+                                    a.z + e.z * t1
+                                },
+                            );
+                            cuts.push((u0.min(u1), u0.max(u1)));
+                        }
+                    }
+                    for (u0, u1) in subtract_intervals((lo, hi), &cuts, 0.01) {
+                        if horizontal {
+                            push(V2::new(u0, c), V2::new(u1, c));
+                        } else {
+                            push(V2::new(c, u0), V2::new(c, u1));
+                        }
+                    }
+                } else {
+                    let cuts: Vec<(f32, f32)> = cutters
+                        .iter()
+                        .filter_map(|(shape, zone, _)| match zone {
+                            Some(z) => z.clip(a, b),
+                            None => shape.inset(1e-3).and_then(|p| p.clip(a, b)),
+                        })
+                        .collect();
+                    for (t0, t1) in subtract_intervals((0.0, 1.0), &cuts, 0.01 / len) {
+                        push(a + e * t0, a + e * t1);
+                    }
                 }
             }
         }
@@ -911,8 +1047,7 @@ impl Nav {
                 // Aim at the part of the portal nearest to where we go next,
                 // keeping a little clearance from its sides. Already there:
                 // keep going (never return the current position mid-route).
-                let m = (li.portal.size().x.min(li.portal.size().z) * 0.5).min(0.3);
-                let aim = li.portal.shrunk(m).clamp(after);
+                let aim = li.inner.clamp(after);
                 if aim.dist(from) < WAYPOINT_SKIP {
                     after
                 } else {
@@ -1037,10 +1172,10 @@ impl Nav {
         }
         for s in &self.surfaces {
             // Solid volumes entirely below both ends can't be in the way.
-            if s.max_y() < a.y.min(b.y) - 0.05 || outside(s.def.rect.min, s.def.rect.max) {
+            if s.max_y() < a.y.min(b.y) - 0.05 || outside(s.bounds.min, s.bounds.max) {
                 continue;
             }
-            let Some((t0, t1)) = s.def.rect.clip(a2, b2) else {
+            let Some((t0, t1)) = s.def.shape.clip(a2, b2) else {
                 continue;
             };
             if t1 - t0 < 1e-5 {
@@ -1104,8 +1239,8 @@ fn seg_intersect(p: V2, q: V2, r: V2, s: V2) -> Option<(f32, f32)> {
     ((0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u)).then_some((t, u))
 }
 
-/// `span` minus the union of `cuts`, dropping slivers shorter than 1cm.
-fn subtract_intervals(span: (f32, f32), cuts: &[(f32, f32)]) -> Vec<(f32, f32)> {
+/// `span` minus the union of `cuts`, dropping pieces shorter than `min`.
+fn subtract_intervals(span: (f32, f32), cuts: &[(f32, f32)], min: f32) -> Vec<(f32, f32)> {
     let mut pieces = vec![span];
     for &(c0, c1) in cuts {
         let mut next = Vec::new();
@@ -1123,7 +1258,7 @@ fn subtract_intervals(span: (f32, f32), cuts: &[(f32, f32)]) -> Vec<(f32, f32)> 
         }
         pieces = next;
     }
-    pieces.retain(|(a, b)| b - a > 0.01);
+    pieces.retain(|(a, b)| b - a > min);
     pieces
 }
 
@@ -1517,5 +1652,172 @@ mod tests {
         let a = nav.path_points(v(5.0, 2.0), 0, V3::new(5.0, 4.0, 27.0));
         let b = ramp_level().path_points(v(5.0, 2.0), 0, V3::new(5.0, 4.0, 27.0));
         assert_eq!(a, b);
+    }
+
+    // ------------------------------------------------ polygons (0.5) ---
+
+    fn poly(name: &str, pts: &[(f32, f32)], y: f32) -> SurfaceDef {
+        let pts: Vec<V2> = pts.iter().map(|&(x, z)| v(x, z)).collect();
+        SurfaceDef::poly(name, &pts, y).unwrap()
+    }
+
+    /// Two rooms joined by a 45-degree corridor (a parallelogram).
+    fn diagonal_level() -> Nav {
+        Nav::build(
+            vec![
+                SurfaceDef::flat("west", v(0.0, 0.0), v(10.0, 10.0), 0.0),
+                poly(
+                    "diag",
+                    &[(8.0, 6.0), (10.0, 4.0), (26.0, 20.0), (24.0, 22.0)],
+                    0.0,
+                ),
+                SurfaceDef::flat("east", v(22.0, 18.0), v(32.0, 28.0), 0.0),
+            ],
+            vec![],
+            NavParams::default(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn diagonal_corridor_routes_and_stays_inside() {
+        let nav = diagonal_level();
+        assert!(nav.reachable(0, 2));
+        let goal = V3::new(30.0, 0.0, 26.0);
+        let (p, s, seen) = walk(&nav, V3::new(2.0, 0.0, 2.0), goal, 800);
+        assert_eq!(s, 2);
+        assert_eq!(seen, vec![0, 1, 2]);
+        assert!(p.dist(goal.xz()) < 0.1, "{p:?}");
+        // Every step stays inside the walkable part of its surface.
+        let (mut p, mut s) = (v(2.0, 2.0), 0u16);
+        for _ in 0..800 {
+            let w = nav.next_waypoint(p, s, goal);
+            let d = w.point - p;
+            let (np, ns, _) = nav.try_move(p, s, d.normalize_or_zero() * d.len().min(0.3));
+            assert!(
+                nav.surfaces[ns as usize].walk.contains_tol(np, 1e-3),
+                "{np:?} on {ns}"
+            );
+            p = np;
+            s = ns;
+        }
+    }
+
+    #[test]
+    fn angled_walls_block_movement_and_sight() {
+        let nav = diagonal_level();
+        // Pushing sideways out of the diagonal corridor slides along it.
+        let (p, s, _) = nav.try_move(v(17.0, 13.0), 1, v(2.0, -2.0));
+        assert_eq!(s, 1);
+        assert!(nav.surfaces[1].walk.contains_tol(p, 1e-3));
+        // From the west room you can't see deep into the east room past the
+        // corridor's angled walls, but you can see down the corridor.
+        assert!(!nav.line_of_sight(V3::new(2.0, 1.5, 8.0), V3::new(30.0, 1.0, 20.0)));
+        assert!(nav.line_of_sight(V3::new(9.0, 1.5, 5.0), V3::new(24.0, 1.0, 20.0)));
+        // The corridor's walls are diagonal pieces with outward normals.
+        let diag: Vec<&Wall> = nav.walls.iter().filter(|w| w.surface == 1).collect();
+        assert!(
+            diag.iter()
+                .any(|w| (w.a.x - w.b.x).abs() > 1.0 && (w.a.z - w.b.z).abs() > 1.0)
+        );
+        for w in diag {
+            let mid = (w.a + w.b) * 0.5;
+            assert!(!nav.surfaces[1].def.shape.contains(mid + w.out * 0.2));
+        }
+    }
+
+    #[test]
+    fn touching_or_nearby_polygons_do_not_create_shortcuts() {
+        // Two corridors whose footprints only touch at a corner, and a third
+        // passing 0.5 m away: none of them connect.
+        let nav = Nav::build(
+            vec![
+                poly("a", &[(0.0, 0.0), (4.0, 0.0), (4.0, 4.0), (0.0, 4.0)], 0.0),
+                poly("b", &[(4.0, 4.0), (8.0, 4.0), (8.0, 8.0), (4.0, 8.0)], 0.0),
+                poly(
+                    "c",
+                    &[(4.5, 0.0), (10.0, 0.0), (10.0, 3.0), (4.5, 3.0)],
+                    0.0,
+                ),
+            ],
+            vec![],
+            NavParams::default(),
+        )
+        .unwrap();
+        assert!(nav.links.is_empty(), "{:?}", nav.links.len());
+        assert!(!nav.reachable(0, 1) && !nav.reachable(0, 2));
+    }
+
+    #[test]
+    fn ramps_can_run_in_any_direction() {
+        // A 45-degree ramp rising 4 m between two rooms whose facing edges are
+        // cut square to it (how cave levels meet angled ramps).
+        let west = poly(
+            "west",
+            &[
+                (0.0, 0.0),
+                (10.0, 0.0),
+                (10.0, 4.0),
+                (4.0, 10.0),
+                (0.0, 10.0),
+            ],
+            0.0,
+        );
+        let ramp = poly(
+            "ramp",
+            &[(5.0, 7.0), (7.0, 5.0), (22.0, 20.0), (20.0, 22.0)],
+            0.0,
+        )
+        .sloped(v(6.0, 6.0), v(21.0, 21.0), 4.0);
+        let east = poly(
+            "east",
+            &[
+                (22.0, 18.0),
+                (32.0, 18.0),
+                (32.0, 28.0),
+                (18.0, 28.0),
+                (18.0, 22.0),
+            ],
+            4.0,
+        );
+        let nav = Nav::build(vec![west, ramp, east], vec![], NavParams::default()).unwrap();
+        let r = nav.find("ramp").unwrap();
+        assert!((nav.height(r, v(13.5, 13.5)) - 2.0).abs() < 0.05);
+        assert!(nav.reachable(0, 2) && nav.reachable(2, 0));
+        let goal = V3::new(28.0, 4.0, 24.0);
+        let (p, s, seen) = walk(&nav, V3::new(2.0, 0.0, 2.0), goal, 1000);
+        assert_eq!(s, 2);
+        assert_eq!(seen, vec![0, 1, 2]);
+        assert!(p.dist(goal.xz()) < 0.1, "{p:?}");
+        for l in &nav.links {
+            assert!((l.entry.y - l.exit.y).abs() <= nav.params.max_step + 1e-3);
+        }
+    }
+
+    #[test]
+    fn polygon_validation_explains_the_fix() {
+        let notch = SurfaceDef::poly(
+            "notch",
+            &[
+                v(0.0, 0.0),
+                v(10.0, 0.0),
+                v(5.0, 2.0),
+                v(10.0, 10.0),
+                v(0.0, 10.0),
+            ],
+            0.0,
+        );
+        assert!(notch.unwrap_err().contains("split it into convex pieces"));
+        let sliver = poly("sliver", &[(0.0, 0.0), (20.0, 0.0), (20.0, 0.9)], 0.0);
+        let err = Nav::build(vec![sliver], vec![], NavParams::default()).unwrap_err();
+        assert!(err[0].contains("too narrow"), "{err:?}");
+        let steep = poly(
+            "steep",
+            &[(0.0, 0.0), (4.0, 0.0), (4.0, 4.0), (0.0, 4.0)],
+            0.0,
+        )
+        .sloped(v(0.0, 0.0), v(4.0, 4.0), 5.0);
+        let err = Nav::build(vec![steep], vec![], NavParams::default()).unwrap_err();
+        assert!(err[0].contains("maximum walkable slope"), "{err:?}");
     }
 }

@@ -19,7 +19,8 @@ use bevy::picking::Pickable;
 use bevy::prelude::*;
 use dungeon_sim::V2;
 use dungeon_sim::math::V3;
-use dungeon_sim::nav::{LinkKind, Rect};
+use dungeon_sim::nav::LinkKind;
+use dungeon_sim::poly::Poly;
 
 pub struct NavDebugPlugin;
 
@@ -68,16 +69,9 @@ fn height_color(y: f32, lo: f32, hi: f32) -> Color {
     Color::srgb(0.2 + 0.8 * t, 0.5 + 0.4 * t, 1.0 - 0.8 * t)
 }
 
-/// Outline a rectangle following a surface's height (or a fixed height).
-fn outline(gizmos: &mut Gizmos, r: Rect, h: impl Fn(V2) -> f32, color: Color) {
-    let c = [
-        r.min,
-        V2::new(r.max.x, r.min.z),
-        r.max,
-        V2::new(r.min.x, r.max.z),
-    ];
-    for k in 0..4 {
-        let (a, b) = (c[k], c[(k + 1) % 4]);
+/// Outline a polygon following a surface's height (or a fixed height).
+fn outline(gizmos: &mut Gizmos, p: &Poly, h: impl Fn(V2) -> f32, color: Color) {
+    for (a, b) in p.edges() {
         gizmos.line(to_vec3(a, h(a) + 0.06), to_vec3(b, h(b) + 0.06), color);
     }
 }
@@ -104,11 +98,11 @@ fn draw(dbg: Res<NavDebug>, run: Res<ActiveRun>, mut gizmos: Gizmos) {
         } else {
             height_color((s.min_y() + s.max_y()) * 0.5, lo, hi)
         };
-        outline(&mut gizmos, s.def.rect, |p| s.height_at(p), color);
+        outline(&mut gizmos, &s.def.shape, |p| s.height_at(p), color);
         if dbg.collision {
             outline(
                 &mut gizmos,
-                s.walk,
+                &s.walk,
                 |p| s.height_at(p) + 0.02,
                 color.with_alpha(0.45),
             );
@@ -120,7 +114,7 @@ fn draw(dbg: Res<NavDebug>, run: Res<ActiveRun>, mut gizmos: Gizmos) {
                 if l.from < l.to {
                     outline(
                         &mut gizmos,
-                        l.portal,
+                        &l.portal,
                         |_| l.entry.y + 0.05,
                         Color::srgb(0.2, 1.0, 0.3),
                     );
@@ -132,7 +126,7 @@ fn draw(dbg: Res<NavDebug>, run: Res<ActiveRun>, mut gizmos: Gizmos) {
                 gizmos.arrow(a, b, Color::srgb(1.0, 0.55, 0.1));
                 outline(
                     &mut gizmos,
-                    l.portal,
+                    &l.portal,
                     |_| l.entry.y + 0.08,
                     Color::srgb(1.0, 0.55, 0.1),
                 );
@@ -260,7 +254,7 @@ fn labels(
     let (cam, cam_gt) = *camera;
     for (_, label, mut node) in &mut q {
         let s = &nav.surfaces[label.index];
-        let c = s.def.rect.center();
+        let c = s.def.shape.centroid();
         let world = to_vec3(c, s.height_at(c) + 0.3);
         let in_front = (world - cam_gt.translation()).dot(*cam_gt.forward()) > 0.5;
         match cam
