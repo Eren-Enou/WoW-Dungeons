@@ -3,7 +3,9 @@
 //! one-way), every room must be reachable, and encounters must have room to
 //! be fought (staging space, no chain pulls, arenas big enough).
 
+use crate::blueprint::Blueprint;
 use crate::compose::Owner;
+use crate::kit::Kit;
 use crate::layout::{Plan, Style};
 use dungeon_sim::content::{AbilityKind, Content, EnemyRank};
 use dungeon_sim::math::{V2, V3};
@@ -177,26 +179,60 @@ pub fn structure(plan: &Plan, owners: &[Owner], content: &Content, nav: &Nav) ->
     rep
 }
 
-/// Encounter-space checks: staging room, chain pulls, arena size.
-pub fn encounters(plan: &Plan, content: &Content, rooms_of: &[usize]) -> CheckReport {
+/// The recipe behind a generated encounter (ids are `e<k>_<recipe>` and
+/// `o<k>_<recipe>`).
+pub fn recipe_of<'a>(bp: &'a Blueprint, id: &str) -> Option<&'a str> {
+    let (kind, rest) = id.split_at(1);
+    let (num, _) = rest.split_once('_')?;
+    let k: usize = num.parse().ok()?;
+    let slot = match kind {
+        "e" => bp.encounters.get(k.checked_sub(1)?)?,
+        "o" => bp.optional.get(k.checked_sub(1)?)?,
+        _ => return None,
+    };
+    Some(slot.recipe.as_str())
+}
+
+/// Points a mob occupies while idle: its spawn and, for patrols, samples
+/// along its route.
+fn idle_points(m: &dungeon_sim::content::MobSpawn) -> Vec<V2> {
+    let mut pts = vec![m.pos];
+    let mut prev = m.pos;
+    for q in &m.patrol {
+        for k in 1..=8 {
+            pts.push(prev + (*q - prev) * (k as f32 / 8.0));
+        }
+        prev = *q;
+    }
+    pts
+}
+
+/// Encounter-space checks: staging room, chain pulls (patrol routes
+/// included), arena size, and each recipe's space requirements.
+pub fn encounters(
+    plan: &Plan,
+    kit: &Kit,
+    bp: &Blueprint,
+    content: &Content,
+    nav: &Nav,
+    rooms_of: &[usize],
+) -> CheckReport {
     let mut rep = CheckReport::default();
     let t = &content.templates;
     let aggro = |key: &str| t.get(key).map(|x| x.aggro_radius).unwrap_or(10.0);
     let mut staging_ok = 0;
     for (e, enc) in content.encounters.iter().enumerate() {
         let room = &plan.rooms[rooms_of[e]];
-        let Some(dir) = room.entry else { continue };
-        // The middle of the corridor the party arrives through.
-        let u = dir.unit();
-        let gap_mid = room.center() - u * (room.half + 4.0);
+        let staging = crate::populate::staging_point(plan, rooms_of[e]);
         let worst = enc
             .mobs
             .iter()
-            .map(|m| m.pos.dist(gap_mid) - aggro(&m.template))
+            .flat_map(|m| idle_points(m).into_iter().map(move |p| (p, m)))
+            .map(|(p, m)| p.dist(staging) - aggro(&m.template))
             .fold(f32::INFINITY, f32::min);
         if worst < 1.0 {
             rep.errors.push(format!(
-                "encounter '{}' in '{}': its pack would aggro the party waiting in the doorway ({worst:.1} m margin); use a bigger room for this recipe",
+                "encounter '{}' in '{}': its pack (or patrol route) would aggro the party waiting in the doorway ({worst:.1} m margin); use a bigger room for this recipe",
                 enc.display_name(),
                 room.name
             ));
@@ -208,30 +244,39 @@ pub fn encounters(plan: &Plan, content: &Content, rooms_of: &[usize]) -> CheckRe
         "{staging_ok}/{} encounters leave a safe staging spot in their entry corridor",
         content.encounters.len()
     ));
-    // Chain pulls: fighting one pack must not drag in another.
+    // Chain pulls: fighting one pack (or meeting a patrol anywhere on its
+    // route) must not drag in another.
     let mut chains = 0;
     for (i, a) in content.encounters.iter().enumerate() {
         for b in content.encounters.iter().skip(i + 1) {
-            for ma in &a.mobs {
+            'pair: for ma in &a.mobs {
                 for mb in &b.mobs {
                     let dy = (ma.y.unwrap_or(0.0) - mb.y.unwrap_or(0.0)).abs();
+                    if dy >= 3.0 {
+                        continue;
+                    }
                     let need = aggro(&mb.template).max(aggro(&ma.template)) + 6.0;
-                    if dy < 3.0 && ma.pos.dist(mb.pos) < need {
+                    let close = idle_points(ma)
+                        .iter()
+                        .flat_map(|p| idle_points(mb).into_iter().map(move |q| p.dist(q)))
+                        .fold(f32::INFINITY, f32::min);
+                    if close < need {
                         chains += 1;
                         rep.errors.push(format!(
-                            "encounters '{}' and '{}' are {:.1} m apart (need {need:.0}): pulling one pulls the other",
+                            "encounters '{}' and '{}' come {close:.1} m apart (need {need:.0}): pulling one pulls the other",
                             a.display_name(),
                             b.display_name(),
-                            ma.pos.dist(mb.pos)
                         ));
+                        break 'pair;
                     }
                 }
             }
         }
     }
     if chains == 0 {
-        rep.passed
-            .push("no encounter is close enough to chain-pull another".into());
+        rep.passed.push(
+            "no encounter (patrol routes included) is close enough to chain-pull another".into(),
+        );
     }
     // Arenas big enough for their bosses' mechanics.
     for (e, enc) in content.encounters.iter().enumerate() {
@@ -256,19 +301,106 @@ pub fn encounters(plan: &Plan, content: &Content, rooms_of: &[usize]) -> CheckRe
                 .map(|a| a.radius)
                 .fold(0.0f32, f32::max);
             let need = (2.5 * ring).max(1.6 * cleave);
-            if room.half < need {
+            if room.min_ext() < need {
                 rep.errors.push(format!(
                     "'{}' needs a room at least {need:.1} m from centre to wall for its rings and cleaves; '{}' has {:.1}",
-                    tp.name, room.name, room.half
+                    tp.name,
+                    room.name,
+                    room.min_ext()
                 ));
             } else {
                 rep.passed.push(format!(
                     "'{}' has room for its mechanics ({:.1} m, needs {need:.1})",
-                    tp.name, room.half
+                    tp.name,
+                    room.min_ext()
                 ));
             }
         }
     }
-    let _ = V2::ZERO;
+    // Each recipe's own space needs, re-checked on the final navigation.
+    for (e, enc) in content.encounters.iter().enumerate() {
+        let Some(recipe) = recipe_of(bp, &enc.id).and_then(|k| kit.recipes.get(k)) else {
+            continue;
+        };
+        let room = &plan.rooms[rooms_of[e]];
+        let what = format!("encounter '{}' ({})", enc.display_name(), room.name);
+        if room.min_ext() < recipe.space.min_size {
+            rep.errors.push(format!(
+                "{what}: needs a room of half-size {} m, has {:.1}",
+                recipe.space.min_size,
+                room.min_ext()
+            ));
+        }
+        if recipe.space.pillars && crate::compose::pillar_holes(room).is_empty() {
+            rep.errors
+                .push(format!("{what}: needs pillars, the room has none"));
+        }
+        if recipe.space.ranged_lane {
+            let n = enc.mobs.len().max(1) as f32;
+            let centre = enc.mobs.iter().fold(V2::ZERO, |acc, m| acc + m.pos) * (1.0 / n);
+            let y = room.y + 1.5;
+            let mut lane = false;
+            'lane: for r in [12.0f32, 14.0, 16.0, 18.0] {
+                for k in 0..24 {
+                    let a = k as f32 * std::f32::consts::TAU / 24.0;
+                    let p = centre + V2::new(a.cos(), a.sin()) * r;
+                    let Some(s) = nav.locate(p, room.y) else {
+                        continue;
+                    };
+                    if (nav.height(s, p) - room.y).abs() < 1.0
+                        && nav.line_of_sight(V3::at(centre, y), V3::at(p, y))
+                    {
+                        lane = true;
+                        break 'lane;
+                    }
+                }
+            }
+            if lane {
+                rep.passed
+                    .push(format!("{what}: ranged lane with line of sight"));
+            } else {
+                rep.errors.push(format!(
+                    "{what}: no floor 12-18 m away can see the pack; ranged members and healers would have nowhere to stand"
+                ));
+            }
+        }
+        for m in &enc.mobs {
+            if m.patrol.is_empty() {
+                continue;
+            }
+            let ok = nav.locate(m.pos, room.y).is_some_and(|s| {
+                m.patrol
+                    .iter()
+                    .all(|q| nav.path_points(m.pos, s, V3::at(*q, room.y)).is_some())
+            });
+            if ok {
+                rep.passed.push(format!("{what}: patrol route is walkable"));
+            } else {
+                rep.errors
+                    .push(format!("{what}: patrol route is not a walkable route"));
+            }
+        }
+    }
+    // The identity's challenges, as delivered.
+    let mut delivered: Vec<String> = Vec::new();
+    for c in &bp.identity.challenges {
+        let by: Vec<&str> = content
+            .encounters
+            .iter()
+            .filter(|enc| {
+                recipe_of(bp, &enc.id)
+                    .and_then(|k| kit.recipes.get(k))
+                    .is_some_and(|r| r.tags.contains(c))
+            })
+            .map(|enc| enc.display_name())
+            .collect();
+        delivered.push(format!("{c:?} by {}", by.join(", ")));
+    }
+    if !delivered.is_empty() {
+        rep.passed.push(format!(
+            "identity challenges delivered: {}",
+            delivered.join("; ")
+        ));
+    }
     rep
 }

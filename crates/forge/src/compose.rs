@@ -1,16 +1,21 @@
 //! Layer B: room and corridor components. Each component is defined once in
 //! a local frame — `s` along the corridor (from room `a` toward room `b`),
 //! `t` to its left — and placed by the corridor's direction (a 90° rotation),
-//! the room centre and the floor height. Rotations by 90° keep rectangles
+//! the cell centre and the floor height. Rotations by 90° keep rectangles
 //! axis-aligned, so they stay on the navigation's exact rectangle path.
+//!
+//! Room shapes come from the kit: plain polygons with per-side extents and
+//! corner cuts, rings of floor round a lava pit, and pillared halls whose
+//! pillars are walled holes in the floor (they block movement and sight).
 
-use crate::kit::Kit;
-use crate::layout::{CELL, Corridor, OVERLAP, Plan, Room, RoomKind, Route, Style};
+use crate::kit::{Chasm, Kit};
+use crate::layout::{Corridor, Dir, OVERLAP, Plan, Room, RoomKind, Route, Shape, Style};
 use dungeon_sim::content::{
     AreaConfig, AxisConfig, DecorConfig, DecorKind, LavaConfig, LightConfig, LinkConfig,
     LinkKindConfig, PropConfig, UnderConfig,
 };
 use dungeon_sim::math::V2;
+use dungeon_sim::nav::Rect;
 use dungeon_sim::poly::Poly;
 use serde::Serialize;
 
@@ -32,16 +37,23 @@ pub struct Composed {
     pub entrance: V2,
     /// Walkable pieces of each room (world space), for placing mobs.
     pub floors: Vec<Vec<Poly>>,
+    /// Pillar holes of each room (world space), for placement and maps.
+    pub pillars: Vec<Vec<Rect>>,
 }
 
 /// Chasm depth under bridges.
 const CHASM: f32 = 6.0;
-/// The strips round a pit overlap this much at the corners. Walk areas are
-/// inset 0.4 m on every edge, so a 1.5 m overlap left a 0.7 m portal that
-/// companions turning the corner oscillated across; 3 m leaves 2.2 m.
-const STRIP_OVERLAP: f32 = 3.0;
 /// Lava sits this far below a pit room's floor.
 const PIT_DEPTH: f32 = 1.2;
+/// Pieces round a pit or a pillar overlap this much. Walk areas are inset
+/// 0.4 m on every edge, so a 1.5 m overlap left a 0.7 m portal that
+/// companions turning the corner oscillated across (0.6); 3 m leaves 2.2 m.
+const STRIP_OVERLAP: f32 = 3.0;
+/// Pillars keep at least this much floor between them and the room's walls
+/// (room for corridors joining and for walking round).
+const PILLAR_WALL_GAP: f32 = 4.0;
+/// Candle light under a pillar prop.
+const CANDLE: [f32; 3] = [1.0, 0.68, 0.38];
 
 fn rect_area(name: String, a: V2, b: V2, y: f32) -> AreaConfig {
     AreaConfig {
@@ -77,28 +89,69 @@ fn r2(v: V2) -> V2 {
     V2::new((v.x * 100.0).round() / 100.0, (v.z * 100.0).round() / 100.0)
 }
 
-/// Room footprint in world space.
+fn has_cuts(r: &Room) -> bool {
+    r.cut.iter().any(|c| *c > 0.0)
+}
+
+/// Room footprint (one convex polygon) in world space, counter-clockwise.
 pub fn room_shape(r: &Room) -> Vec<V2> {
     let c = r.center();
-    let (h, k) = (r.half, r.chamfer);
-    let local: Vec<(f32, f32)> = if k > 0.0 {
+    let (n, e, s, w) = (r.ext(Dir::N), r.ext(Dir::E), r.ext(Dir::S), r.ext(Dir::W));
+    let [ne, nw, sw, se] = r.cut;
+    let local: Vec<(f32, f32)> = if has_cuts(r) {
         vec![
-            (h, -(h - k)),
-            (h, h - k),
-            (h - k, h),
-            (-(h - k), h),
-            (-h, h - k),
-            (-h, -(h - k)),
-            (-(h - k), -h),
-            (h - k, -h),
+            (e, -(s - se)),
+            (e, n - ne),
+            (e - ne, n),
+            (-(w - nw), n),
+            (-w, n - nw),
+            (-w, -(s - sw)),
+            (-(w - sw), -s),
+            (e - se, -s),
         ]
     } else {
-        vec![(h, -h), (h, h), (-h, h), (-h, -h)]
+        vec![(e, -s), (e, n), (-w, n), (-w, -s)]
     };
-    local
+    let mut pts: Vec<V2> = local
         .into_iter()
         .map(|(x, z)| r2(c + V2::new(x, z)))
+        .collect();
+    pts.dedup_by(|a, b| a.dist(*b) < 1e-3);
+    pts
+}
+
+/// Pillar centres along one axis between `lo` and `hi` (cell-local),
+/// centred, `spacing` apart, keeping PILLAR_WALL_GAP from both walls.
+fn pillar_axis(lo: f32, hi: f32, size: f32, spacing: f32) -> Vec<f32> {
+    let a = lo + PILLAR_WALL_GAP + size / 2.0;
+    let b = hi - PILLAR_WALL_GAP - size / 2.0;
+    if b < a {
+        return Vec::new();
+    }
+    let count = ((b - a) / spacing).floor() as usize + 1;
+    let mid = (a + b) / 2.0;
+    (0..count)
+        .map(|k| mid + (k as f32 - (count as f32 - 1.0) / 2.0) * spacing)
         .collect()
+}
+
+/// Pillar holes of a room (cell-local rectangles), empty if none fit.
+pub fn pillar_holes(r: &Room) -> Vec<Rect> {
+    let Shape::Pillars { size, spacing } = r.shape else {
+        return Vec::new();
+    };
+    let xs = pillar_axis(-r.ext(Dir::W), r.ext(Dir::E), size, spacing);
+    let zs = pillar_axis(-r.ext(Dir::S), r.ext(Dir::N), size, spacing);
+    let mut out = Vec::new();
+    for &x in &xs {
+        for &z in &zs {
+            out.push(Rect::new(
+                V2::new(x - size / 2.0, z - size / 2.0),
+                V2::new(x + size / 2.0, z + size / 2.0),
+            ));
+        }
+    }
+    out
 }
 
 fn tint_for(kit: &Kit, y: f32, deepest: f32) -> [f32; 3] {
@@ -115,6 +168,25 @@ fn lerp3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
     [f(0), f(1), f(2)]
 }
 
+fn push_rect(
+    out: &mut Composed,
+    i: usize,
+    name: String,
+    c: V2,
+    (a, b): (V2, V2),
+    y: f32,
+    tint: Option<[f32; 3]>,
+) {
+    let mut area = rect_area(name, r2(c + a), r2(c + b), y);
+    area.tint = tint;
+    out.floors[i].push(Poly::from_rect(Rect::new(
+        area.min.expect("rect"),
+        area.max.expect("rect"),
+    )));
+    out.areas.push(area);
+    out.owners.push(Owner::Room(i));
+}
+
 pub fn compose(plan: &Plan, kit: &Kit) -> Composed {
     let deepest = plan.rooms.iter().map(|r| r.y).fold(0.0f32, f32::min);
     let mut out = Composed {
@@ -127,66 +199,163 @@ pub fn compose(plan: &Plan, kit: &Kit) -> Composed {
         props: Vec::new(),
         entrance: V2::ZERO,
         floors: vec![Vec::new(); plan.rooms.len()],
+        pillars: vec![Vec::new(); plan.rooms.len()],
     };
 
     // ---- Rooms.
     for (i, r) in plan.rooms.iter().enumerate() {
         let tint = Some(tint_for(kit, r.y, deepest));
         let c = r.center();
-        if r.kind == RoomKind::Pit {
-            let (h, p) = (r.half, r.pit);
-            let pieces = [
-                ("west", V2::new(-h, -h), V2::new(-p, h)),
-                ("east", V2::new(p, -h), V2::new(h, h)),
-                (
-                    "north",
-                    V2::new(-p - STRIP_OVERLAP, p),
-                    V2::new(p + STRIP_OVERLAP, h),
-                ),
-                (
-                    "south",
-                    V2::new(-p - STRIP_OVERLAP, -h),
-                    V2::new(p + STRIP_OVERLAP, -p),
-                ),
-            ];
-            for (side, a, b) in pieces {
-                let mut area = rect_area(format!("{} ({side})", r.name), r2(c + a), r2(c + b), r.y);
+        let (n, e, s, w) = (r.ext(Dir::N), r.ext(Dir::E), r.ext(Dir::S), r.ext(Dir::W));
+        let holes = pillar_holes(r);
+        match r.shape {
+            Shape::Pit(p) => {
+                let pieces = [
+                    ("west", V2::new(-w, -s), V2::new(-p, n)),
+                    ("east", V2::new(p, -s), V2::new(e, n)),
+                    (
+                        "north",
+                        V2::new(-p - STRIP_OVERLAP, p),
+                        V2::new(p + STRIP_OVERLAP, n),
+                    ),
+                    (
+                        "south",
+                        V2::new(-p - STRIP_OVERLAP, -s),
+                        V2::new(p + STRIP_OVERLAP, -p),
+                    ),
+                ];
+                for (side, a, b) in pieces {
+                    push_rect(
+                        &mut out,
+                        i,
+                        format!("{} ({side})", r.name),
+                        c,
+                        (a, b),
+                        r.y,
+                        tint,
+                    );
+                }
+                out.lava.push(LavaConfig {
+                    min: Some(r2(c - V2::new(p, p))),
+                    max: Some(r2(c + V2::new(p, p))),
+                    points: None,
+                    y: r.y - PIT_DEPTH,
+                });
+                // A molten column in the pit: a landmark that stands in lava.
+                out.decor.push(DecorConfig {
+                    kind: DecorKind::Pillar,
+                    pos: c,
+                    y: r.y - PIT_DEPTH,
+                    radius: (p * 0.25).clamp(0.6, 1.1),
+                    height: 9.0,
+                    color: None,
+                });
+            }
+            Shape::Pillars { size, .. } if !holes.is_empty() => {
+                // Bands of floor between pillar columns (full depth), and
+                // pieces between the pillars of each column overlapping the
+                // bands either side by STRIP_OVERLAP.
+                let mut xs: Vec<f32> = holes.iter().map(|h| h.min.x).collect();
+                xs.dedup_by(|a, b| (*a - *b).abs() < 1e-3);
+                let mut zs: Vec<f32> = holes.iter().map(|h| h.min.z).collect();
+                zs.sort_by(f32::total_cmp);
+                zs.dedup_by(|a, b| (*a - *b).abs() < 1e-3);
+                let mut x_edges = vec![-w];
+                for &x in &xs {
+                    x_edges.push(x);
+                    x_edges.push(x + size);
+                }
+                x_edges.push(e);
+                for (k, band) in x_edges.chunks(2).enumerate() {
+                    push_rect(
+                        &mut out,
+                        i,
+                        format!("{} (aisle {})", r.name, k + 1),
+                        c,
+                        (V2::new(band[0], -s), V2::new(band[1], n)),
+                        r.y,
+                        tint,
+                    );
+                }
+                let mut z_edges = vec![-s];
+                for &z in &zs {
+                    z_edges.push(z);
+                    z_edges.push(z + size);
+                }
+                z_edges.push(n);
+                for (k, &x) in xs.iter().enumerate() {
+                    let (x0, x1) = (
+                        (x - STRIP_OVERLAP).max(-w),
+                        (x + size + STRIP_OVERLAP).min(e),
+                    );
+                    for (j, gap) in z_edges.chunks(2).enumerate() {
+                        push_rect(
+                            &mut out,
+                            i,
+                            format!("{} (row {} gap {})", r.name, k + 1, j + 1),
+                            c,
+                            (V2::new(x0, gap[0]), V2::new(x1, gap[1])),
+                            r.y,
+                            tint,
+                        );
+                    }
+                }
+                // The pillars: stone columns rising above the walls round
+                // each hole, or the kit's pillar prop with a candle light.
+                for (k, h) in holes.iter().enumerate() {
+                    let pos = r2(c + (h.min + h.max) * 0.5);
+                    out.pillars[i].push(Rect::new(c + h.min, c + h.max));
+                    let radius = size / 2.0 - 0.15;
+                    match &kit.palette.pillar_prop {
+                        Some(spec) if k % 2 == 1 => {
+                            out.props.push(PropConfig {
+                                model: spec.model.clone(),
+                                pos,
+                                y: r.y,
+                                yaw: 0.0,
+                                scale: spec.scale,
+                                radius: spec.radius.min(radius),
+                                height: spec.height,
+                                fallback: spec.fallback,
+                            });
+                            out.lights.push(LightConfig {
+                                pos,
+                                y: r.y + spec.height + 0.5,
+                                color: CANDLE,
+                                intensity: 0.45 * kit.palette.light_intensity,
+                                range: 9.0,
+                            });
+                        }
+                        _ => out.decor.push(DecorConfig {
+                            kind: DecorKind::Pillar,
+                            pos,
+                            y: r.y,
+                            radius,
+                            height: 7.0,
+                            color: None,
+                        }),
+                    }
+                }
+            }
+            _ => {
+                let pts = room_shape(r);
+                let mut area = if has_cuts(r) {
+                    poly_area(r.name.clone(), pts.clone(), r.y)
+                } else {
+                    rect_area(
+                        r.name.clone(),
+                        r2(c + V2::new(-w, -s)),
+                        r2(c + V2::new(e, n)),
+                        r.y,
+                    )
+                };
                 area.tint = tint;
-                out.floors[i].push(Poly::from_rect(dungeon_sim::nav::Rect::new(
-                    area.min.expect("rect"),
-                    area.max.expect("rect"),
-                )));
+                out.floors[i].push(Poly::new(&pts).expect("room shapes are convex"));
                 out.areas.push(area);
                 out.owners.push(Owner::Room(i));
             }
-            out.lava.push(LavaConfig {
-                min: Some(r2(c - V2::new(p, p))),
-                max: Some(r2(c + V2::new(p, p))),
-                points: None,
-                y: r.y - PIT_DEPTH,
-            });
-            // A molten column in the pit: a landmark that stands in lava.
-            out.decor.push(DecorConfig {
-                kind: DecorKind::Pillar,
-                pos: c,
-                y: r.y - PIT_DEPTH,
-                radius: (p * 0.25).clamp(0.6, 1.1),
-                height: 9.0,
-                color: None,
-            });
-        } else {
-            let pts = room_shape(r);
-            let mut area = if r.chamfer > 0.0 {
-                poly_area(r.name.clone(), pts.clone(), r.y)
-            } else {
-                rect_area(r.name.clone(), pts[3], pts[1], r.y)
-            };
-            area.tint = tint;
-            out.floors[i].push(Poly::new(&pts).expect("room shapes are convex"));
-            out.areas.push(area);
-            out.owners.push(Owner::Room(i));
         }
-        // Light over every room: cool near the entrance, hot deep down.
+        // Light over every room: cool near the entrance, warm deep down.
         let t = if deepest < -0.01 {
             (r.y / deepest).clamp(0.0, 1.0)
         } else {
@@ -203,67 +372,89 @@ pub fn compose(plan: &Plan, kit: &Kit) -> Composed {
             ),
             RoomKind::Pit => (1.3, kit.palette.light_deep),
             RoomKind::Entrance => (1.1, kit.palette.light_shallow),
+            RoomKind::Bend => (
+                0.6,
+                lerp3(kit.palette.light_shallow, kit.palette.light_deep, t),
+            ),
             _ => (
                 1.0,
                 lerp3(kit.palette.light_shallow, kit.palette.light_deep, t),
             ),
         };
+        let reach = r.ext.iter().copied().fold(0.0f32, f32::max);
         out.lights.push(LightConfig {
-            pos: c,
+            pos: r2(r.mid()),
             y: r.y + 6.5,
             color,
-            intensity,
-            range: (r.half * 2.4).round(),
+            intensity: intensity * kit.palette.light_intensity,
+            range: (reach * 2.4).round(),
         });
-        // Model props in an arena's cut corners: inside the room's square,
-        // outside its walkable octagon (radius at most a sixth of the cut).
-        if let (RoomKind::Arena, Some(spec)) = (r.kind, &kit.palette.arena_prop)
-            && r.chamfer > 0.0
-        {
-            let radius = spec.radius.min(r.chamfer / 6.0);
-            let d = r.half - r.chamfer / 3.0;
-            for (k, (sx, sz)) in [(1.0, 1.0), (-1.0, 1.0), (-1.0, -1.0), (1.0, -1.0)]
-                .into_iter()
-                .enumerate()
+        // Model props in an arena's cut corners: inside the room's bounding
+        // box, outside its walkable floor (radius at most a sixth of the cut).
+        if let (RoomKind::Arena, Some(spec)) = (r.kind, &kit.palette.arena_prop) {
+            for (k, (sx, sz, ex, ez)) in [
+                (1.0, 1.0, Dir::E, Dir::N),
+                (-1.0, 1.0, Dir::W, Dir::N),
+                (-1.0, -1.0, Dir::W, Dir::S),
+                (1.0, -1.0, Dir::E, Dir::S),
+            ]
+            .into_iter()
+            .enumerate()
             {
+                let cut = r.cut[k];
+                if cut < 1.5 {
+                    continue;
+                }
                 out.props.push(PropConfig {
                     model: spec.model.clone(),
-                    pos: r2(c + V2::new(sx * d, sz * d)),
+                    pos: r2(c + V2::new(
+                        sx * (r.ext(ex) - cut / 3.0),
+                        sz * (r.ext(ez) - cut / 3.0),
+                    )),
                     y: r.y,
                     yaw: 45.0 + 90.0 * k as f32,
                     scale: spec.scale,
-                    radius,
+                    radius: spec.radius.min(cut / 6.0),
                     height: spec.height,
                     fallback: spec.fallback,
                 });
             }
         }
         // Rock columns just outside the room's corners, poking above the walls.
-        let mix = &kit.palette.decor;
-        for (k, (sx, sz)) in [(1.0, 1.0), (-1.0, 1.0), (-1.0, -1.0), (1.0, -1.0)]
+        if kit.components.corner_decor && r.kind != RoomKind::Bend {
+            let mix = &kit.palette.decor;
+            for (k, (sx, sz, ex, ez)) in [
+                (1.0, 1.0, Dir::E, Dir::N),
+                (-1.0, 1.0, Dir::W, Dir::N),
+                (-1.0, -1.0, Dir::W, Dir::S),
+                (1.0, -1.0, Dir::E, Dir::S),
+            ]
             .into_iter()
             .enumerate()
-        {
-            let kind = mix[(i + k) % mix.len()];
-            let (radius, height) = match kind {
-                DecorKind::Pillar => (1.3, 8.0),
-                DecorKind::Stalagmite => (1.1, 6.0),
-                DecorKind::Boulder => (1.4, 2.5),
-                DecorKind::Crystal => (0.9, 4.0),
-            };
-            let d = r.half + 1.0 + radius;
-            out.decor.push(DecorConfig {
-                kind,
-                pos: r2(c + V2::new(sx * d, sz * d)),
-                y: r.y,
-                radius,
-                height,
-                color: if kind == DecorKind::Crystal {
-                    Some(kit.palette.light_deep)
-                } else {
-                    None
-                },
-            });
+            {
+                let kind = mix[(i + k) % mix.len()];
+                let (radius, height) = match kind {
+                    DecorKind::Pillar => (1.3, 8.0),
+                    DecorKind::Stalagmite => (1.1, 6.0),
+                    DecorKind::Boulder => (1.4, 2.5),
+                    DecorKind::Crystal => (0.9, 4.0),
+                };
+                out.decor.push(DecorConfig {
+                    kind,
+                    pos: r2(c + V2::new(
+                        sx * (r.ext(ex) + 1.0 + radius),
+                        sz * (r.ext(ez) + 1.0 + radius),
+                    )),
+                    y: r.y,
+                    radius,
+                    height,
+                    color: if kind == DecorKind::Crystal {
+                        Some(kit.palette.light_deep)
+                    } else {
+                        None
+                    },
+                });
+            }
         }
     }
 
@@ -278,9 +469,9 @@ pub fn compose(plan: &Plan, kit: &Kit) -> Composed {
         .corridors
         .iter()
         .find(|c| c.a == plan.main[0] && matches!(plan.rooms[c.b].route, Route::Main(1)))
-        .map(|c| c.dir.unit())
-        .unwrap_or(V2::new(0.0, 1.0));
-    out.entrance = r2(ent.center() - exit * (ent.half - 2.5));
+        .map(|c| c.dir)
+        .unwrap_or(Dir::N);
+    out.entrance = r2(ent.center() - exit.unit() * (ent.ext(exit.opposite()) - 2.5));
     out
 }
 
@@ -297,8 +488,8 @@ fn compose_corridor(
     let v = cor.dir.lateral();
     let ca = ra.center();
     let at = |s: f32, t: f32| r2(ca + u * s + v * t);
-    let sa = ra.half;
-    let sb = CELL - rb.half;
+    let sa = ra.ext(cor.dir);
+    let sb = plan.cell - rb.ext(cor.dir.opposite());
     let w2 = cor.width / 2.0;
     let base = format!("{} - {}", ra.name, rb.name);
     let tint = Some(tint_for(kit, ra.y.min(rb.y), deepest));
@@ -324,41 +515,55 @@ fn compose_corridor(
             if cor.style == Style::Bridge {
                 a.under = UnderConfig::Open;
                 a.walls = false;
-                let lw = w2 + 4.0;
-                let (p, q) = (at(sa, -lw), at(sb, lw));
-                out.lava.push(LavaConfig {
-                    min: Some(V2::new(p.x.min(q.x), p.z.min(q.z))),
-                    max: Some(V2::new(p.x.max(q.x), p.z.max(q.z))),
-                    points: None,
-                    y: ra.y - CHASM,
-                });
-                // Rock stacks rising from the lava either side of the bridge.
                 let mid = (sa + sb) / 2.0;
-                for side in [-1.0, 1.0] {
-                    out.decor.push(DecorConfig {
-                        kind: DecorKind::Stalagmite,
-                        pos: at(mid, side * (w2 + 2.5)),
-                        y: ra.y - CHASM,
-                        radius: 1.0,
-                        height: CHASM - 0.5,
-                        color: None,
-                    });
+                match kit.components.chasm {
+                    Chasm::Lava => {
+                        let lw = w2 + 4.0;
+                        let (p, q) = (at(sa, cor.off_a - lw), at(sb, cor.off_a + lw));
+                        out.lava.push(LavaConfig {
+                            min: Some(V2::new(p.x.min(q.x), p.z.min(q.z))),
+                            max: Some(V2::new(p.x.max(q.x), p.z.max(q.z))),
+                            points: None,
+                            y: ra.y - CHASM,
+                        });
+                        // Rock stacks rising from the lava either side of the bridge.
+                        for side in [-1.0, 1.0] {
+                            out.decor.push(DecorConfig {
+                                kind: DecorKind::Stalagmite,
+                                pos: at(mid, cor.off_a + side * (w2 + 2.5)),
+                                y: ra.y - CHASM,
+                                radius: 1.0,
+                                height: CHASM - 0.5,
+                                color: None,
+                            });
+                        }
+                        out.lights.push(LightConfig {
+                            pos: at(mid, cor.off_a),
+                            y: ra.y - CHASM + 1.5,
+                            color: kit.palette.light_deep,
+                            intensity: 1.2 * kit.palette.light_intensity,
+                            range: 16.0,
+                        });
+                    }
+                    Chasm::Void => {
+                        // Nothing below: a faint cold light over the deck.
+                        out.lights.push(LightConfig {
+                            pos: at(mid, cor.off_a),
+                            y: ra.y + 4.0,
+                            color: kit.palette.light_shallow,
+                            intensity: 0.5 * kit.palette.light_intensity,
+                            range: 14.0,
+                        });
+                    }
                 }
-                out.lights.push(LightConfig {
-                    pos: at(mid, 0.0),
-                    y: ra.y - CHASM + 1.5,
-                    color: kit.palette.light_deep,
-                    intensity: 1.2,
-                    range: 16.0,
-                });
             }
             push(out, a);
         }
         Style::Ramp => {
             let mut a = rect_area(
                 format!("{base} {}", if cor.stairs { "stair" } else { "ramp" }),
-                at(sa - OVERLAP, -w2),
-                at(sb + OVERLAP, w2),
+                at(sa - OVERLAP, cor.off_a - w2),
+                at(sb + OVERLAP, cor.off_a + w2),
                 0.0,
             );
             // Height at the `min` edge, `y_to` at the `max` edge, along the axis.
@@ -443,7 +648,8 @@ fn compose_corridor(
     }
 }
 
-/// Name of the lower room's area under `probe` (pit rooms have four pieces).
+/// Name of the lower room's area under `probe` (pit and pillared rooms have
+/// several pieces).
 fn landing_area(plan: &Plan, room: usize, probe: V2, out: &Composed) -> String {
     out.areas
         .iter()

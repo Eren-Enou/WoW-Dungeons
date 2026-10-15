@@ -1,0 +1,554 @@
+# Dungeon Forge kit: Crypt (original).
+#
+# The buried monastery of the Hushed, an order that swore silence and kept it
+# past death. Cold stone, narrow passages, long pillared naves where pillars
+# are solid (they block movement and line of sight), sealed burial cells, and
+# a guardian beneath it all whose wail only cover can stop.
+#
+# Compared with the volcanic kit this changes the *space* (tight grid,
+# rectangular naves, pillars, narrow corridors, no lava) and the *fights*
+# (defensive screens, line-of-sight pulls, a patrol, a council of two abbots,
+# a boss you hide from), not only the colours.
+
+[kit]
+id = "crypt"
+name = "Crypt"
+reference_level = 5
+
+[palette]
+theme = { floor = [0.30, 0.30, 0.29], wall = [0.40, 0.39, 0.37], light = [0.75, 0.85, 1.0], fog = [0.025, 0.035, 0.045], ambient = [0.32, 0.37, 0.42], rough_walls = false }
+tint_shallow = [0.33, 0.33, 0.32]
+tint_deep = [0.25, 0.28, 0.29]
+light_shallow = [0.55, 0.68, 0.95]
+light_deep = [0.45, 0.85, 0.72]
+light_intensity = 0.75
+decor = ["pillar"]
+# Tall iron candle stands in every other pillar (an original GLB from
+# scripts/make_prop_models.py); stone pillars where the file is missing.
+pillar_prop = { model = "models/props/crypt_candelabrum.glb", fallback = "pillar", scale = 1.0, radius = 0.75, height = 4.0 }
+
+[palette.names]
+entrance = ["Sealed Gate", "Pilgrims' Porch", "The Silent Door"]
+chamber = ["Reliquary Cell", "Vestry", "Ossuary Niche", "Censer Room", "Chantry", "Undercroft", "Scriptorium", "Lamp Room"]
+hall = ["Nave of Ash", "Hall of the Hushed", "Bone Colonnade", "Processional", "Choir of Dust", "Cloister Walk"]
+arena = ["The Hollow Choir", "Sepulchre of the Guardian", "Abbots' Chapter"]
+pit = ["Collapsed Ossuary"]
+side = ["Burial Cell", "Sealed Tomb", "Sarcophagus Niche", "Forgotten Vault", "Bone Cell"]
+overlook = ["Bell Gallery", "Choir Loft"]
+bend = ["Narrow Stair", "Cramped Passage", "Bone Gate", "Crypt Turn", "Low Arch"]
+
+[components]
+cell = 32.0                  # rooms close together: a building, not a cave
+corridor_width = [3.5, 4.5]  # narrow passages
+passage_width = [3.0, 3.5]
+chasm = "void"               # collapsed floors, nothing below
+corner_decor = false         # no rock outside the walls: cut stone
+
+[components.rooms.entrance]
+size = [6.5, 7.0]
+aspect = [1.3, 1.5]          # a long gate hall
+
+[components.rooms.chamber]
+size = [6.5, 7.5]
+
+[components.rooms.hall]
+# Naves: long, with two rows of solid pillars.
+size = [8.5, 9.0]
+aspect = [1.2, 1.3]
+shape = "pillars"
+pillars = { size = 1.8, spacing = 6.5 }
+
+[components.rooms.arena]
+# Enclosed boss chambers with four pillars for cover.
+size = [11.0, 11.5]
+shape = "pillars"
+pillars = { size = 2.0, spacing = 7.5 }
+
+[components.rooms.pit]
+size = [9.0, 9.5]
+shape = "pit"
+pit = [3.0, 3.5]
+
+[components.rooms.side]
+size = [5.5, 6.5]            # small burial cells
+
+[components.rooms.overlook]
+size = [5.0, 5.0]
+
+[components.rooms.bend]
+size = [4.0, 4.0]
+
+# ------------------------------------------------------------------ recipes --
+
+[recipes.warden_screen]
+name = "Warden's Screen"
+tests = "a shield wall guarding two healer-acolytes: get past the frontal to interrupt the heals"
+room = "hall"
+tags = ["protect_caster", "interrupts", "frontal"]
+formation = "screen"
+placement = "guard_exit"
+space = { ranged_lane = true }
+mobs = [
+  { template = "warden", place = "front" },
+  { template = "acolyte", place = "back", count = 2 },
+]
+
+[recipes.bone_archers]
+name = "Bone Archers"
+tests = "archers shooting from range across a pillared nave: pull them round a pillar (line of sight) so they come to you"
+room = "hall"
+tags = ["line_of_sight"]
+formation = "line"
+placement = "far"
+space = { pillars = true }
+mobs = [
+  { template = "crawler", place = "front" },
+  { template = "archer", place = "back", count = 3 },
+]
+
+[recipes.sentinel_patrol]
+name = "Sentinel Patrol"
+tests = "two halberd sentinels pacing the nave: time the pull or fight them where they turn"
+room = "hall"
+tags = ["patrol", "frontal"]
+placement = "patrol"
+patrol = { length = 14.0 }
+mobs = [
+  { template = "sentinel", place = "front", count = 2 },
+]
+
+[recipes.censer_procession]
+name = "Censer Procession"
+tests = "incense clouds land under the party while acolytes chant: keep moving, interrupt"
+room = "hall"
+tags = ["area_control", "interrupts"]
+formation = "wedge"
+placement = "center"
+mobs = [
+  { template = "censer", place = "front" },
+  { template = "acolyte", place = "back" },
+  { template = "crawler", place = "flank", count = 2 },
+]
+
+[recipes.crawler_rush]
+name = "Crawler Nest"
+tests = "a fast swarm: the tank gathers them, everyone else stays close to the healer"
+room = "chamber"
+tags = []
+formation = "ring"
+placement = "far"
+mobs = [
+  { template = "crawler", count = 4 },
+]
+
+[recipes.sealed_revenant]
+name = "Sealed Revenant"
+tests = "an optional tomb-guard with a frontal and rot pools, in a tiny cell"
+room = "chamber"
+tags = ["frontal", "area_control"]
+placement = "center"
+mobs = [
+  { template = "revenant", place = "center" },
+]
+
+[recipes.twin_abbots]
+name = "The Twin Abbots"
+tests = "a council: one abbot heals the other, the other chants party-wide dirges; split interrupts, choose a kill order"
+room = "arena"
+tags = ["council", "interrupts", "multi_phase"]
+formation = "ring"
+placement = "center"
+mobs = [
+  { template = "abbot_vael", place = "center" },
+  { template = "abbot_mire", place = "center" },
+]
+
+[recipes.hollow_guardian]
+name = "The Hollow Guardian"
+tests = "a multi-phase guardian: break line of sight behind the pillars when it wails, dodge falling stones, kill the bone shards"
+room = "arena"
+tags = ["line_of_sight", "multi_phase", "summons", "area_control", "frontal"]
+placement = "center"
+space = { pillars = true }
+mobs = [
+  { template = "guardian", place = "center" },
+]
+
+# ---------------------------------------------------------------- templates --
+
+[templates.crawler]
+name = "Crypt Crawler"
+rank = "trash"
+level = 5
+hp = 700.0
+melee_damage = 55.0
+attack_interval = 1.6
+aggro_radius = 7.0           # dormant in their nests until you come close
+speed = 7.5
+radius = 0.55
+
+[templates.warden]
+name = "Ossuary Warden"
+rank = "elite"
+level = 5
+hp = 3400.0
+melee_damage = 105.0
+attack_interval = 2.4
+aggro_radius = 10.0
+speed = 5.5
+radius = 1.0
+armor = 200.0
+block = 0.15
+
+[[templates.warden.abilities]]
+name = "Shield Bash"         # frontal: the tank turns it away
+kind = "cleave"
+interval = 8.0
+initial = 4.0
+damage = 150.0
+radius = 4.0
+frontal = true
+
+[templates.acolyte]
+name = "Hushed Acolyte"
+rank = "trash"
+level = 5
+hp = 900.0
+melee_damage = 25.0
+attack_interval = 2.2
+aggro_radius = 10.0
+speed = 5.5
+radius = 0.6
+
+[[templates.acolyte.abilities]]
+name = "Mending Hymn"        # heals the most hurt of the Hushed: interrupt it
+kind = "heal_ally"
+interval = 9.0
+initial = 4.0
+cast_time = 2.0
+interruptible = true
+amount = 600.0
+
+[[templates.acolyte.abilities]]
+name = "Grave Chill"
+kind = "bolt"
+interval = 6.0
+initial = 2.0
+cast_time = 1.5
+interruptible = true
+target = "random"
+damage = 150.0
+school = "frost"
+
+[templates.archer]
+name = "Bone Archer"
+rank = "trash"
+level = 5
+hp = 750.0
+melee_damage = 48.0          # its arrows: an auto attack from range
+attack_interval = 2.2
+attack_range = 18.0
+aggro_radius = 13.0
+speed = 5.5
+radius = 0.55
+
+[templates.sentinel]
+name = "Reliquary Sentinel"
+rank = "elite"
+level = 6
+hp = 4200.0
+melee_damage = 120.0
+attack_interval = 2.6
+aggro_radius = 10.0
+speed = 5.5
+radius = 1.1
+armor = 180.0
+
+[[templates.sentinel.abilities]]
+name = "Sweeping Halberd"    # frontal
+kind = "cleave"
+interval = 9.0
+initial = 5.0
+damage = 210.0
+radius = 5.0
+frontal = true
+
+[templates.censer]
+name = "Censer Bearer"
+rank = "elite"
+level = 5
+hp = 2400.0
+melee_damage = 60.0
+attack_interval = 2.4
+aggro_radius = 11.0
+speed = 5.5
+radius = 0.8
+
+[[templates.censer.abilities]]
+name = "Incense Cloud"       # a ring under someone: move out
+kind = "ring"
+interval = 8.0
+initial = 3.0
+delay = 2.5
+radius = 3.5
+damage = 260.0
+school = "shadow"
+target = "random"
+
+[templates.revenant]
+name = "Sealed Revenant"
+rank = "elite"
+level = 6
+hp = 5400.0
+melee_damage = 130.0
+attack_interval = 2.5
+aggro_radius = 9.0
+speed = 5.5
+radius = 1.2
+armor = 220.0
+
+[[templates.revenant.abilities]]
+name = "Tomb Cleave"         # frontal
+kind = "cleave"
+interval = 8.0
+initial = 4.0
+damage = 230.0
+radius = 4.5
+frontal = true
+
+[[templates.revenant.abilities]]
+name = "Grave Rot"
+kind = "ring"
+interval = 11.0
+initial = 6.0
+delay = 2.5
+radius = 3.0
+damage = 280.0
+school = "nature"
+target = "random_non_tank"
+
+[templates.abbot_vael]
+name = "Abbot Vael"
+rank = "boss"
+level = 6
+hp = 13000.0
+melee_damage = 140.0
+attack_interval = 2.2
+attack_range = 2.5
+aggro_radius = 13.0
+speed = 5.5
+radius = 1.4
+armor = 140.0
+enrage_seconds = 360.0
+
+[[templates.abbot_vael.phases]]
+hp_below = 0.4
+damage_multiplier = 1.3
+announce = "Abbot Vael breaks his vow: 'Brother, rise!'"
+
+[[templates.abbot_vael.abilities]]
+name = "Litany of Mending"   # heals his brother: interrupt it
+kind = "heal_ally"
+interval = 12.0
+initial = 6.0
+cast_time = 2.5
+interruptible = true
+amount = 1600.0
+
+[[templates.abbot_vael.abilities]]
+name = "Hollow Word"
+kind = "bolt"
+interval = 8.0
+initial = 3.0
+cast_time = 2.0
+interruptible = true
+target = "random_non_tank"
+damage = 300.0
+school = "shadow"
+
+[templates.abbot_mire]
+name = "Abbot Mire"
+rank = "boss"
+level = 6
+hp = 13000.0
+melee_damage = 160.0
+attack_interval = 2.2
+attack_range = 2.5
+aggro_radius = 13.0
+speed = 5.5
+radius = 1.4
+armor = 160.0
+enrage_seconds = 360.0
+
+[[templates.abbot_mire.phases]]
+hp_below = 0.4
+damage_multiplier = 1.3
+announce = "Abbot Mire howls the vow away: the dirge grows!"
+
+[[templates.abbot_mire.abilities]]
+name = "Censer Swing"        # frontal
+kind = "cleave"
+interval = 9.0
+initial = 5.0
+damage = 240.0
+radius = 5.0
+frontal = true
+
+[[templates.abbot_mire.abilities]]
+name = "Dirge"               # party-wide: interrupt it
+kind = "pulse"
+interval = 14.0
+initial = 7.0
+cast_time = 2.5
+interruptible = true
+damage = 180.0
+school = "shadow"
+
+[templates.bone_shard]
+name = "Bone Shard"
+rank = "trash"
+level = 5
+hp = 550.0
+melee_damage = 50.0
+attack_interval = 1.6
+aggro_radius = 25.0
+speed = 7.0
+radius = 0.5
+
+[templates.guardian]
+name = "The Hollow Guardian"
+rank = "boss"
+level = 7
+hp = 30000.0
+melee_damage = 240.0
+attack_interval = 2.2
+attack_range = 3.0
+aggro_radius = 14.0
+speed = 5.5
+radius = 2.0
+armor = 220.0
+resist = 15.0
+enrage_seconds = 480.0
+
+[[templates.guardian.phases]]
+hp_below = 0.6
+announce = "The Hollow Guardian tears at the vault: stones fall and the dead rise!"
+
+[[templates.guardian.phases]]
+hp_below = 0.25
+damage_multiplier = 1.2
+announce = "The Hollow Guardian draws breath for its last wail!"
+
+[[templates.guardian.abilities]]
+name = "Grave Hammer"        # frontal: only the tank in front
+kind = "cleave"
+interval = 8.0
+initial = 5.0
+damage = 280.0
+radius = 6.0
+frontal = true
+
+[[templates.guardian.abilities]]
+name = "Sepulchral Wail"     # hide behind a pillar while it is cast
+kind = "pulse"
+interval = 18.0
+initial = 8.0
+cast_time = 3.0
+damage = 650.0
+school = "shadow"
+los_blockable = true
+
+[[templates.guardian.abilities]]
+name = "Raise Bone Shards"
+kind = "summon"
+interval = 25.0
+initial = 2.0
+template = "bone_shard"
+count = 3
+phases = [2, 3]
+
+[[templates.guardian.abilities]]
+name = "Collapse"            # falling stones: two rings
+kind = "ring"
+interval = 10.0
+initial = 4.0
+delay = 2.5
+radius = 4.0
+damage = 420.0
+school = "physical"
+target = "random"
+count = 2
+phases = [2, 3]
+
+[[templates.guardian.abilities]]
+name = "Last Wail"           # phase 3: a second, faster wail
+kind = "pulse"
+interval = 12.0
+initial = 6.0
+cast_time = 3.0
+damage = 650.0
+school = "shadow"
+los_blockable = true
+phases = [3]
+
+# --------------------------------------------------------------------- loot --
+
+[[loot]]
+id = "acolyte_cowl"
+name = "Hushed Acolyte's Cowl"
+slot = "head"
+rarity = "common"
+role = "healer"
+stats = { stamina = 6, power = 4 }
+weight = 2
+source = "pack"
+
+[[loot]]
+id = "revenant_band"
+name = "Revenant's Iron Band"
+slot = "trinket"
+rarity = "uncommon"
+role = "tank"
+stats = { stamina = 12, armor = 60 }
+weight = 2
+source = "optional"
+
+[[loot]]
+id = "abbots_censer"
+name = "The Abbots' Censer"
+slot = "off_hand"
+rarity = "rare"
+role = "caster"
+stats = { power = 9, hit = 1.0 }
+weight = 2
+source = "boss"
+
+[[loot]]
+id = "litany_robes"
+name = "Robes of the Litany"
+slot = "chest"
+rarity = "uncommon"
+role = "healer"
+stats = { stamina = 10, power = 6 }
+weight = 2
+source = "boss"
+
+[[loot]]
+id = "guardian_maul"
+name = "Maul of the Hollow Guardian"
+slot = "main_hand"
+rarity = "rare"
+role = "melee"
+stats = { power = 11, crit = 1.0, stamina = 6 }
+weight = 2
+source = "final_boss"
+
+[[loot]]
+id = "silent_greaves"
+name = "Greaves of the Silent Vow"
+slot = "legs"
+rarity = "rare"
+role = "tank"
+stats = { stamina = 16, armor = 100 }
+weight = 2
+source = "final_boss"

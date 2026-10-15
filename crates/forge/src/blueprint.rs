@@ -1,6 +1,7 @@
 //! Layer A: the blueprint describes the intended experience (theme, level,
 //! route shape, encounters in order) without any world coordinates.
 
+use crate::kit::Tag;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -8,6 +9,9 @@ use std::path::{Path, PathBuf};
 #[serde(deny_unknown_fields)]
 pub struct Blueprint {
     pub blueprint: BlueprintMeta,
+    /// What the dungeon is for: the experience and the challenges it promises.
+    #[serde(default)]
+    pub identity: Identity,
     #[serde(default)]
     pub layout: LayoutSpec,
     /// Main-route encounters in order. The last one holds the final boss.
@@ -44,6 +48,15 @@ fn one() -> u64 {
     1
 }
 
+/// The design identity: a sentence for people, and the tactical challenges
+/// the encounters must cover (checked against recipe tags).
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Identity {
+    pub summary: String,
+    pub challenges: Vec<Tag>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Shortcut {
@@ -63,13 +76,30 @@ pub struct LayoutSpec {
     pub extra_rooms: [u32; 2],
     /// Elevation steps down along the main route (ramps).
     pub descents: u32,
-    /// A second way between two main-route rooms.
+    /// A second way between two main-route rooms (same as alternate_routes = 1).
     pub alternate_route: bool,
+    /// How many second ways between main-route rooms.
+    pub alternate_routes: u32,
     pub shortcut: Shortcut,
-    /// Main-route corridors that cross lava on an open bridge.
+    /// Main-route corridors that cross a chasm on an open bridge.
     pub bridges: u32,
     /// Share (0..=1) of flat corridors that wind or angle.
     pub winding: f32,
+    /// 0 = the route turns often (winding caverns), 1 = it runs straight
+    /// (a processional axis).
+    pub straightness: f32,
+    /// Empty dead-end chambers off the route to explore, `[min, max]`.
+    pub side_rooms: [u32; 2],
+    /// Chance (0..=1) of a passage bend before each main-route room: longer,
+    /// winding approaches.
+    pub passages: f32,
+}
+
+impl LayoutSpec {
+    /// Number of alternate routes asked for (either field).
+    pub fn alternates(&self) -> u32 {
+        self.alternate_routes.max(self.alternate_route as u32)
+    }
 }
 
 impl Default for LayoutSpec {
@@ -78,9 +108,13 @@ impl Default for LayoutSpec {
             extra_rooms: [0, 1],
             descents: 1,
             alternate_route: false,
+            alternate_routes: 0,
             shortcut: Shortcut::None,
             bridges: 0,
             winding: 0.3,
+            straightness: 0.4,
+            side_rooms: [0, 0],
+            passages: 0.0,
         }
     }
 }
@@ -158,6 +192,27 @@ impl Blueprint {
         }
         if !(0.0..=1.0).contains(&l.winding) {
             e.push(format!("layout.winding = {}: use 0.0..=1.0", l.winding));
+        }
+        if !(0.0..=1.0).contains(&l.straightness) {
+            e.push(format!(
+                "layout.straightness = {}: use 0.0..=1.0",
+                l.straightness
+            ));
+        }
+        if !(0.0..=0.6).contains(&l.passages) {
+            e.push(format!("layout.passages = {}: use 0.0..=0.6", l.passages));
+        }
+        if l.side_rooms[0] > l.side_rooms[1] || l.side_rooms[1] > 4 {
+            e.push(format!(
+                "layout.side_rooms = {:?}: min <= max <= 4",
+                l.side_rooms
+            ));
+        }
+        if l.alternates() > 3 {
+            e.push(format!(
+                "layout.alternate_routes = {}: at most 3",
+                l.alternates()
+            ));
         }
         if self.encounters.is_empty() {
             e.push("encounters: at least one (the final boss) is required".into());

@@ -1,17 +1,16 @@
-//! Topology first, geometry second: the main route, alternate route, side
-//! rooms and shortcut are laid out as a graph on a grid of cells (bounded,
-//! seeded search), then given heights and corridor styles. `compose` turns
-//! the resulting `Plan` into walkable areas.
+//! Topology first, geometry second: the main route, alternate routes, side
+//! rooms and the shortcut are laid out as a graph on a grid of cells
+//! (bounded, seeded search), then rooms get their shapes from the kit, the
+//! route gets heights, and corridors get styles and offsets that fit the
+//! rooms they join. `compose` turns the resulting `Plan` into walkable areas.
 
 use crate::blueprint::{Blueprint, Shortcut};
-use crate::kit::{Kit, RoomPref};
+use crate::kit::{Kit, RoomPref, ShapeSpec};
 use dungeon_sim::math::V2;
 use dungeon_sim::rng::Rng;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-/// Distance between neighbouring cell centres (m).
-pub const CELL: f32 = 36.0;
 /// Corridors overlap the rooms they join by this much (a level overlap, or a
 /// ramp end; both well under the 2 m ramp-overlap limit).
 pub const OVERLAP: f32 = 1.5;
@@ -22,6 +21,8 @@ pub const MIN_FALL: f32 = 3.6;
 pub const MAX_FALL: f32 = 7.5;
 /// Generation attempts before giving up with a diagnosis.
 pub const MAX_ATTEMPTS: u32 = 64;
+/// Shortest corridor between two rooms (edge to edge).
+pub const MIN_GAP: f32 = 7.0;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub enum Dir {
@@ -51,8 +52,7 @@ impl Dir {
 
     /// Unit vector 90° to the left of `self` (the corridor's lateral axis).
     pub fn lateral(self) -> V2 {
-        let u = self.unit();
-        V2::new(-u.z, u.x)
+        self.left().unit()
     }
 
     pub fn opposite(self) -> Dir {
@@ -77,10 +77,32 @@ impl Dir {
         self.left().opposite()
     }
 
+    pub fn index(self) -> usize {
+        match self {
+            Dir::N => 0,
+            Dir::E => 1,
+            Dir::S => 2,
+            Dir::W => 3,
+        }
+    }
+
     pub fn between(a: (i32, i32), b: (i32, i32)) -> Option<Dir> {
         Dir::ALL
             .into_iter()
             .find(|d| (a.0 + d.step().0, a.1 + d.step().1) == b)
+    }
+}
+
+/// Index of the corner between two perpendicular directions:
+/// 0 = NE, 1 = NW, 2 = SW, 3 = SE.
+pub fn corner(a: Dir, b: Dir) -> usize {
+    let north = a == Dir::N || b == Dir::N;
+    let east = a == Dir::E || b == Dir::E;
+    match (north, east) {
+        (true, true) => 0,
+        (true, false) => 1,
+        (false, false) => 2,
+        (false, true) => 3,
     }
 }
 
@@ -95,10 +117,12 @@ pub enum RoomKind {
     Arena,
     /// Ring of floor around a lava pit.
     Pit,
-    /// Optional side chamber.
+    /// Side chamber (optional encounters, or empty for exploration).
     Side,
     /// Raised ledge at the top of a one-way drop.
     Overlook,
+    /// A passage elbow that lengthens a winding route.
+    Bend,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -118,18 +142,31 @@ pub enum EncounterRef {
     Optional(usize),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+pub enum Shape {
+    Plain,
+    /// Pit half-size.
+    Pit(f32),
+    /// Pillar side and spacing.
+    Pillars {
+        size: f32,
+        spacing: f32,
+    },
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Room {
     pub kind: RoomKind,
     pub route: Route,
     pub cell: (i32, i32),
+    /// Cell centre in world space.
+    pub center: V2,
     pub y: f32,
-    /// Half-size (apothem) of the footprint.
-    pub half: f32,
-    /// Corner cut (0 = square; octagons cut the corners).
-    pub chamfer: f32,
-    /// Half-size of the central lava pit (pit rooms only).
-    pub pit: f32,
+    /// Distance from the cell centre to the wall on each side (N, E, S, W).
+    pub ext: [f32; 4],
+    /// Corner cuts (NE, NW, SW, SE); 0 = square corner.
+    pub cut: [f32; 4],
+    pub shape: Shape,
     pub name: String,
     pub encounter: Option<EncounterRef>,
     /// Direction of travel when the party first enters (packs face it).
@@ -138,18 +175,39 @@ pub struct Room {
 
 impl Room {
     pub fn center(&self) -> V2 {
-        V2::new(self.cell.0 as f32 * CELL, self.cell.1 as f32 * CELL)
+        self.center
     }
 
-    /// How far a corridor may sit sideways from the room's side midpoint
-    /// (its centre line) and still enter through a straight wall without
-    /// touching the corridors on the neighbouring sides.
-    pub fn lateral_limit(&self) -> f32 {
-        if self.chamfer > 0.0 {
-            self.half - self.chamfer - 0.6
-        } else {
-            self.half - 2.0
-        }
+    pub fn ext(&self, d: Dir) -> f32 {
+        self.ext[d.index()]
+    }
+
+    /// The smallest half-size (how much room there is at least).
+    pub fn min_ext(&self) -> f32 {
+        self.ext.iter().copied().fold(f32::INFINITY, f32::min)
+    }
+
+    /// The middle of the floor (cell centre shifted by uneven extents).
+    pub fn mid(&self) -> V2 {
+        self.center
+            + V2::new(
+                (self.ext(Dir::E) - self.ext(Dir::W)) / 2.0,
+                (self.ext(Dir::N) - self.ext(Dir::S)) / 2.0,
+            )
+    }
+
+    /// Where on side `side` a corridor may sit, as an interval along the
+    /// lateral direction `v` (perpendicular to `side`), measured from the
+    /// cell centre: the straight part of that wall, kept clear of the corner
+    /// cuts and of corridors on the neighbouring sides.
+    pub fn span(&self, side: Dir, v: Dir) -> (f32, f32) {
+        let margin = |c: f32| if c >= 1.0 { 0.6 } else { 2.0 };
+        let c_hi = self.cut[corner(side, v)];
+        let c_lo = self.cut[corner(side, v.opposite())];
+        (
+            -(self.ext(v.opposite()) - c_lo - margin(c_lo)),
+            self.ext(v) - c_hi - margin(c_hi),
+        )
     }
 }
 
@@ -161,7 +219,7 @@ pub enum Style {
     /// One slanted piece (a convex parallelogram).
     Angled,
     Ramp,
-    /// Open deck over a lava chasm.
+    /// Open deck over a chasm (lava or a void, per kit).
     Bridge,
     /// Raised walkway ending at the lower room's edge; one-way drop.
     Drop,
@@ -187,7 +245,8 @@ pub struct Corridor {
     pub style: Style,
     pub role: EdgeRole,
     pub width: f32,
-    /// Lateral offsets of the two ends from the rooms' side midpoints.
+    /// Lateral offsets of the two ends from the cell centre line (along
+    /// `dir.lateral()`).
     pub off_a: f32,
     pub off_b: f32,
     /// Draw a ramp as steps.
@@ -204,6 +263,8 @@ impl Corridor {
 pub struct Plan {
     pub seed: u64,
     pub attempt: u32,
+    /// Distance between neighbouring cell centres (from the kit).
+    pub cell: f32,
     pub rooms: Vec<Room>,
     pub corridors: Vec<Corridor>,
     /// Main-route room indices in order (entrance first, final arena last).
@@ -211,9 +272,10 @@ pub struct Plan {
 }
 
 impl Plan {
-    /// Edge-to-edge gap between two neighbouring rooms.
+    /// Edge-to-edge gap between two neighbouring rooms along `a -> b`.
     pub fn gap(&self, a: usize, b: usize) -> f32 {
-        CELL - self.rooms[a].half - self.rooms[b].half
+        let d = Dir::between(self.rooms[a].cell, self.rooms[b].cell).expect("neighbours");
+        self.cell - self.rooms[a].ext(d) - self.rooms[b].ext(d.opposite())
     }
 
     /// Largest height change one ramp corridor between `a` and `b` can take.
@@ -226,12 +288,12 @@ impl Plan {
 /// Why attempts failed (for the diagnosis when all of them do).
 #[derive(Debug, Default, Clone)]
 pub struct FailureTally {
-    pub counts: BTreeMap<&'static str, u32>,
+    pub counts: BTreeMap<String, u32>,
 }
 
 impl FailureTally {
-    pub fn add(&mut self, what: &'static str) {
-        *self.counts.entry(what).or_default() += 1;
+    pub fn add(&mut self, what: impl Into<String>) {
+        *self.counts.entry(what.into()).or_default() += 1;
     }
 }
 
@@ -255,31 +317,71 @@ fn round_half(v: f32) -> f32 {
     (v * 2.0).round() / 2.0
 }
 
-fn new_room(rng: &mut Rng, kind: RoomKind, route: Route, cell: (i32, i32)) -> Room {
-    let (half, chamfer_f, pit) = match kind {
-        RoomKind::Entrance => (round_half(rng.range_f32(7.0, 8.5)), 0.0, 0.0),
-        RoomKind::Chamber => (
-            round_half(rng.range_f32(8.0, 9.5)),
-            if rng.chance(0.5) { 0.3 } else { 0.0 },
-            0.0,
-        ),
-        RoomKind::Hall => (round_half(rng.range_f32(11.0, 12.5)), 0.3, 0.0),
-        RoomKind::Arena => (round_half(rng.range_f32(13.0, 14.0)), 0.45, 0.0),
-        RoomKind::Pit => {
-            let h = round_half(rng.range_f32(11.0, 12.5));
-            (h, 0.0, round_half(rng.range_f32(3.5, 4.5)))
+fn range(rng: &mut Rng, r: [f32; 2]) -> f32 {
+    if r[1] > r[0] {
+        rng.range_f32(r[0], r[1])
+    } else {
+        r[0]
+    }
+}
+
+/// A room shaped by the kit: base size, elongated along the direction of
+/// travel `along`, each side jittered, corners cut.
+fn new_room(
+    rng: &mut Rng,
+    kit: &Kit,
+    kind: RoomKind,
+    route: Route,
+    cell: (i32, i32),
+    along: Dir,
+) -> Room {
+    let spec = kit.room_spec(kind);
+    let pitch = kit.components.cell;
+    let max_half = pitch / 2.0 - 4.0;
+    let base = range(rng, spec.size);
+    let aspect = range(rng, spec.aspect);
+    let mut ext = [0.0f32; 4];
+    for d in Dir::ALL {
+        let axial = d == along || d == along.opposite();
+        let mut e = base * if axial { aspect } else { 1.0 };
+        if spec.jitter > 0.0 {
+            e *= 1.0 + rng.range_f32(-spec.jitter, spec.jitter);
         }
-        RoomKind::Side => (round_half(rng.range_f32(7.0, 8.5)), 0.0, 0.0),
-        RoomKind::Overlook => (5.0, 0.0, 0.0),
+        ext[d.index()] = round_half(e.clamp(3.0, max_half));
+    }
+    let mut cut = [0.0f32; 4];
+    if spec.shape == ShapeSpec::Plain && spec.cut[1] > 0.0 {
+        for (k, (a, b)) in [
+            (Dir::N, Dir::E),
+            (Dir::N, Dir::W),
+            (Dir::S, Dir::W),
+            (Dir::S, Dir::E),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let small = ext[a.index()].min(ext[b.index()]);
+            let c = range(rng, spec.cut) * small;
+            cut[k] = round_half(c.min(small - 2.5).max(0.0));
+        }
+    }
+    let shape = match spec.shape {
+        ShapeSpec::Plain => Shape::Plain,
+        ShapeSpec::Pit => Shape::Pit(round_half(range(rng, spec.pit))),
+        ShapeSpec::Pillars => Shape::Pillars {
+            size: spec.pillars.size,
+            spacing: spec.pillars.spacing,
+        },
     };
     Room {
         kind,
         route,
         cell,
+        center: V2::new(cell.0 as f32 * pitch, cell.1 as f32 * pitch),
         y: 0.0,
-        half,
-        chamfer: (half * chamfer_f * 2.0).round() / 2.0,
-        pit,
+        ext,
+        cut,
+        shape,
         name: String::new(),
         encounter: None,
         entry: None,
@@ -310,12 +412,16 @@ pub fn plan_attempt(
 pub fn advice(t: &FailureTally) -> String {
     let mut tips = Vec::new();
     for k in t.counts.keys() {
-        tips.push(match *k {
-            "main route boxed in" => "the main route is long; use fewer extra_rooms or encounters",
-            "alternate route" => "no room for a second way; set alternate_route = false or use fewer optional rooms",
-            "optional room" => "no free cell beside the route for a side room; use fewer optional encounters",
+        let k = k.split(':').next().unwrap_or("");
+        tips.push(match k {
+            "main route boxed in" => "the main route is long; use fewer extra_rooms, passages or encounters",
+            "alternate route" => "no room for a second way; use fewer alternate_routes or optional rooms",
+            "optional room" => "no free cell beside the route for a side room; use fewer optional encounters or side_rooms",
+            "side room" => "no free cell for an empty side chamber; use fewer side_rooms",
             "shortcut" => "no cell touches an earlier and a later room; try another seed or shortcut = \"none\"",
             "heights" => "the height changes do not fit the corridors; use fewer descents",
+            "corridor fit" => "two rooms' walls don't line up for a straight corridor (ramp, bridge or drop); lower the kit's room jitter or use fewer descents and bridges",
+            "space" => "an encounter found no spot in its room that satisfies its recipe's space needs; use bigger rooms in the kit or a smaller recipe",
             "validation" => "the composed dungeon failed validation (see the first error); this is a generator bug worth reporting with the blueprint and seed",
             _ => "try another seed",
         });
@@ -330,7 +436,8 @@ pub fn advice(t: &FailureTally) -> String {
 
 fn try_plan(bp: &Blueprint, kit: &Kit, rng: &mut Rng) -> Result<Plan, &'static str> {
     let l = &bp.layout;
-    // ---- Main route kinds: entrance, encounters with extra rooms between.
+    // ---- Main route kinds: entrance, encounters with extra rooms and
+    // passage bends between.
     let extras =
         l.extra_rooms[0] + rng.index((l.extra_rooms[1] - l.extra_rooms[0] + 1) as usize) as u32;
     let e = bp.encounters.len();
@@ -342,14 +449,22 @@ fn try_plan(bp: &Blueprint, kit: &Kit, rng: &mut Rng) -> Result<Plan, &'static s
     let mut kinds: Vec<(RoomKind, Option<EncounterRef>)> = vec![(RoomKind::Entrance, None)];
     for (k, slot) in bp.encounters.iter().enumerate() {
         for _ in 0..before[k] {
+            if rng.chance(l.passages) {
+                kinds.push((RoomKind::Bend, None));
+            }
             kinds.push((RoomKind::Chamber, None));
+        }
+        if rng.chance(l.passages) {
+            kinds.push((RoomKind::Bend, None));
         }
         let pref = kit.recipes[&slot.recipe].room;
         kinds.push((room_kind_for(pref), Some(EncounterRef::Main(k))));
     }
     let n = kinds.len();
 
-    // ---- Main route: a self-avoiding walk with a forward bias.
+    // ---- Main route: a self-avoiding walk, straight or winding by blueprint.
+    let straight_w = (1.0 + 8.0 * l.straightness) * 10.0;
+    let turn_w = (3.0 * (1.0 - l.straightness) + 0.5) * 10.0;
     let mut used: BTreeSet<(i32, i32)> = BTreeSet::new();
     let mut cells = vec![(0, 0)];
     used.insert((0, 0));
@@ -357,7 +472,11 @@ fn try_plan(bp: &Blueprint, kit: &Kit, rng: &mut Rng) -> Result<Plan, &'static s
     for i in 1..n {
         let cur = cells[i - 1];
         let mut options: Vec<(Dir, u32)> = Vec::new();
-        for (d, w) in [(heading, 3), (heading.left(), 2), (heading.right(), 2)] {
+        for (d, w) in [
+            (heading, straight_w),
+            (heading.left(), turn_w),
+            (heading.right(), turn_w),
+        ] {
             let c = add(cur, d);
             if used.contains(&c) {
                 continue;
@@ -373,7 +492,11 @@ fn try_plan(bp: &Blueprint, kit: &Kit, rng: &mut Rng) -> Result<Plan, &'static s
             if i + 1 < n && free_after == 0 {
                 continue;
             }
-            options.push((d, w));
+            // A bend must actually turn (otherwise it is just a corridor).
+            if kinds[i - 1].0 == RoomKind::Bend && i >= 2 && d == heading {
+                continue;
+            }
+            options.push((d, w.round() as u32));
         }
         if options.is_empty() {
             return Err("main route boxed in");
@@ -396,11 +519,18 @@ fn try_plan(bp: &Blueprint, kit: &Kit, rng: &mut Rng) -> Result<Plan, &'static s
 
     let mut rooms: Vec<Room> = Vec::new();
     for (i, (kind, enc)) in kinds.iter().enumerate() {
-        let mut r = new_room(rng, *kind, Route::Main(i), cells[i]);
+        let entry = if i > 0 {
+            Dir::between(cells[i - 1], cells[i])
+        } else {
+            None
+        };
+        // Elongate along the way in (or out, for the entrance).
+        let along = entry
+            .or_else(|| cells.get(1).and_then(|c| Dir::between(cells[0], *c)))
+            .unwrap_or(Dir::N);
+        let mut r = new_room(rng, kit, *kind, Route::Main(i), cells[i], along);
         r.encounter = *enc;
-        if i > 0 {
-            r.entry = Dir::between(cells[i - 1], cells[i]);
-        }
+        r.entry = entry;
         rooms.push(r);
     }
     let main: Vec<usize> = (0..n).collect();
@@ -422,47 +552,68 @@ fn try_plan(bp: &Blueprint, kit: &Kit, rng: &mut Rng) -> Result<Plan, &'static s
         corridors.push(link(i - 1, i, EdgeRole::Main, &rooms));
     }
 
-    // ---- Alternate route: BFS through free cells between rooms i and j.
-    let mut alt: Option<(usize, usize, Vec<usize>)> = None;
-    if l.alternate_route {
+    // ---- Alternate routes: BFS through free cells between rooms i and j.
+    let mut alts: Vec<(usize, usize, Vec<usize>)> = Vec::new();
+    for _ in 0..l.alternates() {
         let mut cands: Vec<(usize, usize)> = Vec::new();
         for i in 0..n {
             for gap in [2usize, 3] {
                 let j = i + gap;
                 // A second way around trash, never around a boss.
-                if j <= n.saturating_sub(2) && !skips_boss(bp, kit, &kinds, i, j) {
+                if j <= n.saturating_sub(2)
+                    && !skips_boss(bp, kit, &kinds, i, j)
+                    && !alts.iter().any(|(a, b, _)| *a == i && *b == j)
+                {
                     cands.push((i, j));
                 }
             }
         }
         shuffle(rng, &mut cands);
+        let mut found = None;
         for (i, j) in cands {
             if let Some(path) = free_path(&used, cells[i], cells[j], 3) {
-                let mut ids = Vec::new();
-                let mut prev = i;
-                for (k, c) in path.iter().enumerate() {
-                    used.insert(*c);
-                    let mut r = new_room(rng, RoomKind::Chamber, Route::Alternate, *c);
-                    r.entry = Dir::between(if k == 0 { cells[i] } else { path[k - 1] }, *c);
-                    rooms.push(r);
-                    let id = rooms.len() - 1;
-                    corridors.push(link(prev, id, EdgeRole::Alternate, &rooms));
-                    ids.push(id);
-                    prev = id;
-                }
-                corridors.push(link(prev, j, EdgeRole::Alternate, &rooms));
-                alt = Some((i, j, ids));
+                found = Some((i, j, path));
                 break;
             }
         }
-        if alt.is_none() {
+        let Some((i, j, path)) = found else {
             return Err("alternate route");
+        };
+        let mut ids = Vec::new();
+        let mut prev = i;
+        for (k, c) in path.iter().enumerate() {
+            used.insert(*c);
+            let entry = Dir::between(if k == 0 { cells[i] } else { path[k - 1] }, *c);
+            let mut r = new_room(
+                rng,
+                kit,
+                RoomKind::Chamber,
+                Route::Alternate,
+                *c,
+                entry.unwrap_or(Dir::N),
+            );
+            r.entry = entry;
+            rooms.push(r);
+            let id = rooms.len() - 1;
+            corridors.push(link(prev, id, EdgeRole::Alternate, &rooms));
+            ids.push(id);
+            prev = id;
         }
+        corridors.push(link(prev, j, EdgeRole::Alternate, &rooms));
+        alts.push((i, j, ids));
     }
 
-    // ---- Optional side rooms off the main route (not the final arena).
-    for (k, slot) in bp.optional.iter().enumerate() {
-        let mut hosts: Vec<usize> = (1..n.saturating_sub(1)).collect();
+    // ---- Side rooms: optional encounters, then empty chambers to explore.
+    let empties =
+        l.side_rooms[0] + rng.index((l.side_rooms[1] - l.side_rooms[0] + 1) as usize) as u32;
+    let wants: Vec<Option<usize>> = (0..bp.optional.len())
+        .map(Some)
+        .chain((0..empties).map(|_| None))
+        .collect();
+    for want in wants {
+        let mut hosts: Vec<usize> = (1..n.saturating_sub(1))
+            .filter(|&h| kinds[h].0 != RoomKind::Bend)
+            .collect();
         if hosts.is_empty() {
             hosts.push(0);
         }
@@ -477,13 +628,12 @@ fn try_plan(bp: &Blueprint, kit: &Kit, rng: &mut Rng) -> Result<Plan, &'static s
                     continue;
                 }
                 used.insert(c);
-                let pref = kit.recipes[&slot.recipe].room;
-                let kind = match pref {
-                    RoomPref::Chamber => RoomKind::Side,
-                    other => room_kind_for(other),
+                let kind = match want.map(|k| kit.recipes[&bp.optional[k].recipe].room) {
+                    None | Some(RoomPref::Chamber) => RoomKind::Side,
+                    Some(other) => room_kind_for(other),
                 };
-                let mut r = new_room(rng, kind, Route::Side, c);
-                r.encounter = Some(EncounterRef::Optional(k));
+                let mut r = new_room(rng, kit, kind, Route::Side, c, d);
+                r.encounter = want.map(EncounterRef::Optional);
                 r.entry = Some(d);
                 rooms.push(r);
                 let id = rooms.len() - 1;
@@ -493,7 +643,11 @@ fn try_plan(bp: &Blueprint, kit: &Kit, rng: &mut Rng) -> Result<Plan, &'static s
             }
         }
         if !placed {
-            return Err("optional room");
+            return Err(if want.is_some() {
+                "optional room"
+            } else {
+                "side room"
+            });
         }
     }
 
@@ -507,7 +661,7 @@ fn try_plan(bp: &Blueprint, kit: &Kit, rng: &mut Rng) -> Result<Plan, &'static s
             for i in 0..n {
                 // Skip at most two rooms, and never a boss.
                 for j in (i + 2)..n.saturating_sub(1).min(i + 4) {
-                    if skips_boss(bp, kit, &kinds, i, j) {
+                    if skips_boss(bp, kit, &kinds, i, j) || kinds[j].0 == RoomKind::Bend {
                         continue;
                     }
                     for d in Dir::ALL {
@@ -523,8 +677,9 @@ fn try_plan(bp: &Blueprint, kit: &Kit, rng: &mut Rng) -> Result<Plan, &'static s
             }
             let (i, j, c) = cands[rng.index(cands.len())];
             used.insert(c);
-            let mut r = new_room(rng, RoomKind::Overlook, Route::Overlook, c);
-            r.entry = Dir::between(cells[i], c);
+            let along = Dir::between(cells[i], c).unwrap_or(Dir::N);
+            let mut r = new_room(rng, kit, RoomKind::Overlook, Route::Overlook, c, along);
+            r.entry = Some(along);
             rooms.push(r);
             let o = rooms.len() - 1;
             corridors.push(link(i, o, EdgeRole::Shortcut, &rooms));
@@ -537,34 +692,82 @@ fn try_plan(bp: &Blueprint, kit: &Kit, rng: &mut Rng) -> Result<Plan, &'static s
         Shortcut::Loop => {
             let mut cands: Vec<(usize, usize)> = Vec::new();
             for i in 0..n {
-                for j in (i + 3)..n.saturating_sub(1) {
-                    if Dir::between(cells[i], cells[j]).is_some()
-                        && !skips_boss(bp, kit, &kinds, i, j)
+                for j in (i + 3)..n.saturating_sub(1).min(i + 6) {
+                    if !skips_boss(bp, kit, &kinds, i, j)
+                        && kinds[j].0 != RoomKind::Bend
+                        && kinds[i].0 != RoomKind::Bend
                     {
                         cands.push((i, j));
                     }
                 }
             }
-            if cands.is_empty() {
-                return Err("shortcut");
+            shuffle(rng, &mut cands);
+            // Neighbours join directly; otherwise a cloister walk through up
+            // to five free cells.
+            let direct = cands
+                .iter()
+                .copied()
+                .find(|&(i, j)| Dir::between(cells[i], cells[j]).is_some());
+            if let Some((i, j)) = direct {
+                corridors.push(link(j, i, EdgeRole::Loop, &rooms));
+                loop_plan = Some((i, j));
+            } else {
+                let mut found = None;
+                for (i, j) in cands {
+                    if let Some(path) = free_path(&used, cells[j], cells[i], 5) {
+                        found = Some((i, j, path));
+                        break;
+                    }
+                }
+                let Some((i, j, path)) = found else {
+                    return Err("shortcut");
+                };
+                let mut ids = Vec::new();
+                let mut prev = j;
+                for (k, c) in path.iter().enumerate() {
+                    used.insert(*c);
+                    let entry = Dir::between(if k == 0 { cells[j] } else { path[k - 1] }, *c);
+                    let mut r = new_room(
+                        rng,
+                        kit,
+                        RoomKind::Bend,
+                        Route::Alternate,
+                        *c,
+                        entry.unwrap_or(Dir::N),
+                    );
+                    r.entry = entry;
+                    rooms.push(r);
+                    let id = rooms.len() - 1;
+                    corridors.push(link(prev, id, EdgeRole::Loop, &rooms));
+                    ids.push(id);
+                    prev = id;
+                }
+                corridors.push(link(prev, i, EdgeRole::Loop, &rooms));
+                // Heights along the walk are spread like an alternate route.
+                alts.push((j, i, ids));
+                loop_plan = None;
             }
-            let (i, j) = cands[rng.index(cands.len())];
-            corridors.push(link(j, i, EdgeRole::Loop, &rooms));
-            loop_plan = Some((i, j));
         }
     }
 
     let mut plan = Plan {
         seed: 0,
         attempt: 0,
+        cell: kit.components.cell,
         rooms,
         corridors,
         main,
     };
+    for k in 0..plan.corridors.len() {
+        let c = &plan.corridors[k];
+        if plan.gap(c.a, c.b) < MIN_GAP {
+            return Err("corridor fit");
+        }
+    }
 
     // ---- Heights and corridor styles.
-    assign_heights(&mut plan, bp, rng, alt.as_ref(), drop_plan, loop_plan)?;
-    assign_styles(&mut plan, bp, rng);
+    assign_heights(&mut plan, bp, rng, &alts, drop_plan, loop_plan)?;
+    assign_styles(&mut plan, bp, kit, rng)?;
     name_rooms(&mut plan, kit, rng);
     Ok(plan)
 }
@@ -625,17 +828,11 @@ fn free_path(
     None
 }
 
-fn corridor_between(plan: &Plan, a: usize, b: usize) -> Option<usize> {
-    plan.corridors
-        .iter()
-        .position(|c| (c.a == a && c.b == b) || (c.a == b && c.b == a))
-}
-
 fn assign_heights(
     plan: &mut Plan,
     bp: &Blueprint,
     rng: &mut Rng,
-    alt: Option<&(usize, usize, Vec<usize>)>,
+    alts: &[(usize, usize, Vec<usize>)],
     drop_plan: Option<(usize, usize, usize)>,
     loop_plan: Option<(usize, usize)>,
 ) -> Result<(), &'static str> {
@@ -661,8 +858,8 @@ fn assign_heights(
         }
         plan.rooms[k].y = y;
     }
-    // Alternate route: spread the height change over its corridors.
-    if let Some((i, j, ids)) = alt {
+    // Alternate routes: spread the height change over their corridors.
+    for (i, j, ids) in alts {
         let (yi, yj) = (plan.rooms[*i].y, plan.rooms[*j].y);
         let steps = ids.len() + 1;
         for (t, &id) in ids.iter().enumerate() {
@@ -705,13 +902,18 @@ fn assign_heights(
     {
         return Err("heights");
     }
-    let _ = corridor_between;
     Ok(())
 }
 
-fn assign_styles(plan: &mut Plan, bp: &Blueprint, rng: &mut Rng) {
+fn assign_styles(
+    plan: &mut Plan,
+    bp: &Blueprint,
+    kit: &Kit,
+    rng: &mut Rng,
+) -> Result<(), &'static str> {
     let l = &bp.layout;
-    // Bridges on flat main-route corridors.
+    let comp = &kit.components;
+    // Bridges on flat main-route corridors between ordinary rooms.
     let mut flat_main: Vec<usize> = plan
         .corridors
         .iter()
@@ -723,22 +925,46 @@ fn assign_styles(plan: &mut Plan, bp: &Blueprint, rng: &mut Rng) {
     let bridges: BTreeSet<usize> = flat_main.into_iter().take(l.bridges as usize).collect();
     for k in 0..plan.corridors.len() {
         let c = plan.corridors[k].clone();
-        if c.style == Style::Drop {
-            continue;
-        }
         let (ra, rb) = (&plan.rooms[c.a], &plan.rooms[c.b]);
-        let level = ra.y == rb.y;
-        let width = match c.role {
-            EdgeRole::Main | EdgeRole::Loop => round_half(rng.range_f32(5.0, 6.0)),
-            EdgeRole::Alternate => round_half(rng.range_f32(4.5, 5.5)),
-            EdgeRole::Side | EdgeRole::Shortcut => 4.5,
+        let v = c.dir.left();
+        // Where each end may sit, in the shared lateral coordinate.
+        let (a_lo, a_hi) = ra.span(c.dir, v);
+        let (b_lo, b_hi) = rb.span(c.dir.opposite(), v);
+        let narrow = matches!(
+            c.role,
+            EdgeRole::Side | EdgeRole::Shortcut | EdgeRole::Alternate
+        ) || ra.kind == RoomKind::Bend
+            || rb.kind == RoomKind::Bend;
+        let wanted = if c.style == Style::Drop {
+            4.0
+        } else if narrow {
+            round_half(range(rng, comp.passage_width))
+        } else {
+            round_half(range(rng, comp.corridor_width))
         };
-        let limit = ra.lateral_limit().min(rb.lateral_limit());
-        let room_for_offset = limit - width / 2.0;
-        let mut style = if !level {
+        // Widest corridor both ends can take.
+        let fit = (a_hi - a_lo).min(b_hi - b_lo);
+        let width = wanted.min((fit * 2.0).floor() / 2.0);
+        if width < 2.5 {
+            return Err("corridor fit");
+        }
+        let w2 = width / 2.0;
+        let (a_lo, a_hi, b_lo, b_hi) = (a_lo + w2, a_hi - w2, b_lo + w2, b_hi - w2);
+        // A common offset for corridors that must run straight.
+        let (c_lo, c_hi) = (a_lo.max(b_lo), a_hi.min(b_hi));
+        let common = (c_lo <= c_hi).then(|| {
+            // Prefer the middle of the shared span.
+            round_half(((c_lo + c_hi) / 2.0).clamp(c_lo, c_hi)).clamp(c_lo, c_hi)
+        });
+        let level = ra.y == rb.y;
+        let mut style = if c.style == Style::Drop {
+            Style::Drop
+        } else if !level {
             Style::Ramp
         } else if bridges.contains(&k) {
             Style::Bridge
+        } else if common.is_none() {
+            Style::Angled
         } else if matches!(
             c.role,
             EdgeRole::Main | EdgeRole::Alternate | EdgeRole::Loop
@@ -752,31 +978,53 @@ fn assign_styles(plan: &mut Plan, bp: &Blueprint, rng: &mut Rng) {
         } else {
             Style::Straight
         };
-        let (mut off_a, mut off_b) = (0.0, 0.0);
+        let (mut off_a, mut off_b) = (common.unwrap_or(0.0), common.unwrap_or(0.0));
         match style {
+            Style::Straight | Style::Ramp | Style::Bridge | Style::Drop => {
+                if common.is_none() {
+                    return Err("corridor fit");
+                }
+            }
             Style::Winding => {
-                // The jog must clear the corridor's own width.
-                let need = width / 2.0 + 0.6;
-                if room_for_offset >= need {
-                    let k = round_half(rng.range_f32(need, room_for_offset));
-                    let s = if rng.chance(0.5) { 1.0 } else { -1.0 };
-                    off_a = -k * s;
-                    off_b = k * s;
+                // The jog must clear the corridor's own width: ends on
+                // opposite sides, at least width + 1.2 apart.
+                let need = width + 1.2;
+                let s = if rng.chance(0.5) { 1.0 } else { -1.0 };
+                let (ta, tb) = if s > 0.0 { (a_lo, b_hi) } else { (a_hi, b_lo) };
+                if (tb - ta).abs() >= need {
+                    off_a = round_half(ta + (tb - ta) * 0.1).clamp(a_lo, a_hi);
+                    off_b = round_half(tb - (tb - ta) * 0.1).clamp(b_lo, b_hi);
+                    if (off_b - off_a).abs() < need {
+                        style = Style::Straight;
+                        off_a = common.unwrap_or(0.0);
+                        off_b = off_a;
+                    }
                 } else {
                     style = Style::Straight;
                 }
             }
             Style::Angled => {
-                if room_for_offset >= 1.5 {
-                    let k = round_half(rng.range_f32(1.5, room_for_offset));
-                    let s = if rng.chance(0.5) { 1.0 } else { -1.0 };
-                    off_a = -k * s;
-                    off_b = k * s;
-                } else {
-                    style = Style::Straight;
+                // Any two ends that fit; slant toward opposite sides.
+                if a_lo > a_hi || b_lo > b_hi {
+                    return Err("corridor fit");
                 }
+                let s = rng.chance(0.5);
+                off_a = round_half(if s {
+                    a_lo + (a_hi - a_lo) * 0.25
+                } else {
+                    a_hi - (a_hi - a_lo) * 0.25
+                })
+                .clamp(a_lo, a_hi);
+                off_b = round_half(if s {
+                    b_hi - (b_hi - b_lo) * 0.25
+                } else {
+                    b_lo + (b_hi - b_lo) * 0.25
+                })
+                .clamp(b_lo, b_hi);
             }
-            _ => {}
+        }
+        if style == Style::Straight && common.is_none() {
+            return Err("corridor fit");
         }
         let cc = &mut plan.corridors[k];
         cc.style = style;
@@ -785,6 +1033,7 @@ fn assign_styles(plan: &mut Plan, bp: &Blueprint, rng: &mut Rng) {
         cc.off_b = off_b;
         cc.stairs = style == Style::Ramp && rng.chance(0.4);
     }
+    Ok(())
 }
 
 fn name_rooms(plan: &mut Plan, kit: &Kit, rng: &mut Rng) {
@@ -799,6 +1048,7 @@ fn name_rooms(plan: &mut Plan, kit: &Kit, rng: &mut Rng) {
             RoomKind::Pit => &names.pit,
             RoomKind::Side => &names.side,
             RoomKind::Overlook => &names.overlook,
+            RoomKind::Bend => &names.bend,
         };
         let mut free: Vec<&String> = pool.iter().filter(|n| !taken.contains(*n)).collect();
         let name = if free.is_empty() {

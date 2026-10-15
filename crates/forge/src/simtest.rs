@@ -70,7 +70,7 @@ pub struct ConfigResult {
     pub failures: Vec<FailureRecord>,
 }
 
-fn party_for(c: &Config) -> Vec<dungeon_sim::PartyMemberSpec> {
+pub fn party_for(c: &Config) -> Vec<dungeon_sim::PartyMemberSpec> {
     let profile = AiProfile::parse(&c.profile).unwrap_or(AiProfile::Balanced);
     if c.size == 5 {
         let class = ClassId::ALL

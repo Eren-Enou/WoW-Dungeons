@@ -4,7 +4,7 @@
 use dungeon_forge::build::{self, Generated};
 use dungeon_forge::layout::{EdgeRole, Plan, Route, Style};
 use dungeon_forge::simtest::{self, Config};
-use dungeon_forge::{Blueprint, Kit, inspect, map};
+use dungeon_forge::{Blueprint, Kit, inspect, map, report};
 use dungeon_sim::content::Content;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -26,6 +26,14 @@ USAGE
                      [--difficulties normal,heroic] [--level N] [--failures FILE.json]
       Simulated AI clears over every combination; failures (wipes, timeouts,
       stuck or unreachable time, dithering) are written as reproducible JSON.
+  dungeon-forge report <dungeon.toml|blueprint.toml> [--seed N | --layouts A..B] [--runs N]
+                       [--sizes ..] [--profiles ..] [--classes ..] [--difficulties ..] [--level N]
+                       [--json FILE.json] [--svg DIR]
+      Where parties die or struggle: per encounter pulls, resets, wipes, deaths,
+      killing blows, clear times and optional completion; dithering and stuck
+      recoveries per room; mean duration per layout. --json writes everything
+      machine-readable; --svg DIR draws one map per layout with deaths (red x),
+      dithers (cyan) and stuck recoveries (yellow) over it.
   dungeon-forge seeds <blueprint.toml> [--from N] [--count N] [--out-dir DIR]
       Generate many seeds; report which succeed and how different they are.
 
@@ -128,6 +136,7 @@ fn main() -> ExitCode {
         "inspect" => cmd_inspect(&args),
         "test" => cmd_test(&args),
         "seeds" => cmd_seeds(&args),
+        "report" => cmd_report(&args),
         other => Err(format!(
             "unknown command '{other}'; run dungeon-forge --help"
         )),
@@ -305,21 +314,18 @@ fn cmd_inspect(args: &Args) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn cmd_test(args: &Args) -> Result<ExitCode, String> {
-    args.known(&[
-        "seed",
-        "layouts",
-        "runs",
-        "sizes",
-        "profiles",
-        "classes",
-        "difficulties",
-        "level",
-        "failures",
-    ])?;
+/// What to test: one dungeon file, one generated layout, or a range of layouts.
+struct Target {
+    content: Content,
+    origin: Option<String>,
+    /// Path to reproduce runs with (generated layouts are written to forge_out/).
+    hint: String,
+    plan: Option<Plan>,
+}
+
+fn load_targets(args: &Args) -> Result<Vec<Target>, String> {
     let path = first_path(args, "dungeon or blueprint")?;
-    // What to test: one dungeon file, one generated layout, or a range of layouts.
-    let mut targets: Vec<(Content, Option<String>, String)> = Vec::new();
+    let mut targets: Vec<Target> = Vec::new();
     if is_blueprint(&path) {
         let (bp, kit) = load_pair(&path)?;
         let seeds: Vec<u64> = match args.get("layouts") {
@@ -342,17 +348,39 @@ fn cmd_test(args: &Args) -> Result<ExitCode, String> {
             let tmp = PathBuf::from(format!("forge_out/{}_s{seed}.toml", bp.blueprint.id));
             write_out(&tmp, &g.toml)?;
             let origin = simtest::generated_from(&g.toml);
-            targets.push((g.content, origin, tmp.display().to_string()));
+            targets.push(Target {
+                content: g.content,
+                origin,
+                hint: tmp.display().to_string(),
+                plan: Some(g.plan),
+            });
         }
     } else {
         let c = Content::load(&path).map_err(|e| e.to_string())?;
         let text = std::fs::read_to_string(&path).unwrap_or_default();
-        targets.push((
-            c,
-            simtest::generated_from(&text),
-            path.display().to_string(),
-        ));
+        targets.push(Target {
+            content: c,
+            origin: simtest::generated_from(&text),
+            hint: path.display().to_string(),
+            plan: None,
+        });
     }
+    Ok(targets)
+}
+
+fn cmd_test(args: &Args) -> Result<ExitCode, String> {
+    args.known(&[
+        "seed",
+        "layouts",
+        "runs",
+        "sizes",
+        "profiles",
+        "classes",
+        "difficulties",
+        "level",
+        "failures",
+    ])?;
+    let targets = load_targets(args)?;
     let runs = args.num::<usize>("runs")?.unwrap_or(10);
     let sizes: Vec<usize> = args
         .list("sizes", &["5"])
@@ -369,7 +397,13 @@ fn cmd_test(args: &Args) -> Result<ExitCode, String> {
     // Totals per configuration across layouts: (runs, wins, stuck, unreachable, dithers, ms).
     let mut totals: std::collections::BTreeMap<String, (usize, usize, f32, f32, f32, f64)> =
         Default::default();
-    for (content, origin, hint) in &targets {
+    for Target {
+        content,
+        origin,
+        hint,
+        ..
+    } in &targets
+    {
         let level = args
             .num::<u32>("level")?
             .unwrap_or(content.dungeon.recommended_level);
@@ -469,6 +503,111 @@ fn cmd_test(args: &Args) -> Result<ExitCode, String> {
 }
 
 /// A compact signature of a layout's structure (for variety statistics).
+fn cmd_report(args: &Args) -> Result<ExitCode, String> {
+    args.known(&[
+        "seed",
+        "layouts",
+        "runs",
+        "sizes",
+        "profiles",
+        "classes",
+        "difficulties",
+        "level",
+        "json",
+        "svg",
+    ])?;
+    let targets = load_targets(args)?;
+    let runs = args.num::<usize>("runs")?.unwrap_or(10);
+    let sizes: Vec<usize> = args
+        .list("sizes", &["5"])
+        .iter()
+        .map(|s| {
+            s.parse()
+                .map_err(|_| format!("--sizes: '{s}' is not a number"))
+        })
+        .collect::<Result<_, _>>()?;
+    let profiles = args.list("profiles", &["balanced"]);
+    let classes = args.list("classes", &["striker"]);
+    let diffs = args.list("difficulties", &["normal"]);
+    let mut reports = Vec::new();
+    for t in &targets {
+        let level = args
+            .num::<u32>("level")?
+            .unwrap_or(t.content.dungeon.recommended_level);
+        let mut configs = Vec::new();
+        for &size in &sizes {
+            for profile in &profiles {
+                let class_list: Vec<String> = if size == 5 {
+                    classes.clone()
+                } else {
+                    vec!["-".into()]
+                };
+                for class in &class_list {
+                    for d in &diffs {
+                        if t.content.difficulty(d).is_none() {
+                            return Err(format!(
+                                "--difficulties: '{d}' is not defined in {}",
+                                t.content.dungeon.id
+                            ));
+                        }
+                        configs.push(Config {
+                            size,
+                            class: class.clone(),
+                            profile: profile.clone(),
+                            difficulty: d.clone(),
+                            level,
+                        });
+                    }
+                }
+            }
+        }
+        let r = report::report(
+            &t.content,
+            t.origin.clone(),
+            &configs,
+            runs,
+            dungeon_sim::runner::DEFAULT_MAX_SECONDS,
+        );
+        print!("{}", r.text());
+        if let Some(dir) = args.get("svg") {
+            // One map per layout: named after the file the layout was read from
+            // or written to (forge_out/<id>_s<seed>.toml).
+            let stem = Path::new(&t.hint)
+                .file_stem()
+                .map(|f| f.to_string_lossy().to_string())
+                .unwrap_or_else(|| t.content.dungeon.id.clone());
+            let file = Path::new(dir).join(format!("{stem}.svg"));
+            let overlay = map::Overlay {
+                deaths: &r.deaths,
+                dithers: &r.dithers,
+                stuck: &r.stuck,
+            };
+            write_out(&file, &map::svg_with(&t.content, t.plan.as_ref(), &overlay))?;
+            println!("  wrote {}", file.display());
+        }
+        reports.push(r);
+    }
+    if reports.len() > 1 {
+        println!("duration by layout:");
+        for r in &reports {
+            println!(
+                "  {:<44} wins {}/{} | mean {:.0}s (wins {:.0}s)",
+                r.generated_from.as_deref().unwrap_or(&r.dungeon),
+                r.victories,
+                r.runs,
+                r.mean_duration,
+                r.mean_victory_duration
+            );
+        }
+    }
+    if let Some(f) = args.get("json") {
+        let json = serde_json::to_string_pretty(&reports).map_err(|e| e.to_string())?;
+        write_out(Path::new(f), &json)?;
+        println!("wrote {f}");
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
 fn signature(plan: &Plan) -> String {
     let main: Vec<String> = plan
         .main

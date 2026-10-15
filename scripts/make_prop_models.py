@@ -144,6 +144,39 @@ def brazier():
     ]
 
 
+def shifted(make, dx, dz):
+    """Build a part with `make(mesh)` and move it by (dx, dz)."""
+    m = Mesh()
+    make(m)
+    m.pos = [(x + dx, y, z + dz) for (x, y, z) in m.pos]
+    return m
+
+
+def merge(target, part):
+    base = len(target.pos)
+    target.pos += part.pos
+    target.nrm += part.nrm
+    target.idx += [i + base for i in part.idx]
+
+
+def candelabrum():
+    """A tall iron candle stand for crypt pillars: four candles above head
+    height so their flames show over the low walls round a pillar."""
+    iron, wax, flame = Mesh(), Mesh(), Mesh()
+    iron.frustum(0.5, 0.0, 0.35, 0.12, cap_top=True)                 # foot
+    iron.frustum(0.08, 0.12, 0.07, 3.2, cap_top=False)               # shaft
+    iron.frustum(0.75, 3.2, 0.78, 3.3, cap_top=True, cap_bottom=True)  # tray
+    for (dx, dz) in [(0.0, 0.0), (0.55, 0.0), (-0.28, 0.48), (-0.28, -0.48)]:
+        merge(wax, shifted(lambda m: m.frustum(0.09, 3.3, 0.08, 3.75, cap_top=True), dx, dz))
+        merge(flame, shifted(lambda m: m.cone(0.07, 3.75, 4.0, n=5), dx, dz))
+    return [
+        ("iron", iron, pbr((0.09, 0.09, 0.1), metallic=0.85, rough=0.5)),
+        ("wax", wax, pbr((0.85, 0.82, 0.72), rough=0.6)),
+        ("flame", flame, pbr((1.0, 0.75, 0.4), emissive=(1.0, 0.62, 0.25), strength=6.0)),
+    ]
+
+
 if __name__ == "__main__":
     os.makedirs(OUT, exist_ok=True)
     write_glb(os.path.join(OUT, "forge_brazier.glb"), brazier())
+    write_glb(os.path.join(OUT, "crypt_candelabrum.glb"), candelabrum())

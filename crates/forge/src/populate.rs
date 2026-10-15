@@ -1,23 +1,24 @@
-//! Layer C: encounters from recipes, placed relative to the direction the
-//! party enters each room; loot sources and rewards.
+//! Layer C: encounters from recipes, placed by the placement scorer
+//! (`placement.rs`) using the room's real floor, its exits, the navigation
+//! (for patrol routes and sightlines) and the packs already placed; then
+//! hazards, loot sources and rewards.
 
 use crate::blueprint::Blueprint;
 use crate::compose::Composed;
-use crate::kit::{HazardPlace, Kit, Placement};
-use crate::layout::{EdgeRole, EncounterRef, Plan, RoomKind};
+use crate::kit::{HazardPlace, Kit};
+use crate::layout::{EdgeRole, EncounterRef, Plan, Room};
+use crate::placement::{self, FLOOR_MARGIN, Placed, RoomView};
 use dungeon_sim::content::{EncounterConfig, HazardConfig, LootEntry, MobSpawn};
 use dungeon_sim::math::V2;
+use dungeon_sim::nav::Nav;
 use dungeon_sim::poly::Poly;
-
-/// Keep mobs and hazards this far inside a room's floor.
-const FLOOR_MARGIN: f32 = 1.2;
-/// Sideways spacing between mobs in a row.
-const SPACING: f32 = 2.4;
 
 pub struct Populated {
     pub encounters: Vec<EncounterConfig>,
     /// Room index holding each encounter.
     pub rooms: Vec<usize>,
+    /// Where each encounter's pack is centred, and which way it faces.
+    pub anchors: Vec<(V2, V2)>,
     pub loot: Vec<LootEntry>,
 }
 
@@ -25,19 +26,18 @@ fn r2(v: V2) -> V2 {
     V2::new((v.x * 100.0).round() / 100.0, (v.z * 100.0).round() / 100.0)
 }
 
-/// Pull `p` toward the room centre until it stands on the floor with margin.
-fn onto_floor(p: V2, center: V2, floors: &[Poly]) -> V2 {
+/// Pull `p` toward `toward` until it stands on the floor with margin.
+fn onto_floor(p: V2, toward: V2, floors: &[Poly]) -> V2 {
     let inset: Vec<Poly> = floors
         .iter()
-        .filter_map(|f| f.inset(FLOOR_MARGIN))
+        .filter_map(|f| f.inset(FLOOR_MARGIN + 0.2))
         .collect();
     let on = |q: V2| inset.iter().any(|f| f.contains(q));
     if on(p) {
         return p;
     }
-    // Walk toward the centre, then slide sideways around a pit.
     for k in 1..=20 {
-        let q = p + (center - p) * (k as f32 / 20.0);
+        let q = p + (toward - p) * (k as f32 / 20.0);
         if on(q) {
             return q;
         }
@@ -49,9 +49,77 @@ fn onto_floor(p: V2, center: V2, floors: &[Poly]) -> V2 {
         .unwrap_or(p)
 }
 
-pub fn populate(bp: &Blueprint, kit: &Kit, plan: &Plan, comp: &Composed) -> Populated {
+/// Where corridor `k` meets room `r` (world), and the direction out of the room.
+fn mouth(plan: &Plan, k: usize, r: usize) -> (V2, V2) {
+    let c = &plan.corridors[k];
+    let room: &Room = &plan.rooms[r];
+    let v = c.dir.lateral();
+    if c.a == r {
+        let u = c.dir.unit();
+        (room.center() + u * room.ext(c.dir) + v * c.off_a, u)
+    } else {
+        let u = c.dir.opposite().unit();
+        (
+            room.center() + u * room.ext(c.dir.opposite()) + v * c.off_b,
+            u,
+        )
+    }
+}
+
+/// Where the party waits before pulling the encounter in room `r`.
+pub fn staging_point(plan: &Plan, r: usize) -> V2 {
+    let dummy: Vec<Poly> = Vec::new();
+    view_with(plan, &dummy, r).staging
+}
+
+/// The room as placement sees it: floor, entry mouth, other mouths, staging.
+fn view<'a>(plan: &'a Plan, comp: &'a Composed, r: usize) -> RoomView<'a> {
+    view_with(plan, &comp.floors[r], r)
+}
+
+fn view_with<'a>(plan: &'a Plan, floors: &'a [Poly], r: usize) -> RoomView<'a> {
+    let touching: Vec<usize> = (0..plan.corridors.len())
+        .filter(|&k| plan.corridors[k].a == r || plan.corridors[k].b == r)
+        .collect();
+    // The way in: the corridor that brings the party here first.
+    let entry = touching
+        .iter()
+        .copied()
+        .find(|&k| {
+            let c = &plan.corridors[k];
+            c.b == r
+                && matches!(
+                    c.role,
+                    EdgeRole::Main | EdgeRole::Side | EdgeRole::Alternate
+                )
+        })
+        .or_else(|| touching.first().copied());
+    let (entry_mouth, out_dir) = entry
+        .map(|k| mouth(plan, k, r))
+        .unwrap_or((plan.rooms[r].center(), V2::new(0.0, -1.0)));
+    RoomView {
+        room: &plan.rooms[r],
+        floors,
+        entry_mouth,
+        other_mouths: touching
+            .iter()
+            .filter(|&&k| Some(k) != entry)
+            .map(|&k| mouth(plan, k, r).0)
+            .collect(),
+        staging: entry_mouth + out_dir * 4.0,
+    }
+}
+
+pub fn populate(
+    bp: &Blueprint,
+    kit: &Kit,
+    plan: &Plan,
+    comp: &Composed,
+    nav: &Nav,
+) -> Result<Populated, String> {
     let mut encounters = Vec::new();
     let mut rooms = Vec::new();
+    let mut anchors = Vec::new();
     // Main encounters in route order, each optional one right after the
     // encounter of the room its side corridor branches from.
     let mut order: Vec<(usize, EncounterRef)> = Vec::new();
@@ -79,6 +147,13 @@ pub fn populate(bp: &Blueprint, kit: &Kit, plan: &Plan, comp: &Composed) -> Popu
         order.extend(tail);
         order.push(fin);
     }
+    let aggro = |key: &str| {
+        kit.templates
+            .get(key)
+            .map(|t| t.aggro_radius)
+            .unwrap_or(10.0)
+    };
+    let mut placed: Vec<Placed> = Vec::new();
     for (room, eref) in order {
         let (slot, id, optional) = match eref {
             EncounterRef::Main(k) => (
@@ -94,68 +169,57 @@ pub fn populate(bp: &Blueprint, kit: &Kit, plan: &Plan, comp: &Composed) -> Popu
         };
         let recipe = &kit.recipes[&slot.recipe];
         let r = &plan.rooms[room];
-        let c = r.center();
-        let u = r.entry.map(|d| d.unit()).unwrap_or(V2::new(0.0, 1.0));
-        let v = V2::new(-u.z, u.x);
-        // Pack anchor: the far side of the room (the party stages at the door).
-        let anchor = match r.kind {
-            RoomKind::Pit => c + u * ((r.half + r.pit) / 2.0),
-            RoomKind::Arena => c + u * (0.15 * r.half),
-            _ => c + u * (0.3 * r.half),
-        };
-        let row_gap = if r.kind == RoomKind::Pit { 1.5 } else { 1.8 };
-        let mut mobs = Vec::new();
-        let place_row = |base: V2, n: u32, template: &str, mobs: &mut Vec<MobSpawn>| {
-            for i in 0..n {
-                let t = (i as f32 - (n as f32 - 1.0) / 2.0) * SPACING;
-                let p = onto_floor(base + v * t, c, &comp.floors[room]);
-                mobs.push(MobSpawn {
-                    template: template.to_string(),
-                    pos: r2(p),
-                    y: Some(r.y),
-                    patrol: Vec::new(),
+        let rv = view(plan, comp, room);
+        if recipe.space.pillars && comp.pillars[room].is_empty() {
+            return Err(format!("{} (no pillars in '{}')", slot.recipe, r.name));
+        }
+        let choice = placement::place(nav, &rv, recipe, &aggro, &placed, &[])
+            .ok_or_else(|| format!("{} in {:?} '{}'", slot.recipe, r.kind, r.name))?;
+        let mobs: Vec<MobSpawn> = choice
+            .spots
+            .iter()
+            .map(|s| MobSpawn {
+                template: s.template.clone(),
+                pos: r2(s.pos),
+                y: Some(r.y),
+                patrol: s.patrol.iter().map(|p| r2(*p)).collect(),
+            })
+            .collect();
+        for s in &choice.spots {
+            let a = aggro(&s.template);
+            placed.push(Placed {
+                pos: s.pos,
+                y: r.y,
+                aggro: a,
+            });
+            for p in &s.patrol {
+                placed.push(Placed {
+                    pos: *p,
+                    y: r.y,
+                    aggro: a,
                 });
             }
-        };
-        for m in &recipe.mobs {
-            match m.place {
-                Placement::Front => {
-                    place_row(anchor - u * row_gap, m.count, &m.template, &mut mobs)
-                }
-                Placement::Back => place_row(anchor + u * row_gap, m.count, &m.template, &mut mobs),
-                Placement::Center => place_row(anchor, m.count, &m.template, &mut mobs),
-                Placement::Flank => {
-                    for i in 0..m.count {
-                        let side = if i % 2 == 0 { 1.0 } else { -1.0 };
-                        let dist = 3.5 + 2.0 * (i / 2) as f32;
-                        let p = onto_floor(anchor + v * (side * dist), c, &comp.floors[room]);
-                        mobs.push(MobSpawn {
-                            template: m.template.clone(),
-                            pos: r2(p),
-                            y: Some(r.y),
-                            patrol: Vec::new(),
-                        });
-                    }
-                }
-            }
         }
+        // Hazards: on the approach (between the door and the pack) or either
+        // side of the pack, kept off the pack itself.
+        let f = choice.toward_entry;
+        let v = V2::new(-f.z, f.x);
         let mut hazards = Vec::new();
         for h in &recipe.hazards {
-            let (along, across) = match h.place {
-                HazardPlace::Approach => (-0.25 * r.half, 0.45 * r.half),
-                HazardPlace::Flanks => (0.0, 0.5 * r.half),
+            let base = match h.place {
+                HazardPlace::Approach => choice.anchor + (rv.entry_mouth - choice.anchor) * 0.45,
+                HazardPlace::Flanks => choice.anchor,
             };
-            let base = if h.place == HazardPlace::Flanks {
-                anchor
-            } else {
-                c
+            let across = match h.place {
+                HazardPlace::Approach => 3.0 + h.radius,
+                HazardPlace::Flanks => 4.5 + h.radius,
             };
             for (k, side) in [1.0f32, -1.0].into_iter().enumerate() {
-                let p = onto_floor(
-                    base + u * along + v * (side * across),
-                    c,
-                    &comp.floors[room],
-                );
+                let mut p = onto_floor(base + v * (side * across), base, rv.floors);
+                // Never on top of a pack member.
+                if choice.spots.iter().any(|s| s.pos.dist(p) < h.radius + 1.0) {
+                    p = onto_floor(base + v * (side * (across + 3.0)), base, rv.floors);
+                }
                 hazards.push(HazardConfig {
                     name: h.name.clone(),
                     pos: r2(p),
@@ -170,14 +234,17 @@ pub fn populate(bp: &Blueprint, kit: &Kit, plan: &Plan, comp: &Composed) -> Popu
                 });
             }
         }
-        let boss_name = recipe
+        // A single boss names its encounter; a council keeps the recipe's name.
+        let bosses: Vec<&String> = recipe
             .mobs
             .iter()
-            .find(|m| {
+            .filter(|m| {
                 kit.templates.get(&m.template).map(|t| t.rank)
                     == Some(dungeon_sim::content::EnemyRank::Boss)
             })
-            .map(|m| kit.templates[&m.template].name.clone());
+            .map(|m| &kit.templates[&m.template].name)
+            .collect();
+        let boss_name = (bosses.len() == 1).then(|| bosses[0].clone());
         let name = slot
             .name
             .clone()
@@ -191,6 +258,7 @@ pub fn populate(bp: &Blueprint, kit: &Kit, plan: &Plan, comp: &Composed) -> Popu
             hazards,
         });
         rooms.push(room);
+        anchors.push((choice.anchor, f));
     }
 
     // Loot: kit sources are roles; map them to encounter ids here.
@@ -232,9 +300,10 @@ pub fn populate(bp: &Blueprint, kit: &Kit, plan: &Plan, comp: &Composed) -> Popu
             }
         })
         .collect();
-    Populated {
+    Ok(Populated {
         encounters,
         rooms,
+        anchors,
         loot,
-    }
+    })
 }

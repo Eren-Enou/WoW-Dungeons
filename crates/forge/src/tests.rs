@@ -98,7 +98,7 @@ fn generated_dungeon_round_trips_through_the_loader() {
     let g = build::generate(&bp(), &kit(), 2).expect("seed 2");
     let again = dungeon_sim::Content::from_toml_str(&g.toml, "again").expect("loads");
     assert_eq!(again.dungeon.areas.len(), g.content.dungeon.areas.len());
-    assert_eq!(again.encounters.len(), 6);
+    assert_eq!(again.encounters.len(), 7);
 }
 
 #[test]
@@ -147,6 +147,7 @@ fn impossible_layouts_fail_with_a_diagnosis_not_a_loop() {
     b.layout.bridges = 0;
     b.layout.alternate_route = true;
     b.layout.shortcut = crate::blueprint::Shortcut::Loop;
+    b.identity.challenges.clear();
     let err = match build::generate(&b, &kit(), 1) {
         Ok(_) => panic!("a two-room dungeon has no alternate route or loop"),
         Err(e) => e,
@@ -236,4 +237,183 @@ fn ten_player_raids_clear_generated_layouts_without_loops() {
             );
         }
     }
+}
+
+// ---- 0.7: a second kit, Recipes 2.0, identity, analysis.
+
+const CRYPT: &str = include_str!("../../../assets/forge/kits/crypt.toml");
+const RELIQUARY: &str = include_str!("../../../assets/forge/blueprints/hollow_reliquary.toml");
+
+fn crypt() -> Kit {
+    Kit::from_toml_str(CRYPT, "crypt").expect("crypt kit is valid")
+}
+
+fn reliquary() -> Blueprint {
+    Blueprint::from_toml_str(RELIQUARY, "reliquary").expect("blueprint parses")
+}
+
+#[test]
+fn crypt_layouts_are_deterministic_and_deliver_their_identity() {
+    let (b, k) = (reliquary(), crypt());
+    assert!(build::validate_pair(&b, &k).is_empty());
+    let a = build::generate(&b, &k, 4).expect("seed 4");
+    let again = build::generate(&b, &k, 4).expect("seed 4 again");
+    assert_eq!(a.toml, again.toml);
+    for seed in 1..=4 {
+        let g = build::generate(&b, &k, seed).unwrap_or_else(|e| panic!("seed {seed}: {e}"));
+        assert!(g.structure.ok() && g.space.ok(), "seed {seed}");
+        // Pillared halls: pillars exist and their holes are not walkable.
+        let count: usize = g.pillars.iter().map(|p| p.len()).sum();
+        assert!(count >= 8, "seed {seed}: {count} pillars");
+        let nav = g.content.nav();
+        for (room, holes) in g.pillars.iter().enumerate() {
+            let y = g.plan.rooms[room].y;
+            for h in holes {
+                let mid = (h.min + h.max) * 0.5;
+                assert!(
+                    nav.locate(mid, y).is_none(),
+                    "seed {seed}: pillar at {mid:?} is floor"
+                );
+            }
+        }
+        // A patrol walks its route; the council has two bosses; the
+        // guardian's wail can be hidden from.
+        let c = &g.content;
+        assert!(
+            c.encounters
+                .iter()
+                .any(|e| e.mobs.iter().any(|m| m.patrol.len() >= 1))
+        );
+        let council = c
+            .encounters
+            .iter()
+            .find(|e| e.id.ends_with("twin_abbots"))
+            .expect("council");
+        let bosses = council
+            .mobs
+            .iter()
+            .filter(|m| c.templates[&m.template].rank == dungeon_sim::content::EnemyRank::Boss)
+            .count();
+        assert_eq!(bosses, 2, "seed {seed}");
+        assert!(
+            c.templates
+                .values()
+                .any(|t| t.abilities.iter().any(|a| a.los_blockable))
+        );
+    }
+}
+
+#[test]
+fn the_two_kits_build_different_dungeons() {
+    let ember = build::generate(&bp(), &kit(), 1).expect("emberforge");
+    let crypt = build::generate(&reliquary(), &crypt(), 1).expect("reliquary");
+    assert_ne!(ember.plan.cell, crypt.plan.cell);
+    // The crypt has pillared halls and a void chasm; the vaults have lava.
+    assert!(ember.pillars.iter().all(|p| p.is_empty()));
+    assert!(crypt.pillars.iter().any(|p| !p.is_empty()));
+    assert!(!ember.content.dungeon.lava.is_empty());
+    assert!(crypt.content.dungeon.lava.is_empty());
+    // Different enemies entirely.
+    let names = |g: &crate::Generated| -> std::collections::BTreeSet<String> {
+        g.content
+            .templates
+            .values()
+            .map(|t| t.name.clone())
+            .collect()
+    };
+    assert!(names(&ember).is_disjoint(&names(&crypt)));
+}
+
+#[test]
+fn identity_promises_must_be_kept() {
+    let (mut b, k) = (reliquary(), crypt());
+    // Without the council recipe nothing delivers a council.
+    b.encounters.retain(|e| e.recipe != "twin_abbots");
+    let e = build::validate_pair(&b, &k);
+    assert!(
+        e.iter()
+            .any(|m| m.contains("promises Council") && m.contains("twin_abbots")),
+        "{e:?}"
+    );
+}
+
+#[test]
+fn encounters_that_never_fit_name_the_recipe_and_room() {
+    let (b, k) = (reliquary(), crypt());
+    // Archers that need a 40 m room fit nowhere in a crypt.
+    let mut k2 = k.clone();
+    k2.recipes.get_mut("bone_archers").unwrap().space.min_size = 40.0;
+    let err = match build::generate(&b, &k2, 1) {
+        Ok(_) => panic!("no crypt room is 40 m across"),
+        Err(e) => e,
+    };
+    assert!(err.contains("bone_archers"), "{err}");
+}
+
+#[test]
+fn report_attributes_clears_and_deaths_to_encounters() {
+    let g = build::generate(&bp(), &kit(), 1).expect("generates");
+    let config = crate::simtest::Config {
+        size: 5,
+        class: "striker".into(),
+        profile: "balanced".into(),
+        difficulty: "normal".into(),
+        level: bp().blueprint.level,
+    };
+    let r = crate::report::report(&g.content, None, &[config], 2, 1500.0);
+    assert_eq!(r.runs, 2);
+    assert_eq!(r.encounters.len(), g.content.encounters.len());
+    for e in r.encounters.iter().filter(|e| !e.optional) {
+        assert!(e.pulls >= 1, "{} never pulled", e.id);
+    }
+    if r.victories == 2 {
+        assert!(
+            r.encounters
+                .iter()
+                .filter(|e| !e.optional)
+                .all(|e| e.runs_cleared == 2)
+        );
+    }
+    let deaths: u32 = r.encounters.iter().map(|e| e.deaths).sum::<u32>() + r.deaths_between;
+    assert_eq!(deaths as usize, r.deaths.len());
+    // The overlay map draws every marker.
+    let svg = crate::map::svg_with(
+        &g.content,
+        Some(&g.plan),
+        &crate::map::Overlay {
+            deaths: &r.deaths,
+            dithers: &r.dithers,
+            stuck: &r.stuck,
+        },
+    );
+    assert!(svg.ends_with("</svg>\n"));
+}
+
+#[test]
+fn five_player_parties_clear_crypt_layouts() {
+    let (b, k) = (reliquary(), crypt());
+    let mut wins = 0;
+    let mut runs = 0;
+    for seed in [1u64, 2] {
+        let g = build::generate(&b, &k, seed).expect("generates");
+        for class in [dungeon_sim::ClassId::Striker, dungeon_sim::ClassId::Mender] {
+            let party = dungeon_sim::runner::party_at_level(
+                class,
+                b.blueprint.level,
+                dungeon_sim::AiProfile::Balanced,
+            );
+            for sim_seed in 1..=2 {
+                let (_, s) =
+                    dungeon_sim::runner::run_headless(&g.content, &party, sim_seed, 1500.0);
+                runs += 1;
+                wins += (s.outcome == dungeon_sim::RunOutcome::Victory) as usize;
+                assert!(s.nav_stuck_seconds < 10.0, "layout {seed}: stuck");
+                assert!(
+                    s.encounters_cleared + 1 >= s.encounters_total,
+                    "layout {seed}: wiped before the guardian"
+                );
+            }
+        }
+    }
+    assert!(wins * 4 >= runs * 3, "{wins}/{runs} clears");
 }

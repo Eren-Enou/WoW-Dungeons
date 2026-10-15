@@ -25,6 +25,54 @@ decor = ["stalagmite", "pillar", "boulder", "stalagmite"]
 # scripts/make_prop_models.py. Drawn as a crystal if the file is missing.
 arena_prop = { model = "models/props/forge_brazier.glb", fallback = "crystal", scale = 2.0, radius = 0.9, height = 4.4 }
 
+[components]
+cell = 38.0                 # caverns sit further apart than crypt rooms
+corridor_width = [5.0, 6.0]
+passage_width = [4.0, 5.0]
+chasm = "lava"
+corner_decor = true
+
+# Irregular caverns: every side's extent varies, every corner is cut by a
+# different amount, halls stretch a little along the way in.
+[components.rooms.entrance]
+size = [7.0, 8.0]
+jitter = 0.08
+cut = [0.15, 0.35]
+
+[components.rooms.chamber]
+size = [8.0, 9.5]
+jitter = 0.15
+cut = [0.2, 0.45]
+
+[components.rooms.hall]
+size = [11.0, 12.0]
+aspect = [1.0, 1.15]
+jitter = 0.08
+cut = [0.25, 0.45]
+
+[components.rooms.arena]
+size = [13.0, 14.0]
+jitter = 0.05
+cut = [0.4, 0.5]
+
+[components.rooms.pit]
+size = [11.0, 12.0]
+jitter = 0.05
+shape = "pit"
+pit = [3.5, 4.5]
+
+[components.rooms.side]
+size = [7.0, 8.5]
+jitter = 0.12
+cut = [0.2, 0.4]
+
+[components.rooms.overlook]
+size = [5.0, 5.0]
+
+[components.rooms.bend]
+size = [4.0, 4.5]
+jitter = 0.0
+
 [palette.names]
 entrance = ["Ashgate Landing", "Soot Gate", "Emberwatch Door"]
 chamber = ["Smoke Hollow", "Clinker Chamber", "Bellows Room", "Cinder Nook", "Slag Cellar", "Charred Vault", "Tinder Room", "Flue Junction"]
@@ -33,6 +81,7 @@ arena = ["The Crucible", "Heart of the Forge", "Molten Sanctum"]
 pit = ["Slag Pit", "Pouring Floor", "Spill Chamber"]
 side = ["Toolwright's Cell", "Ash Closet", "Shuttered Kiln", "Coal Bunker"]
 overlook = ["Chimney Ledge", "Flue Overlook", "Watchers' Shelf"]
+bend = ["Scorched Bend", "Cinder Crawl", "Ash Gullet", "Smoke Throat", "Soot Turn"]
 
 # ------------------------------------------------------------------ recipes --
 
@@ -40,6 +89,8 @@ overlook = ["Chimney Ledge", "Flue Overlook", "Watchers' Shelf"]
 name = "Emberkin Raiders"
 tests = "a straightforward pack: hold threat on several targets, interrupt one caster"
 room = "hall"
+tags = ["interrupts"]
+formation = "line"
 mobs = [
   { template = "raider", place = "front", count = 2 },
   { template = "raider", place = "back" },
@@ -50,6 +101,10 @@ mobs = [
 name = "Pyrecaller's Guard"
 tests = "melee screen a healer-caster: reach it, interrupt or crowd-control its heals"
 room = "hall"
+tags = ["protect_caster", "interrupts"]
+formation = "screen"
+placement = "guard_exit"
+space = { ranged_lane = true }
 mobs = [
   { template = "bulwark", place = "front" },
   { template = "raider", place = "front" },
@@ -60,15 +115,31 @@ mobs = [
 name = "Ash Hound Pack"
 tests = "frontal cleaves: the tank turns them away, everyone else stays behind"
 room = "hall"
+tags = ["frontal"]
+formation = "wedge"
 mobs = [
   { template = "ashhound", place = "front", count = 2 },
   { template = "shieldwall", place = "back" },
+]
+
+[recipes.hound_patrol]
+name = "Ash Hound Patrol"
+tests = "a pair of hounds walking across a hall: wait for them to turn, or fight them in the open"
+room = "hall"
+tags = ["patrol", "frontal"]
+placement = "patrol"
+patrol = { length = 16.0 }
+mobs = [
+  { template = "ashhound", place = "front", count = 2 },
 ]
 
 [recipes.interrupt_pack]
 name = "Searer Circle"
 tests = "two party-wide pulses: assign interrupts"
 room = "hall"
+tags = ["interrupts", "protect_caster"]
+formation = "screen"
+space = { ranged_lane = true }
 mobs = [
   { template = "raider", place = "front" },
   { template = "searer", place = "back", count = 2 },
@@ -78,6 +149,8 @@ mobs = [
 name = "Hulk and Sparks"
 tests = "fight beside a lava pit while vents pulse on the approach"
 room = "pit"
+tags = ["area_control"]
+formation = "line"
 mobs = [
   { template = "magma_hulk", place = "center" },
   { template = "spark", place = "flank", count = 2 },
@@ -90,6 +163,8 @@ hazards = [
 name = "Obsidian Sentinel"
 tests = "a single tough elite with a frontal slam, off the main route"
 room = "chamber"
+tags = ["frontal", "area_control"]
+placement = "center"
 mobs = [
   { template = "sentinel", place = "center" },
 ]
@@ -98,6 +173,7 @@ mobs = [
 name = "Forgewarden Hask"
 tests = "summoned adds and rings beside a lava pit"
 room = "pit"
+tags = ["summons", "area_control", "multi_phase"]
 mobs = [
   { template = "forgewarden", place = "center" },
 ]
@@ -106,6 +182,8 @@ mobs = [
 name = "Cindermaw"
 tests = "multi-phase final boss: frontal breath, interruptible spit, rings and adds, then a pulse race"
 room = "arena"
+tags = ["multi_phase", "frontal", "interrupts", "summons", "area_control"]
+placement = "center"
 mobs = [
   { template = "cindermaw", place = "center" },
 ]

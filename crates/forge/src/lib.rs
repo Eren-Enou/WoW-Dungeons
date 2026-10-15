@@ -5,7 +5,7 @@
 //! Pipeline: `layout` (topology on a grid) → `compose` (room and corridor
 //! components → walkable areas) → `populate` (encounter recipes, loot) →
 //! the game's loader → `check` (structure, encounter space) → `simtest`
-//! (simulated party clears). See DUNGEON_FORGE_PLAN.md.
+//! (simulated party clears) and `report` (where parties die or get stuck). See DUNGEON_FORGE_PLAN.md.
 
 pub mod blueprint;
 pub mod build;
@@ -15,7 +15,9 @@ pub mod inspect;
 pub mod kit;
 pub mod layout;
 pub mod map;
+pub mod placement;
 pub mod populate;
+pub mod report;
 pub mod simtest;
 
 #[cfg(test)]

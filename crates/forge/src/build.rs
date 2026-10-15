@@ -11,7 +11,7 @@ use crate::populate;
 use dungeon_sim::content::{Content, Difficulty, DungeonConfig, NavConfig, RewardConfig};
 
 /// Bumped whenever the same blueprint + seed would produce different output.
-pub const GENERATOR_VERSION: u32 = 1;
+pub const GENERATOR_VERSION: u32 = 2;
 
 pub struct Generated {
     pub plan: Plan,
@@ -21,6 +21,10 @@ pub struct Generated {
     pub owners: Vec<Owner>,
     /// Room of each encounter (same order as `content.encounters`).
     pub encounter_rooms: Vec<usize>,
+    /// Pack centre and facing (toward the party's approach) per encounter.
+    pub anchors: Vec<(dungeon_sim::math::V2, dungeon_sim::math::V2)>,
+    /// Pillar holes per room (world space).
+    pub pillars: Vec<Vec<dungeon_sim::nav::Rect>>,
     pub structure: CheckReport,
     pub space: CheckReport,
 }
@@ -73,6 +77,32 @@ pub fn validate_pair(bp: &Blueprint, kit: &Kit) -> Vec<String> {
             last.recipe
         ));
     }
+    // The identity's promised challenges must be delivered by some encounter.
+    let used: std::collections::BTreeSet<crate::kit::Tag> = bp
+        .encounters
+        .iter()
+        .chain(&bp.optional)
+        .filter_map(|s| kit.recipes.get(&s.recipe))
+        .flat_map(|r| r.tags.iter().copied())
+        .collect();
+    for c in &bp.identity.challenges {
+        if !used.contains(c) {
+            let offering: Vec<&String> = kit
+                .recipes
+                .iter()
+                .filter(|(_, r)| r.tags.contains(c))
+                .map(|(k, _)| k)
+                .collect();
+            e.push(format!(
+                "identity.challenges promises {c:?} but no encounter delivers it; recipes tagged with it: {}",
+                if offering.is_empty() {
+                    "none in this kit".to_string()
+                } else {
+                    offering.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+                }
+            ));
+        }
+    }
     for (i, s) in bp.optional.iter().enumerate() {
         if kit
             .recipes
@@ -110,7 +140,8 @@ pub fn generate(bp: &Blueprint, kit: &Kit, seed: u64) -> Result<Generated, Strin
         };
         match finish(bp, kit, plan) {
             Ok(g) => return Ok(g),
-            Err(why) => {
+            Err(Failure::Space(what)) => tally.add(format!("space: {what}")),
+            Err(Failure::Invalid(why)) => {
                 tally.add("validation");
                 first_validation.get_or_insert(why);
             }
@@ -133,32 +164,66 @@ pub fn generate(bp: &Blueprint, kit: &Kit, seed: u64) -> Result<Generated, Strin
     Err(msg)
 }
 
+enum Failure {
+    /// An encounter found no spot satisfying its recipe (retry).
+    Space(String),
+    /// The composed dungeon failed validation (a generator bug).
+    Invalid(String),
+}
+
+impl From<String> for Failure {
+    fn from(s: String) -> Self {
+        Failure::Invalid(s)
+    }
+}
+
+fn dungeon_config(bp: &Blueprint, kit: &Kit, comp: &compose::Composed) -> DungeonConfig {
+    DungeonConfig {
+        id: bp.blueprint.id.clone(),
+        name: bp.blueprint.name.clone(),
+        description: bp.blueprint.description.clone(),
+        recommended_level: bp.blueprint.level,
+        recommended_group: bp.blueprint.group_size,
+        hp_multiplier: 1.0,
+        damage_multiplier: 1.0,
+        entrance: comp.entrance,
+        entrance_y: None,
+        leash_radius: 50.0,
+        areas: comp.areas.clone(),
+        links: comp.links.clone(),
+        nav: NavConfig::default(),
+        lava: comp.lava.clone(),
+        decor: comp.decor.clone(),
+        lights: comp.lights.clone(),
+        props: comp.props.clone(),
+        theme: kit.palette.theme,
+    }
+}
+
 /// Compose, populate, serialise, reload and check one plan.
-fn finish(bp: &Blueprint, kit: &Kit, plan: Plan) -> Result<Generated, String> {
+fn finish(bp: &Blueprint, kit: &Kit, plan: Plan) -> Result<Generated, Failure> {
     let comp = compose::compose(&plan, kit);
-    let pop = populate::populate(bp, kit, &plan, &comp);
+    // Placement needs the navigation (patrol routes, sightlines): build it
+    // from the composed geometry alone.
+    let shell = Content {
+        dungeon: dungeon_config(bp, kit, &comp),
+        difficulties: Vec::new(),
+        templates: Default::default(),
+        encounters: Vec::new(),
+        loot: Vec::new(),
+        rewards: RewardConfig {
+            marks_per_clear: 0,
+            marks_per_wipe: 0,
+            xp_per_clear: 0,
+        },
+    };
+    let nav = shell
+        .build_nav()
+        .map_err(|e| Failure::Invalid(e.join("\n")))?;
+    let pop = populate::populate(bp, kit, &plan, &comp, &nav).map_err(Failure::Space)?;
     let level = bp.blueprint.level;
     let content = Content {
-        dungeon: DungeonConfig {
-            id: bp.blueprint.id.clone(),
-            name: bp.blueprint.name.clone(),
-            description: bp.blueprint.description.clone(),
-            recommended_level: level,
-            recommended_group: bp.blueprint.group_size,
-            hp_multiplier: 1.0,
-            damage_multiplier: 1.0,
-            entrance: comp.entrance,
-            entrance_y: None,
-            leash_radius: 50.0,
-            areas: comp.areas.clone(),
-            links: comp.links.clone(),
-            nav: NavConfig::default(),
-            lava: comp.lava.clone(),
-            decor: comp.decor.clone(),
-            lights: comp.lights.clone(),
-            props: comp.props.clone(),
-            theme: kit.palette.theme,
-        },
+        dungeon: dungeon_config(bp, kit, &comp),
         difficulties: difficulties(),
         templates: kit.scaled_templates(level),
         encounters: pop.encounters,
@@ -182,11 +247,11 @@ fn finish(bp: &Blueprint, kit: &Kit, plan: Plan) -> Result<Generated, String> {
     let nav = loaded.nav();
     let structure = check::structure(&plan, &comp.owners, &loaded, &nav);
     if !structure.ok() {
-        return Err(structure.errors.join("\n"));
+        return Err(Failure::Invalid(structure.errors.join("\n")));
     }
-    let space = check::encounters(&plan, &loaded, &pop.rooms);
+    let space = check::encounters(&plan, kit, bp, &loaded, &nav, &pop.rooms);
     if !space.ok() {
-        return Err(space.errors.join("\n"));
+        return Err(Failure::Invalid(space.errors.join("\n")));
     }
     Ok(Generated {
         plan,
@@ -194,6 +259,8 @@ fn finish(bp: &Blueprint, kit: &Kit, plan: Plan) -> Result<Generated, String> {
         toml,
         owners: comp.owners,
         encounter_rooms: pop.rooms,
+        anchors: pop.anchors,
+        pillars: comp.pillars,
         structure,
         space,
     })

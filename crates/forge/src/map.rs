@@ -3,6 +3,7 @@
 //! for generated dungeons — room names and the main route.
 
 use crate::layout::Plan;
+use crate::report::Spot;
 use dungeon_sim::content::{Content, EnemyRank};
 use dungeon_sim::math::V2;
 use dungeon_sim::nav::LinkKind;
@@ -20,7 +21,19 @@ fn height_color(t: f32) -> String {
     )
 }
 
+/// Analysis markers drawn over the map (`dungeon-forge report --svg`).
+#[derive(Default)]
+pub struct Overlay<'a> {
+    pub deaths: &'a [Spot],
+    pub dithers: &'a [Spot],
+    pub stuck: &'a [Spot],
+}
+
 pub fn svg(c: &Content, plan: Option<&Plan>) -> String {
+    svg_with(c, plan, &Overlay::default())
+}
+
+pub fn svg_with(c: &Content, plan: Option<&Plan>, overlay: &Overlay) -> String {
     let nav = c.nav();
     let mut lo = V2::new(f32::INFINITY, f32::INFINITY);
     let mut hi = V2::new(f32::NEG_INFINITY, f32::NEG_INFINITY);
@@ -132,7 +145,7 @@ pub fn svg(c: &Content, plan: Option<&Plan>) -> String {
             pts(&route)
         );
         for r in &plan.rooms {
-            let (x, y) = px(r.center() + V2::new(0.0, r.half - 2.5));
+            let (x, y) = px(r.center() + V2::new(0.0, r.ext(crate::layout::Dir::N) - 2.5));
             let _ = writeln!(
                 s,
                 r##"<text x="{x:.2}" y="{y:.2}" font-size="2.2" fill="#f4ede4" text-anchor="middle">{} ({:+.1})</text>"##,
@@ -157,6 +170,16 @@ pub fn svg(c: &Content, plan: Option<&Plan>) -> String {
                 xml(e.display_name())
             );
         }
+        for m in e.mobs.iter().filter(|m| !m.patrol.is_empty()) {
+            let route: Vec<V2> = std::iter::once(m.pos)
+                .chain(m.patrol.iter().copied())
+                .collect();
+            let _ = writeln!(
+                s,
+                r##"<polyline points="{}" fill="none" stroke="#f2f2f2" stroke-width="0.35" stroke-dasharray="0.8,0.8" opacity="0.8"/>"##,
+                pts(&route)
+            );
+        }
         for hz in &e.hazards {
             let (x, y) = px(hz.pos);
             let _ = writeln!(
@@ -165,6 +188,31 @@ pub fn svg(c: &Content, plan: Option<&Plan>) -> String {
                 hz.radius
             );
         }
+    }
+    for d in overlay.dithers {
+        let (x, y) = px(d.xz());
+        let _ = writeln!(
+            s,
+            r##"<circle cx="{x:.2}" cy="{y:.2}" r="0.6" fill="#33d6ff" opacity="0.35"/>"##
+        );
+    }
+    for d in overlay.stuck {
+        let (x, y) = px(d.xz());
+        let _ = writeln!(
+            s,
+            r##"<rect x="{:.2}" y="{:.2}" width="1.4" height="1.4" fill="#ffe600" opacity="0.8"/>"##,
+            x - 0.7,
+            y - 0.7
+        );
+    }
+    for d in overlay.deaths {
+        let (x, y) = px(d.xz());
+        let _ = writeln!(
+            s,
+            r##"<path d="M{:.2},{:.2} l1.4,1.4 m0,-1.4 l-1.4,1.4" stroke="#ff2a2a" stroke-width="0.45"/>"##,
+            x - 0.7,
+            y - 0.7
+        );
     }
     let (ex, ey) = px(c.dungeon.entrance);
     let _ = writeln!(
@@ -190,9 +238,14 @@ pub fn svg(c: &Content, plan: Option<&Plan>) -> String {
     }
     let _ = writeln!(
         s,
-        r##"<text x="44" y="{:.1}" font-size="2.2" fill="#ddd">low {:.1} m | green: entrance | white/yellow/pink: trash/elite/boss (green ring: optional) | yellow line: one-way drop | dashed: open deck | blue dashes: main route</text>"##,
+        r##"<text x="44" y="{:.1}" font-size="2.2" fill="#ddd">low {:.1} m | green: entrance | white/yellow/pink: trash/elite/boss (green ring: optional) | yellow line: one-way drop | dashed: open deck | blue dashes: main route | white dots: patrol{}</text>"##,
         ly + 4.3,
-        ymin
+        ymin,
+        if overlay.deaths.is_empty() && overlay.dithers.is_empty() && overlay.stuck.is_empty() {
+            ""
+        } else {
+            " | red x: party death | cyan: dither | yellow square: stuck recovery"
+        }
     );
     s.push_str("</svg>\n");
     s
