@@ -27,23 +27,20 @@ The open questions below have **not** been validated.
 | A proper whole-dungeon 2D map | M opens a top-down developer map: it fits the dungeon, zooms with the wheel and pans by dragging. It shows room outlines in purpose colours, routes, encounters, elevation shading, drops, room names and ids, and the camera. Clicking a room flies the 3D camera there. It is rebuilt on seed switch and reload. |
 | Better distant visibility during overhead inspection | Cause found: linear distance fog from 18–75 m, not clipping or culling. I toggles inspection lighting (neutral white ambient light, fog pushed out of range). It affects the viewer only, and the atmospheric mode is unchanged. |
 
-Whether these changes satisfy the requests has not yet been confirmed by the
-tester.
+PLAYER: Useful improvements overall nothing made wrong.
 
 ## Outstanding questions (not yet validated)
 
 - **How different do layouts feel to navigate?** The audit in
   BRANCH_PURPOSE_0_8_1.md shows they differ structurally, with 10 distinct
-  route shapes per ten seeds. How they *feel* has not been tested.
+  route shapes per ten seeds. PLAYER: Interesting in concept, where the map is not just muscle memory memorized of which turns to make, a nice change to the core loop.
 - **Do side branches feel worthwhile?** Not tested with a player. The
   structural audit suggests many don't yet: empty dead ends, and alternates
-  with nothing on them.
+  with nothing on them. PLAYER: Depends on how many runs of the dungeon it has been, first few are nice to test how they branch and feel, after 5 feels unnecessary to explore. 
 - **Are optional encounters easy to discover?** Structurally they are always
-  one doorway off the main route, but nothing marks them from outside. Not
-  tested with a player.
-- **Do the crypt and volcanic environments feel different?** Not tested.
-- **Does the environment remain readable during combat?** Not tested. The
-  viewer has no combat; this needs dungeon play.
+  one doorway off the main route, but nothing marks them from outside. PLAYER: Easy to discover, not confusing or chance of getting lost.
+- **Do the crypt and volcanic environments feel different?** PLAYER: They feel slightly different, as more assets come into play the difference will probably be more noticeable
+- **Does the environment remain readable during combat?** PLAYER: The environment does not feel difficult to manage during combat, again more assets introduced will adjust how positioning can be affected more
 
 ## Suggested next session
 
