@@ -118,7 +118,8 @@ fn main() {
         fx::FxPlugin,
         demo::DemoPlugin(demo::parse_args()),
         viewer::ViewerPlugin(viewer_request),
-    ));
+    ))
+    .add_plugins(viewer::viewer_test_plugin);
     if let Some(secs) = smoke_seconds {
         app.insert_resource(common::SmokeTest {
             remaining: secs,

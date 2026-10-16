@@ -36,6 +36,9 @@ USAGE
       recoveries per room; mean duration per layout. --json writes everything
       machine-readable; --svg DIR draws one map per layout with deaths (red x),
       dithers (cyan) and stuck recoveries (yellow) over it.
+  dungeon-forge view <blueprint.toml|dungeon.toml> [--seed N] [--layers nav,structure,encounters,modules]
+      Generate a layout (forge_out/<id>_s<seed>.toml) and open it in the game's
+      dungeon viewer (dungeon-sandbox --viewer); a dungeon file opens directly.
   dungeon-forge seeds <blueprint.toml> [--from N] [--count N] [--out-dir DIR]
       Generate many seeds; report which succeed and how different they are.
 
@@ -139,6 +142,7 @@ fn main() -> ExitCode {
         "test" => cmd_test(&args),
         "seeds" => cmd_seeds(&args),
         "report" => cmd_report(&args),
+        "view" => cmd_view(&args),
         other => Err(format!(
             "unknown command '{other}'; run dungeon-forge --help"
         )),
@@ -512,6 +516,56 @@ fn cmd_test(args: &Args) -> Result<ExitCode, String> {
 }
 
 /// A compact signature of a layout's structure (for variety statistics).
+/// The game executable next to this one, or in the cargo target folder.
+fn game_exe() -> Option<PathBuf> {
+    let name = if cfg!(windows) {
+        "dungeon-sandbox.exe"
+    } else {
+        "dungeon-sandbox"
+    };
+    let mut c = Vec::new();
+    if let Some(dir) = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(Path::to_path_buf))
+    {
+        c.push(dir.join(name));
+    }
+    c.push(PathBuf::from("target/release").join(name));
+    c.into_iter().find(|p| p.is_file())
+}
+
+fn cmd_view(args: &Args) -> Result<ExitCode, String> {
+    args.known(&["seed", "layers"])?;
+    let path = first_path(args, "blueprint or dungeon")?;
+    let file = if is_blueprint(&path) {
+        let (bp, g) = generate_from(&path, args)?;
+        let out = PathBuf::from(format!(
+            "forge_out/{}_s{}.toml",
+            bp.blueprint.id, g.plan.seed
+        ));
+        write_out(&out, &g.toml)?;
+        println!("wrote {}", out.display());
+        out
+    } else {
+        path
+    };
+    let exe = game_exe().ok_or("dungeon-sandbox executable not found next to dungeon-forge or in target/release; build it with `cargo build --release -p dungeon_game`")?;
+    let mut cmd = std::process::Command::new(&exe);
+    cmd.arg("--viewer").arg(&file);
+    if let Some(l) = args.get("layers") {
+        cmd.args(["--layers", l]);
+    }
+    println!("opening {} in {}", file.display(), exe.display());
+    let status = cmd
+        .status()
+        .map_err(|e| format!("could not start {}: {e}", exe.display()))?;
+    Ok(if status.success() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(1)
+    })
+}
+
 fn cmd_report(args: &Args) -> Result<ExitCode, String> {
     args.known(&[
         "seed",

@@ -492,13 +492,14 @@ fn enter_viewer(
             "modules" => layers.modules = true,
             "noui" => layers.ui = false,
             "noinfo" => layers.info = false,
+            "panels" => {}
             _ => warn!("viewer: unknown layer '{l}'"),
         }
     }
     if req.tour {
-        // Clean shots: layers and labels yes, panels no.
+        // Clean shots: layers and labels yes, panels no (unless asked).
         layers.help = false;
-        layers.info = false;
+        layers.info = req.layers.iter().any(|l| l == "panels");
     }
     spawn_panels(&mut commands, &structure, &order, &content, &nav);
     info!(
@@ -1008,6 +1009,21 @@ fn pick(
     let Ok(ray) = cam.viewport_to_world(gt, cursor) else {
         return;
     };
+    match pick_at(&scene, ray, &layers, modules.as_deref()) {
+        Some(s) => commands.insert_resource(s),
+        None => commands.remove_resource::<Selection>(),
+    }
+}
+
+/// What a ray from the camera hits first: a mob (encounter layer), an
+/// anchor (modules layer), a modular piece, else the room whose floor it
+/// meets.
+pub fn pick_at(
+    scene: &ViewerScene,
+    ray: Ray3d,
+    layers: &ViewerLayers,
+    modules: Option<&ModuleInstances>,
+) -> Option<Selection> {
     let mut best: Option<(f32, Selection)> = None;
     let mut consider = |t: f32, s: Selection| {
         if best.as_ref().is_none_or(|(bt, _)| t < *bt) {
@@ -1064,10 +1080,7 @@ fn pick(
         }
         t += 0.25;
     }
-    match best {
-        Some((_, s)) => commands.insert_resource(s),
-        None => commands.remove_resource::<Selection>(),
-    }
+    best.map(|(_, s)| s)
 }
 
 fn ray_box(ray: Ray3d, min: Vec3, max: Vec3) -> Option<f32> {
@@ -1746,4 +1759,284 @@ fn write_tour_report(scene: &ViewerScene, st: &TourState) {
     }
     let _ = std::fs::write(format!("{}/index.html", st.dir), html);
     let _ = std::fs::write(format!("{}/stats.csv", st.dir), csv);
+}
+
+// ------------------------------------------------------------ self test --
+
+/// `--viewer-test`: drive the viewer through its real key handling (entrance,
+/// room jump, flight, walk mode, layers, screenshot, reload, back to the hub)
+/// and print a report; exit code 0 when every check held.
+#[derive(Resource, Default)]
+pub struct ViewerTest {
+    pub on: bool,
+    t: f32,
+    step: usize,
+    log: Vec<String>,
+    ok: bool,
+    mark: Vec3,
+    reloads: u32,
+}
+
+impl ViewerTest {
+    fn check(&mut self, ok: bool, what: String) {
+        self.log
+            .push(format!("{} {what}", if ok { "OK  " } else { "FAIL" }));
+        self.ok &= ok;
+    }
+}
+
+pub fn viewer_test_plugin(app: &mut App) {
+    let on = std::env::args().any(|a| a == "--viewer-test");
+    app.insert_resource(ViewerTest {
+        on,
+        ok: true,
+        ..Default::default()
+    })
+    .add_systems(Update, viewer_test.before(crate::controls::ControlSet))
+    .add_systems(OnEnter(AppState::Viewer), |mut t: ResMut<ViewerTest>| {
+        t.reloads += 1
+    });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn viewer_test(
+    time: Res<Time>,
+    mut test: ResMut<ViewerTest>,
+    mut keys: ResMut<ButtonInput<KeyCode>>,
+    state: Res<State<AppState>>,
+    scene: Option<Res<ViewerScene>>,
+    cam: Res<ViewerCam>,
+    layers: Res<ViewerLayers>,
+    navdbg: Res<NavDebug>,
+    saves: Res<GameData>,
+    mut exit: MessageWriter<AppExit>,
+) {
+    if !test.on {
+        return;
+    }
+    // Taps last one frame.
+    for k in [
+        KeyCode::KeyR,
+        KeyCode::Tab,
+        KeyCode::KeyG,
+        KeyCode::Digit1,
+        KeyCode::Digit2,
+        KeyCode::Digit3,
+        KeyCode::Digit4,
+        KeyCode::F12,
+        KeyCode::F5,
+        KeyCode::Backspace,
+        KeyCode::KeyF,
+    ] {
+        if keys.just_pressed(k) {
+            keys.release(k);
+        }
+    }
+    test.t += time.delta_secs();
+    let at = |s: f32| test.t >= s;
+    let floor_y = |p: Vec3| {
+        scene.as_ref().and_then(|sc| {
+            crate::structure::floor_below(&sc.nav, p)
+                .map(|s| sc.nav.surfaces[s].height_at(V2::new(p.x, p.z)))
+        })
+    };
+    match test.step {
+        0 if at(3.0) => {
+            let ok = *state.get() == AppState::Viewer && scene.is_some();
+            test.check(ok, format!("viewer entered, scene loaded: {ok}"));
+            keys.press(KeyCode::KeyR);
+            test.step += 1;
+        }
+        1 if at(3.5) => {
+            let sc = scene.as_ref().unwrap();
+            let e = entrance_point(&sc.content, &sc.nav);
+            let d = cam.pos.distance(e);
+            test.check(
+                d < 20.0,
+                format!("R/Home: camera {d:.1} m from the entrance"),
+            );
+            keys.press(KeyCode::Tab);
+            test.step += 1;
+        }
+        2 if at(4.0) => {
+            let sc = scene.as_ref().unwrap();
+            let k = cam.room_cursor;
+            let r = k.map(|k| &sc.structure.rooms[sc.order[k]]);
+            let ok = r.is_some_and(|r| cam.pos.distance(r.center()) < 80.0);
+            test.check(ok, format!("Tab: jumped to room {:?}", r.map(|r| &r.name)));
+            test.mark = cam.pos;
+            keys.press(KeyCode::KeyW);
+            test.step += 1;
+        }
+        3 if at(5.0) => {
+            keys.release(KeyCode::KeyW);
+            let d = cam.pos.distance(test.mark);
+            test.check(d > 5.0, format!("W (fly) for 1 s moved {d:.1} m"));
+            keys.press(KeyCode::KeyG);
+            test.step += 1;
+        }
+        4 if at(5.5) => {
+            let fy = floor_y(cam.pos);
+            let ok =
+                cam.mode == CamMode::Walk && fy.is_some_and(|f| (cam.pos.y - f - EYE).abs() < 0.2);
+            test.check(
+                ok,
+                format!(
+                    "G: walk mode {:?}, eye {:.2} m above the floor",
+                    cam.mode,
+                    fy.map(|f| cam.pos.y - f).unwrap_or(-1.0)
+                ),
+            );
+            test.mark = cam.pos;
+            keys.press(KeyCode::KeyW);
+            test.step += 1;
+        }
+        5 if at(7.0) => {
+            keys.release(KeyCode::KeyW);
+            let fy = floor_y(cam.pos);
+            let ok = fy.is_some_and(|f| (cam.pos.y - f - EYE).abs() < 0.2);
+            let moved = cam.pos.distance(test.mark);
+            test.check(
+                ok && moved > 2.0,
+                format!("walking 1.5 s moved {moved:.1} m and stayed on walkable floor: {ok}"),
+            );
+            for k in [
+                KeyCode::Digit1,
+                KeyCode::Digit2,
+                KeyCode::Digit3,
+                KeyCode::Digit4,
+                KeyCode::KeyF,
+            ] {
+                keys.press(k);
+            }
+            test.step += 1;
+        }
+        6 if at(7.5) => {
+            let ok = navdbg.on && layers.structure && layers.encounters && layers.modules;
+            test.check(ok, format!("1-4: all four layers on: {ok}"));
+            keys.press(KeyCode::F12);
+            test.step += 1;
+        }
+        7 if at(8.5) => {
+            test.mark = cam.pos;
+            keys.press(KeyCode::F5);
+            test.step += 1;
+        }
+        8 if at(10.5) => {
+            let reloads = test.reloads;
+            let ok = reloads >= 2 && scene.is_some() && cam.pos.distance(test.mark) < 0.01;
+            test.check(
+                ok,
+                format!("F5: reloaded ({reloads} entries), camera kept: {ok}"),
+            );
+            keys.press(KeyCode::Backspace);
+            test.step += 1;
+        }
+        9 if at(11.5) => {
+            let ok = *state.get() == AppState::Hub;
+            test.check(ok, format!("Backspace: back in the hub: {ok}"));
+            let saved = saves.save_path.is_file();
+            test.log.push(format!(
+                "save file present afterwards: {saved} (the viewer never writes it)"
+            ));
+            println!("VIEWER TEST REPORT");
+            for l in &test.log {
+                println!("{l}");
+            }
+            println!("VIEWER TEST {}", if test.ok { "OK" } else { "FAILED" });
+            test.step += 1;
+            exit.write(if test.ok {
+                AppExit::Success
+            } else {
+                AppExit::error()
+            });
+        }
+        _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scene(rel: &str) -> ViewerScene {
+        let path = format!("{}/../../assets/content/{rel}", env!("CARGO_MANIFEST_DIR"));
+        let content = Content::load(&path).unwrap();
+        let nav = content.nav();
+        let structure = Structure::build(&content, &nav);
+        let entrance = entrance_point(&content, &nav);
+        let cut_off = crate::navdebug::disconnected(&nav, entrance);
+        let order = (0..structure.rooms.len()).collect();
+        ViewerScene {
+            content,
+            nav,
+            structure,
+            cut_off,
+            path: None,
+            source: rel.into(),
+            error: None,
+            order,
+        }
+    }
+
+    fn down(at: Vec3) -> Ray3d {
+        Ray3d::new(at + Vec3::Y * 30.0, Dir3::NEG_Y)
+    }
+
+    #[test]
+    fn clicks_select_rooms_modules_and_mobs() {
+        let sc = scene("dungeons/08_hollow_reliquary.toml");
+        let layers = ViewerLayers {
+            encounters: true,
+            ..Default::default()
+        };
+        // Straight down onto the middle of the entrance room's floor.
+        let k = sc
+            .structure
+            .rooms
+            .iter()
+            .position(|r| r.role == "entrance")
+            .unwrap();
+        let c = sc.structure.rooms[k].center();
+        match pick_at(&sc, down(c), &ViewerLayers::default(), None) {
+            Some(Selection::Room(i)) => assert_eq!(i, k),
+            other => panic!("{other:?}"),
+        }
+        // A wall piece is hit before the floor behind it.
+        let m = crate::modules::plan_modules_with(&sc.content, &sc.nav, &sc.structure, &|_| true);
+        let w = m.0.iter().position(|i| i.kind == "wall").unwrap();
+        let mid = (m.0[w].min + m.0[w].max) * 0.5;
+        match pick_at(&sc, down(mid), &ViewerLayers::default(), Some(&m)) {
+            Some(Selection::Module(i)) => assert_eq!(m.0[i].kind, "wall"),
+            other => panic!("{other:?}"),
+        }
+        // A mob, with the encounter layer on.
+        let mob = &sc.content.encounters[0].mobs[0];
+        let (p, _) = sc.nav.project(mob.pos, mob.y.unwrap_or(0.0));
+        match pick_at(&sc, down(Vec3::new(p.x, p.y, p.z)), &layers, None) {
+            Some(Selection::Mob { encounter: 0, .. }) => {}
+            other => panic!("{other:?}"),
+        }
+        let text = describe_selection(&sc, &Selection::Module(w), Some(&m));
+        assert!(
+            text.contains("crypt_wall") && text.contains("scale"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn handwritten_dungeons_get_derived_rooms_and_no_cut_off_regions() {
+        for rel in [
+            "dungeons/01_sunken_vault.toml",
+            "dungeons/05_cavern_traverse.toml",
+            "dungeons/06_cinderdeep_hollows.toml",
+        ] {
+            let sc = scene(rel);
+            assert!(sc.structure.rooms.iter().all(|r| !r.declared));
+            assert!(!sc.structure.doorways.is_empty(), "{rel}");
+            let n: usize = sc.structure.rooms.iter().map(|r| r.surfaces.len()).sum();
+            assert_eq!(n, sc.nav.surfaces.len(), "{rel}: every area in one room");
+            assert!(!sc.cut_off.iter().any(|b| *b), "{rel}: disconnected areas");
+        }
+    }
 }
