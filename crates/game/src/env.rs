@@ -11,7 +11,129 @@ use crate::camera::CameraBlockers;
 use crate::common::{AppState, rgb, to_vec3};
 use bevy::prelude::*;
 use dungeon_sim::V2;
-use dungeon_sim::content::{Content, EnemyRank};
+use dungeon_sim::content::{AtmosphereConfig, Content, EnemyRank};
+use std::collections::BTreeMap;
+
+pub struct EnvPlugin;
+
+impl Plugin for EnvPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<AtmosphereFocus>()
+            .add_systems(
+                Update,
+                (update_focus, apply_atmosphere)
+                    .chain()
+                    .run_if(resource_exists::<Atmosphere>),
+            )
+            .add_systems(OnExit(AppState::Dungeon), clear_env)
+            .add_systems(OnExit(AppState::Viewer), clear_env);
+    }
+}
+
+fn clear_env(mut commands: Commands) {
+    commands.remove_resource::<Atmosphere>();
+    commands.remove_resource::<EnvStructure>();
+    commands.remove_resource::<ModuleInstances>();
+}
+
+/// Per-room lighting and fog presets of the environment on screen, and the
+/// blend currently shown.
+#[derive(Resource)]
+pub struct Atmosphere {
+    pub presets: BTreeMap<String, AtmosphereConfig>,
+    pub base: AtmosphereConfig,
+    pub current: AtmosphereConfig,
+    /// Preset now being blended toward.
+    pub target: String,
+}
+
+/// Where the atmosphere is sampled: the player in play, the camera in the
+/// viewer.
+#[derive(Resource, Default)]
+pub struct AtmosphereFocus(pub Option<Vec3>);
+
+/// Seconds to blend most of the way to a room's atmosphere.
+const BLEND: f32 = 1.2;
+
+fn update_focus(
+    state: Res<State<AppState>>,
+    focus: Query<&Transform, With<crate::camera::CameraFocus>>,
+    cam: Res<crate::viewer::ViewerCam>,
+    mut f: ResMut<AtmosphereFocus>,
+) {
+    f.0 = match state.get() {
+        AppState::Viewer => Some(cam.pos),
+        _ => focus.iter().next().map(|t| t.translation + Vec3::Y * 0.5),
+    };
+}
+
+fn lerp3(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
+    [
+        a[0] + (b[0] - a[0]) * t,
+        a[1] + (b[1] - a[1]) * t,
+        a[2] + (b[2] - a[2]) * t,
+    ]
+}
+
+/// Blend fog and ambient light toward the preset of the room at the focus.
+#[allow(clippy::too_many_arguments)]
+fn apply_atmosphere(
+    time: Res<Time>,
+    focus: Res<AtmosphereFocus>,
+    structure: Option<Res<EnvStructure>>,
+    nav_run: Option<Res<crate::dungeon::ActiveRun>>,
+    nav_view: Option<Res<crate::viewer::ViewerScene>>,
+    mut atm: ResMut<Atmosphere>,
+    mut ambient: ResMut<GlobalAmbientLight>,
+    mut fog: Query<&mut bevy::pbr::DistanceFog, With<crate::camera::MainCamera>>,
+) {
+    let (Some(p), Some(st)) = (focus.0, structure) else {
+        return;
+    };
+    let nav = match (&nav_run, &nav_view) {
+        (Some(r), _) => &r.sim.nav,
+        (None, Some(v)) => &v.nav,
+        _ => return,
+    };
+    if let Some(room) = st.0.room_at(nav, p).and_then(|i| st.0.rooms.get(i)) {
+        let key = [
+            room.atmosphere.clone(),
+            Some(room.role.clone()),
+            room.corridor.then(|| "corridor".to_string()),
+            Some("default".to_string()),
+        ]
+        .into_iter()
+        .flatten()
+        .find(|k| atm.presets.contains_key(k));
+        if let Some(k) = key {
+            atm.target = k;
+        }
+    }
+    let target = atm.presets.get(&atm.target).copied().unwrap_or(atm.base);
+    let t = 1.0 - (-time.delta_secs() * 3.0 / BLEND).exp();
+    let c = &mut atm.current;
+    c.ambient = lerp3(c.ambient, target.ambient, t);
+    c.brightness += (target.brightness - c.brightness) * t;
+    c.fog = Some(lerp3(
+        c.fog.unwrap_or([0.0; 3]),
+        target.fog.or(c.fog).unwrap_or([0.0; 3]),
+        t,
+    ));
+    c.fog_start += (target.fog_start - c.fog_start) * t;
+    c.fog_end += (target.fog_end - c.fog_end) * t;
+    let c = *c;
+    ambient.color = rgb(c.ambient);
+    ambient.brightness = c.brightness;
+    if let Ok(mut f) = fog.single_mut()
+        && let Some(col) = c.fog
+    {
+        f.color = rgb(col);
+        f.falloff = bevy::pbr::FogFalloff::Linear {
+            start: c.fog_start,
+            end: c.fog_end,
+        };
+    }
+}
 use dungeon_sim::nav::Nav;
 use std::f32::consts::FRAC_PI_2;
 
@@ -42,6 +164,10 @@ pub struct ModuleInstance {
 /// Every modular piece of the current environment.
 #[derive(Resource, Default, Debug, Clone)]
 pub struct ModuleInstances(pub Vec<ModuleInstance>);
+
+/// The rooms and doorways of the environment on screen (game or viewer).
+#[derive(Resource)]
+pub struct EnvStructure(pub crate::structure::Structure);
 
 /// Where the entrance is, with its floor height resolved.
 pub fn entrance_point(content: &Content, nav: &Nav) -> Vec3 {
@@ -100,7 +226,40 @@ pub fn spawn_environment(
         Transform::from_xyz(10.0, 30.0, -20.0).looking_at(Vec3::ZERO, Vec3::Y),
         scoped.clone(),
     ));
+    let structure = crate::structure::Structure::build(content, nav);
     spawn_level_geometry(commands, content, nav, scope, blockers, meshes, materials);
+    let modules =
+        crate::modules::spawn_modules(commands, content, nav, &structure, scope, asset_server);
+    commands.insert_resource(modules);
+    commands.insert_resource(EnvStructure(structure));
+    // Per-room atmosphere: only for content that has presets (old dungeons
+    // keep their single fog and ambient).
+    if !content.dungeon.atmosphere.is_empty() {
+        let base = AtmosphereConfig {
+            ambient: theme.ambient.unwrap_or([0.6, 0.65, 0.8]),
+            brightness: 220.0,
+            fog: theme.fog,
+            fog_start: 18.0,
+            fog_end: 75.0,
+        };
+        if theme.fog.is_none() {
+            // Presets may bring fog: give the camera a fog to blend.
+            commands.entity(camera).insert(bevy::pbr::DistanceFog {
+                color: Color::BLACK,
+                falloff: bevy::pbr::FogFalloff::Linear {
+                    start: 200.0,
+                    end: 400.0,
+                },
+                ..default()
+            });
+        }
+        commands.insert_resource(Atmosphere {
+            presets: content.dungeon.atmosphere.clone(),
+            base,
+            current: base,
+            target: "default".into(),
+        });
+    }
     let props = crate::cave::spawn_props(commands, content, scope, asset_server);
     blockers.0.extend(props);
     // Exit portal at the entrance.
@@ -300,9 +459,17 @@ pub fn spawn_level_geometry(
         }
     }
     // Walls: smooth slabs or jagged rock, at any angle, never over the floor.
+    // Walls the modular art draws (and pillar sides it replaces) only keep
+    // their camera blockers.
+    let squares = crate::modules::pillar_squares(content);
     for w in &nav.walls {
+        let modular = crate::modules::wall_uses_module(content, w)
+            || crate::modules::wall_in_pillar(w, &squares);
         for c in wall_chunks(w, theme.rough_walls) {
             blockers.0.push((c.min, c.max));
+            if modular {
+                continue;
+            }
             let material = materials.add(StandardMaterial {
                 base_color: rgb(theme.wall),
                 alpha_mode: AlphaMode::Blend,

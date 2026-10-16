@@ -3,7 +3,10 @@
 //! shapes and proportions, corridor widths, what bridges cross). Blueprints
 //! pick a kit by name; the same kit serves any number of dungeons.
 
-use dungeon_sim::content::{DecorKind, EnemyRank, EnemyTemplate, LootEntry, Theme};
+use dungeon_sim::content::{
+    AtmosphereConfig, DecorKind, EnemyRank, EnemyTemplate, LootEntry, ModuleSet, Theme,
+    model_path_problem,
+};
 use dungeon_sim::stats::School;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -21,6 +24,89 @@ pub struct Kit {
     pub recipes: BTreeMap<String, Recipe>,
     #[serde(default)]
     pub loot: Vec<LootEntry>,
+    /// Modular art drawn along the real walls and doorways (0.8). Copied into
+    /// every generated dungeon; visual only.
+    #[serde(default)]
+    pub modules: Option<ModuleSet>,
+    /// Lighting and fog presets by room role (`entrance`, `hall`, `arena`,
+    /// `corridor`, ... and `default`). Copied into generated dungeons.
+    #[serde(default)]
+    pub atmosphere: BTreeMap<String, AtmosphereConfig>,
+    /// Decoration placed at anchors (see `decorate.rs`). When empty, rules
+    /// equivalent to the 0.6/0.7 palette fields are used.
+    #[serde(default)]
+    pub decorate: Vec<DecorateRule>,
+}
+
+/// Anchor kinds the composer computes.
+pub const ANCHOR_KINDS: &[&str] = &[
+    "pillar",
+    "pillar_face",
+    "wall",
+    "door_side",
+    "cut_corner",
+    "outer_corner",
+];
+
+/// Put something at anchors of one kind.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DecorateRule {
+    /// One of [`ANCHOR_KINDS`].
+    pub anchor: String,
+    /// Room roles where the rule applies (empty = everywhere).
+    #[serde(default)]
+    pub rooms: Vec<String>,
+    /// Use every n-th anchor of this kind in a room ...
+    #[serde(default = "one_u")]
+    pub every: u32,
+    /// ... starting at this one.
+    #[serde(default)]
+    pub offset: u32,
+    /// Chance per selected anchor (deterministic from the seed).
+    #[serde(default = "one_f")]
+    pub chance: f32,
+    /// A model prop.
+    #[serde(default)]
+    pub prop: Option<PropSpec>,
+    /// Or primitive decoration, cycled through.
+    #[serde(default)]
+    pub decor: Vec<DecorKind>,
+    /// Size primitive decoration to the anchor's clearance.
+    #[serde(default)]
+    pub fit: bool,
+    /// Height of primitive decoration (default per kind).
+    #[serde(default)]
+    pub height: Option<f32>,
+    /// A light with it.
+    #[serde(default)]
+    pub light: Option<LightSpec>,
+}
+
+fn one_u() -> u32 {
+    1
+}
+
+/// A point light placed with a decoration.
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LightSpec {
+    pub color: [f32; 3],
+    /// Multiplies the default brightness (and the palette's light_intensity).
+    #[serde(default = "one_f")]
+    pub intensity: f32,
+    #[serde(default = "default_light_range")]
+    pub range: f32,
+    /// Height above the decoration's base.
+    #[serde(default)]
+    pub height: f32,
+    /// Only every n-th placement gets a light (keeps light counts down).
+    #[serde(default = "one_u")]
+    pub every: u32,
+}
+
+fn default_light_range() -> f32 {
+    9.0
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -459,6 +545,56 @@ impl Kit {
 
     pub fn validate(&self) -> Vec<String> {
         let mut e = Vec::new();
+        for (i, r) in self.decorate.iter().enumerate() {
+            let p = format!("decorate[{i}] ({})", r.anchor);
+            if !ANCHOR_KINDS.contains(&r.anchor.as_str()) {
+                e.push(format!(
+                    "{p}: anchor must be one of {}",
+                    ANCHOR_KINDS.join(", ")
+                ));
+            }
+            if r.prop.is_none() && r.decor.is_empty() {
+                e.push(format!("{p}: give a prop or a decor list"));
+            }
+            if let Some(prop) = &r.prop
+                && let Some(problem) = model_path_problem(&prop.model)
+            {
+                e.push(format!("{p}: prop {problem}"));
+            }
+            if r.every == 0 || !(0.0..=1.0).contains(&r.chance) {
+                e.push(format!("{p}: every must be at least 1 and chance in 0..=1"));
+            }
+            if let Some(l) = &r.light
+                && (l.every == 0
+                    || !(0.0..=20.0).contains(&l.intensity)
+                    || !(1.0..=200.0).contains(&l.range))
+            {
+                e.push(format!(
+                    "{p}: light intensity in 0..=20, range in 1..=200, every at least 1"
+                ));
+            }
+        }
+        if let Some(m) = &self.modules {
+            for (name, piece) in [
+                ("wall", &m.wall),
+                ("corner", &m.corner),
+                ("door", &m.door),
+                ("pillar", &m.pillar),
+            ] {
+                if let Some(piece) = piece {
+                    for model in std::iter::once(&piece.model).chain(&piece.variants) {
+                        if let Some(problem) = model_path_problem(model) {
+                            e.push(format!("modules.{name}: {problem}"));
+                        }
+                    }
+                    if !piece.size.iter().all(|v| (0.05..=50.0).contains(v)) {
+                        e.push(format!(
+                            "modules.{name}: size components must be in 0.05..=50"
+                        ));
+                    }
+                }
+            }
+        }
         if !(1..=10).contains(&self.kit.reference_level) {
             e.push("kit.reference_level: use 1..=10".into());
         }

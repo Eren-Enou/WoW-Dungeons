@@ -11,6 +11,7 @@ pub mod blueprint;
 pub mod build;
 pub mod check;
 pub mod compose;
+pub mod decorate;
 pub mod inspect;
 pub mod kit;
 pub mod layout;

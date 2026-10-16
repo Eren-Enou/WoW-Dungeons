@@ -87,18 +87,6 @@
 <polygon points="45.75,100.50 49.25,100.50 49.25,82.50 45.75,82.50" fill="rgb(120,140,185)" stroke="#2a2420" stroke-width="0.25"><title>Choir of Dust - Sarcophagus Niche passage (y 0.0)</title></polygon>
 <polygon points="109.75,138.00 113.25,138.00 113.25,115.00 109.75,115.00" fill="rgb(120,140,185)" stroke="#2a2420" stroke-width="0.25"><title>Lamp Room - Forgotten Vault passage (y 0.0)</title></polygon>
 <polygon points="78.00,103.00 81.00,103.00 81.00,80.50 78.00,80.50" fill="rgb(136,130,160)" stroke="#2a2420" stroke-width="0.25"><title>Crypt Turn - Hall of the Hushed stair (y -1.0 to 0.0)</title></polygon>
-<circle cx="44.25" cy="145.25" r="0.75" fill="#4a403a"/>
-<circle cx="50.75" cy="145.25" r="0.75" fill="#4a403a"/>
-<circle cx="44.25" cy="113.25" r="0.75" fill="#4a403a"/>
-<circle cx="50.75" cy="113.25" r="0.75" fill="#4a403a"/>
-<circle cx="76.25" cy="113.25" r="0.75" fill="#4a403a"/>
-<circle cx="82.75" cy="113.25" r="0.75" fill="#4a403a"/>
-<circle cx="139.75" cy="81.75" r="0.85" fill="#4a403a"/>
-<circle cx="147.25" cy="81.75" r="0.85" fill="#4a403a"/>
-<circle cx="108.25" cy="49.25" r="0.75" fill="#4a403a"/>
-<circle cx="114.75" cy="49.25" r="0.75" fill="#4a403a"/>
-<circle cx="75.75" cy="49.75" r="0.85" fill="#4a403a"/>
-<circle cx="83.25" cy="49.75" r="0.85" fill="#4a403a"/>
 <polyline points="47.50,174.00 47.50,142.00 47.50,110.00 79.50,110.00 111.50,110.00 143.50,110.00 143.50,78.00 143.50,46.00 111.50,46.00 79.50,46.00" fill="none" stroke="#7fe0ff" stroke-width="0.8" stroke-dasharray="2,1.5" opacity="0.8"/>
 <text x="47.50" y="166.50" font-size="2.2" fill="#f4ede4" text-anchor="middle">Sealed Gate (+0.0)</text>
 <text x="47.50" y="133.50" font-size="2.2" fill="#f4ede4" text-anchor="middle">Bone Colonnade (+0.0)</text>

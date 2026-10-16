@@ -91,19 +91,6 @@
 <polygon points="85.50,176.25 112.50,176.25 112.50,172.75 85.50,172.75" fill="rgb(120,140,185)" stroke="#2a2420" stroke-width="0.25"><title>Crypt Turn - Bone Gate slant (y 0.0)</title></polygon>
 <polygon points="117.50,176.25 144.50,176.25 144.50,172.75 117.50,172.75" fill="rgb(120,140,185)" stroke="#2a2420" stroke-width="0.25"><title>Bone Gate - Low Arch slant (y 0.0)</title></polygon>
 <polygon points="145.50,172.00 148.50,172.00 148.50,151.00 145.50,151.00" fill="rgb(120,140,185)" stroke="#2a2420" stroke-width="0.25"><title>Low Arch - Sealed Gate passage (y 0.0)</title></polygon>
-<circle cx="143.75" cy="113.75" r="0.75" fill="#4a403a"/>
-<circle cx="150.25" cy="113.75" r="0.75" fill="#4a403a"/>
-<circle cx="108.50" cy="113.75" r="0.75" fill="#4a403a"/>
-<circle cx="115.00" cy="113.75" r="0.75" fill="#4a403a"/>
-<circle cx="121.50" cy="113.75" r="0.75" fill="#4a403a"/>
-<circle cx="79.75" cy="113.75" r="0.75" fill="#4a403a"/>
-<circle cx="86.25" cy="113.75" r="0.75" fill="#4a403a"/>
-<circle cx="47.25" cy="82.25" r="0.85" fill="#4a403a"/>
-<circle cx="54.75" cy="82.25" r="0.85" fill="#4a403a"/>
-<circle cx="47.75" cy="49.75" r="0.75" fill="#4a403a"/>
-<circle cx="54.25" cy="49.75" r="0.75" fill="#4a403a"/>
-<circle cx="15.25" cy="50.25" r="0.85" fill="#4a403a"/>
-<circle cx="22.75" cy="50.25" r="0.85" fill="#4a403a"/>
 <polyline points="147.00,142.50 147.00,110.50 115.00,110.50 83.00,110.50 51.00,110.50 51.00,78.50 51.00,46.50 19.00,46.50" fill="none" stroke="#7fe0ff" stroke-width="0.8" stroke-dasharray="2,1.5" opacity="0.8"/>
 <text x="147.00" y="135.00" font-size="2.2" fill="#f4ede4" text-anchor="middle">Sealed Gate (+0.0)</text>
 <text x="147.00" y="102.50" font-size="2.2" fill="#f4ede4" text-anchor="middle">Hall of the Hushed (+0.0)</text>

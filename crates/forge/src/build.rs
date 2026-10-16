@@ -11,7 +11,7 @@ use crate::populate;
 use dungeon_sim::content::{Content, Difficulty, DungeonConfig, NavConfig, RewardConfig};
 
 /// Bumped whenever the same blueprint + seed would produce different output.
-pub const GENERATOR_VERSION: u32 = 2;
+pub const GENERATOR_VERSION: u32 = 3;
 
 pub struct Generated {
     pub plan: Plan,
@@ -239,6 +239,20 @@ fn finish(bp: &Blueprint, kit: &Kit, plan: Plan) -> Result<Generated, Failure> {
             xp_per_clear: 200 + 200 * level,
         },
     };
+    // Presentation (0.8): where it came from, its rooms, the kit's
+    // atmosphere and modular art, and the decoration anchors.
+    let mut content = content;
+    content.dungeon.generated = Some(dungeon_sim::content::GeneratedInfo {
+        blueprint: bp.blueprint.id.clone(),
+        blueprint_path: bp.source.clone(),
+        seed: plan.seed,
+        kit: kit.kit.id.clone(),
+        generator: GENERATOR_VERSION,
+    });
+    content.dungeon.rooms = rooms_config(&plan, &comp, &content, &pop.rooms);
+    content.dungeon.atmosphere = kit.atmosphere.clone();
+    content.dungeon.modules = kit.modules.clone();
+    content.dungeon.anchors = comp.anchors.clone();
     // Only the templates the dungeon uses (plus what they summon).
     let content = prune_templates(content);
     let body = content.to_toml()?;
@@ -269,6 +283,80 @@ fn finish(bp: &Blueprint, kit: &Kit, plan: Plan) -> Result<Generated, Failure> {
         structure,
         space,
     })
+}
+
+/// `[[dungeon.rooms]]`: every plan room and corridor with its areas.
+fn rooms_config(
+    plan: &Plan,
+    comp: &compose::Composed,
+    content: &Content,
+    encounter_rooms: &[usize],
+) -> Vec<dungeon_sim::content::RoomConfig> {
+    use crate::layout::{EdgeRole, Route, Style};
+    let areas_of = |o: Owner| -> Vec<String> {
+        comp.areas
+            .iter()
+            .zip(&comp.owners)
+            .filter(|(_, ow)| **ow == o)
+            .map(|(a, _)| a.name.clone())
+            .collect()
+    };
+    let mut out = Vec::new();
+    for (i, r) in plan.rooms.iter().enumerate() {
+        let (route, order) = match r.route {
+            Route::Main(k) => ("main", Some(k as u32)),
+            Route::Alternate => ("alternate", None),
+            Route::Side => ("side", None),
+            Route::Overlook => ("overlook", None),
+        };
+        let encounter = encounter_rooms
+            .iter()
+            .position(|&er| er == i)
+            .map(|k| content.encounters[k].id.clone());
+        out.push(dungeon_sim::content::RoomConfig {
+            id: format!("r{i}"),
+            name: r.name.clone(),
+            role: crate::decorate::room_role(r.kind).into(),
+            route: route.into(),
+            order,
+            areas: areas_of(Owner::Room(i)),
+            connects: Vec::new(),
+            encounter,
+            atmosphere: None,
+        });
+    }
+    for (k, c) in plan.corridors.iter().enumerate() {
+        let areas = areas_of(Owner::Corridor(k));
+        if areas.is_empty() {
+            continue;
+        }
+        let role = match c.style {
+            Style::Straight | Style::Winding | Style::Angled => "corridor",
+            Style::Ramp if c.stairs => "stair",
+            Style::Ramp => "ramp",
+            Style::Bridge => "bridge",
+            Style::Drop => "ledge",
+        };
+        let route = match c.role {
+            EdgeRole::Main => "main",
+            EdgeRole::Alternate => "alternate",
+            EdgeRole::Side => "side",
+            EdgeRole::Shortcut => "shortcut",
+            EdgeRole::Loop => "loop",
+        };
+        out.push(dungeon_sim::content::RoomConfig {
+            id: format!("c{k}"),
+            name: format!("{} - {}", plan.rooms[c.a].name, plan.rooms[c.b].name),
+            role: role.into(),
+            route: route.into(),
+            order: None,
+            areas,
+            connects: vec![format!("r{}", c.a), format!("r{}", c.b)],
+            encounter: None,
+            atmosphere: None,
+        });
+    }
+    out
 }
 
 fn prune_templates(mut c: Content) -> Content {

@@ -32,6 +32,9 @@
 <polygon points="168.50,100.50 178.50,100.50 178.50,90.50 168.50,90.50" fill="rgb(120,140,185)" stroke="#2a2420" stroke-width="0.25"><title>Chimney Ledge (y 4.0)</title></polygon>
 <polygon points="171.00,92.00 176.00,92.00 176.00,63.50 171.00,63.50" fill="rgb(136,130,160)" stroke="#2a2420" stroke-width="0.25"><title>Emberwatch Door - Chimney Ledge ramp (y 0.0 to 4.0)</title></polygon>
 <polygon points="146.50,97.50 170.00,97.50 170.00,93.50 146.50,93.50" fill="rgb(120,140,185)" stroke="#2a2420" stroke-width="0.25"><title>Chimney Ledge - Anvil Court ledge (y 4.0)</title></polygon>
+<circle cx="97.50" cy="19.50" r="0.88" fill="#4a403a"/>
+<circle cx="103.25" cy="76.00" r="1.00" fill="#4a403a"/>
+<circle cx="92.75" cy="76.00" r="1.00" fill="#4a403a"/>
 <circle cx="184.10" cy="47.40" r="1.10" fill="#4a403a"/>
 <circle cx="163.20" cy="47.20" r="1.30" fill="#4a403a"/>
 <circle cx="163.10" cy="67.40" r="1.40" fill="#4a403a"/>
@@ -48,7 +51,6 @@
 <circle cx="82.70" cy="43.20" r="1.30" fill="#4a403a"/>
 <circle cx="82.60" cy="71.40" r="1.40" fill="#4a403a"/>
 <circle cx="111.10" cy="71.10" r="1.10" fill="#4a403a"/>
-<circle cx="97.50" cy="19.50" r="0.88" fill="#4a403a"/>
 <circle cx="110.80" cy="5.70" r="1.30" fill="#4a403a"/>
 <circle cx="83.60" cy="5.60" r="1.40" fill="#4a403a"/>
 <circle cx="83.90" cy="33.10" r="1.10" fill="#4a403a"/>
@@ -77,8 +79,6 @@
 <circle cx="166.20" cy="88.20" r="1.30" fill="#4a403a"/>
 <circle cx="166.10" cy="102.90" r="1.40" fill="#4a403a"/>
 <circle cx="180.60" cy="102.60" r="1.10" fill="#4a403a"/>
-<circle cx="103.25" cy="76.00" r="1.00" fill="#4a403a"/>
-<circle cx="92.75" cy="76.00" r="1.00" fill="#4a403a"/>
 <line x1="147.30" y1="95.50" x2="145.70" y2="95.50" stroke="#ffd23f" stroke-width="1.2"/><circle cx="145.70" cy="95.50" r="1.2" fill="#ffd23f"/>
 <polyline points="173.50,57.50 135.50,57.50 135.50,95.50 97.50,95.50 97.50,57.50 97.50,19.50 59.50,19.50 59.50,57.50 21.50,57.50 21.50,95.50" fill="none" stroke="#7fe0ff" stroke-width="0.8" stroke-dasharray="2,1.5" opacity="0.8"/>
 <text x="173.50" y="52.00" font-size="2.2" fill="#f4ede4" text-anchor="middle">Emberwatch Door (+0.0)</text>

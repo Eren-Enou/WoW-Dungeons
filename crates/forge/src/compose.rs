@@ -39,6 +39,8 @@ pub struct Composed {
     pub floors: Vec<Vec<Poly>>,
     /// Pillar holes of each room (world space), for placement and maps.
     pub pillars: Vec<Vec<Rect>>,
+    /// Decoration anchors and what was placed at them.
+    pub anchors: Vec<dungeon_sim::content::AnchorConfig>,
 }
 
 /// Chasm depth under bridges.
@@ -52,8 +54,6 @@ const STRIP_OVERLAP: f32 = 3.0;
 /// Pillars keep at least this much floor between them and the room's walls
 /// (room for corridors joining and for walking round).
 const PILLAR_WALL_GAP: f32 = 4.0;
-/// Candle light under a pillar prop.
-const CANDLE: [f32; 3] = [1.0, 0.68, 0.38];
 
 fn rect_area(name: String, a: V2, b: V2, y: f32) -> AreaConfig {
     AreaConfig {
@@ -200,6 +200,7 @@ pub fn compose(plan: &Plan, kit: &Kit) -> Composed {
         entrance: V2::ZERO,
         floors: vec![Vec::new(); plan.rooms.len()],
         pillars: vec![Vec::new(); plan.rooms.len()],
+        anchors: Vec::new(),
     };
 
     // ---- Rooms.
@@ -300,41 +301,10 @@ pub fn compose(plan: &Plan, kit: &Kit) -> Composed {
                         );
                     }
                 }
-                // The pillars: stone columns rising above the walls round
-                // each hole, or the kit's pillar prop with a candle light.
-                for (k, h) in holes.iter().enumerate() {
-                    let pos = r2(c + (h.min + h.max) * 0.5);
+                // The pillars themselves: holes, decorated by the kit's
+                // rules (`decorate.rs`).
+                for h in &holes {
                     out.pillars[i].push(Rect::new(c + h.min, c + h.max));
-                    let radius = size / 2.0 - 0.15;
-                    match &kit.palette.pillar_prop {
-                        Some(spec) if k % 2 == 1 => {
-                            out.props.push(PropConfig {
-                                model: spec.model.clone(),
-                                pos,
-                                y: r.y,
-                                yaw: 0.0,
-                                scale: spec.scale,
-                                radius: spec.radius.min(radius),
-                                height: spec.height,
-                                fallback: spec.fallback,
-                            });
-                            out.lights.push(LightConfig {
-                                pos,
-                                y: r.y + spec.height + 0.5,
-                                color: CANDLE,
-                                intensity: 0.45 * kit.palette.light_intensity,
-                                range: 9.0,
-                            });
-                        }
-                        _ => out.decor.push(DecorConfig {
-                            kind: DecorKind::Pillar,
-                            pos,
-                            y: r.y,
-                            radius,
-                            height: 7.0,
-                            color: None,
-                        }),
-                    }
                 }
             }
             _ => {
@@ -389,73 +359,6 @@ pub fn compose(plan: &Plan, kit: &Kit) -> Composed {
             intensity: intensity * kit.palette.light_intensity,
             range: (reach * 2.4).round(),
         });
-        // Model props in an arena's cut corners: inside the room's bounding
-        // box, outside its walkable floor (radius at most a sixth of the cut).
-        if let (RoomKind::Arena, Some(spec)) = (r.kind, &kit.palette.arena_prop) {
-            for (k, (sx, sz, ex, ez)) in [
-                (1.0, 1.0, Dir::E, Dir::N),
-                (-1.0, 1.0, Dir::W, Dir::N),
-                (-1.0, -1.0, Dir::W, Dir::S),
-                (1.0, -1.0, Dir::E, Dir::S),
-            ]
-            .into_iter()
-            .enumerate()
-            {
-                let cut = r.cut[k];
-                if cut < 1.5 {
-                    continue;
-                }
-                out.props.push(PropConfig {
-                    model: spec.model.clone(),
-                    pos: r2(c + V2::new(
-                        sx * (r.ext(ex) - cut / 3.0),
-                        sz * (r.ext(ez) - cut / 3.0),
-                    )),
-                    y: r.y,
-                    yaw: 45.0 + 90.0 * k as f32,
-                    scale: spec.scale,
-                    radius: spec.radius.min(cut / 6.0),
-                    height: spec.height,
-                    fallback: spec.fallback,
-                });
-            }
-        }
-        // Rock columns just outside the room's corners, poking above the walls.
-        if kit.components.corner_decor && r.kind != RoomKind::Bend {
-            let mix = &kit.palette.decor;
-            for (k, (sx, sz, ex, ez)) in [
-                (1.0, 1.0, Dir::E, Dir::N),
-                (-1.0, 1.0, Dir::W, Dir::N),
-                (-1.0, -1.0, Dir::W, Dir::S),
-                (1.0, -1.0, Dir::E, Dir::S),
-            ]
-            .into_iter()
-            .enumerate()
-            {
-                let kind = mix[(i + k) % mix.len()];
-                let (radius, height) = match kind {
-                    DecorKind::Pillar => (1.3, 8.0),
-                    DecorKind::Stalagmite => (1.1, 6.0),
-                    DecorKind::Boulder => (1.4, 2.5),
-                    DecorKind::Crystal => (0.9, 4.0),
-                };
-                out.decor.push(DecorConfig {
-                    kind,
-                    pos: r2(c + V2::new(
-                        sx * (r.ext(ex) + 1.0 + radius),
-                        sz * (r.ext(ez) + 1.0 + radius),
-                    )),
-                    y: r.y,
-                    radius,
-                    height,
-                    color: if kind == DecorKind::Crystal {
-                        Some(kit.palette.light_deep)
-                    } else {
-                        None
-                    },
-                });
-            }
-        }
     }
 
     // ---- Corridors.
@@ -472,6 +375,8 @@ pub fn compose(plan: &Plan, kit: &Kit) -> Composed {
         .map(|c| c.dir)
         .unwrap_or(Dir::N);
     out.entrance = r2(ent.center() - exit.unit() * (ent.ext(exit.opposite()) - 2.5));
+    // ---- Decoration at anchors (kit rules).
+    out.anchors = crate::decorate::decorate(plan, kit, &mut out);
     out
 }
 

@@ -23,9 +23,6 @@ light_shallow = [0.55, 0.68, 0.95]
 light_deep = [0.45, 0.85, 0.72]
 light_intensity = 0.75
 decor = ["pillar"]
-# Tall iron candle stands in every other pillar (an original GLB from
-# scripts/make_prop_models.py); stone pillars where the file is missing.
-pillar_prop = { model = "models/props/crypt_candelabrum.glb", fallback = "pillar", scale = 1.0, radius = 0.75, height = 4.0 }
 
 [palette.names]
 entrance = ["Sealed Gate", "Pilgrims' Porch", "The Silent Door"]
@@ -552,3 +549,97 @@ role = "tank"
 stats = { stamina = 16, armor = 100 }
 weight = 2
 source = "final_boss"
+
+# ------------------------------------------------------------ presentation --
+# 0.8: dressed-stone modular art along the real walls (original GLBs from
+# scripts/make_prop_models.py; plain slabs where a file is missing). Pillars
+# are drawn as solid columns exactly the size of their holes in the floor,
+# because they are cover. Cold air, warm candles.
+
+[modules]
+wall = { model = "models/kit/crypt_wall.glb", size = [4.0, 4.5, 0.7], variants = ["models/kit/crypt_wall_niche.glb"], variant_chance = 0.2 }
+corner = { model = "models/kit/crypt_corner.glb", size = [0.9, 4.8, 0.9] }
+door = { model = "models/kit/crypt_arch.glb", size = [4.0, 5.2, 0.8] }
+pillar = { model = "models/kit/crypt_pillar.glb", size = [1.0, 7.0, 1.0] }
+
+[atmosphere.default]
+ambient = [0.32, 0.37, 0.42]
+fog = [0.025, 0.035, 0.045]
+
+[atmosphere.entrance]
+ambient = [0.36, 0.4, 0.48]
+brightness = 240.0
+fog = [0.03, 0.04, 0.055]
+fog_start = 20.0
+fog_end = 80.0
+
+[atmosphere.corridor]   # narrow passages: dark and close
+ambient = [0.26, 0.3, 0.36]
+brightness = 160.0
+fog = [0.02, 0.025, 0.035]
+fog_start = 10.0
+fog_end = 48.0
+
+[atmosphere.passage]
+ambient = [0.26, 0.3, 0.36]
+brightness = 160.0
+fog = [0.02, 0.025, 0.035]
+fog_start = 10.0
+fog_end = 48.0
+
+[atmosphere.stair]
+ambient = [0.24, 0.28, 0.34]
+brightness = 150.0
+fog = [0.02, 0.025, 0.035]
+fog_start = 10.0
+fog_end = 45.0
+
+[atmosphere.hall]       # naves: cold, long views
+ambient = [0.32, 0.36, 0.42]
+brightness = 210.0
+fog = [0.025, 0.033, 0.045]
+fog_start = 16.0
+fog_end = 70.0
+
+[atmosphere.side]       # burial cells: warmer, candle-lit
+ambient = [0.42, 0.36, 0.3]
+brightness = 190.0
+fog = [0.04, 0.03, 0.025]
+fog_start = 10.0
+fog_end = 45.0
+
+[atmosphere.chamber]
+ambient = [0.38, 0.35, 0.33]
+brightness = 200.0
+fog = [0.035, 0.03, 0.03]
+fog_start = 12.0
+fog_end = 55.0
+
+[atmosphere.arena]      # the guardian's sepulchre: deep, teal-dark
+ambient = [0.26, 0.36, 0.38]
+brightness = 220.0
+fog = [0.02, 0.06, 0.06]
+fog_start = 14.0
+fog_end = 65.0
+
+# Candle sconces on one face of every pillar, each with a small light.
+[[decorate]]
+anchor = "pillar_face"
+every = 4
+prop = { model = "models/kit/crypt_sconce.glb", fallback = "crystal", radius = 0.5, height = 0.7 }
+light = { color = [1.0, 0.68, 0.38], intensity = 0.4, range = 8.0, height = 0.3, every = 2 }
+
+# Sconces either side of the doors into rooms.
+[[decorate]]
+anchor = "door_side"
+rooms = ["entrance", "chamber", "hall", "arena", "side"]
+prop = { model = "models/kit/crypt_sconce.glb", fallback = "crystal", radius = 0.5, height = 0.7 }
+light = { color = [1.0, 0.68, 0.38], intensity = 0.35, range = 7.0, height = 0.3, every = 2 }
+
+# And along the walls, sparsely.
+[[decorate]]
+anchor = "wall"
+rooms = ["entrance", "chamber", "hall", "arena", "side"]
+every = 2
+prop = { model = "models/kit/crypt_sconce.glb", fallback = "crystal", radius = 0.5, height = 0.7 }
+light = { color = [1.0, 0.68, 0.38], intensity = 0.3, range = 7.0, height = 0.3, every = 3 }

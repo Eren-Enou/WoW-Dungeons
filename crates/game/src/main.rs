@@ -14,6 +14,7 @@ mod env;
 mod fx;
 mod hub;
 mod hud;
+mod modules;
 mod navdebug;
 mod overlay;
 mod results;
@@ -105,6 +106,7 @@ fn main() {
     .add_plugins((
         camera::CameraPlugin,
         cave::CavePlugin,
+        env::EnvPlugin,
         controls::ControlsPlugin,
         tooltip::TooltipPlugin,
         hub::HubPlugin,

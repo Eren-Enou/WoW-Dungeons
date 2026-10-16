@@ -422,11 +422,22 @@ fn five_player_parties_clear_crypt_layouts() {
 fn designer_overrides_survive_regeneration_and_go_stale_loudly() {
     let g = build::generate(&bp(), &kit(), 1).expect("generates");
     let fin = g.content.encounters[g.content.final_encounter()].id.clone();
+    // The room staging the removed encounter is cleared too (0.8 rooms name
+    // their encounter, and the loader checks the reference).
+    let room = g
+        .content
+        .dungeon
+        .rooms
+        .iter()
+        .find(|r| r.encounter.as_deref() == Some("o1_optional_elite"))
+        .map(|r| r.id.clone())
+        .expect("a room holds the optional encounter");
     let patch = format!(
         "[[encounters]]\nid = \"{fin}\"\nname = \"The Wyrm Below\"\n\n\
          [[encounters]]\nid = \"o1_optional_elite\"\nremove = true\n\n\
          [[loot]]\nid = \"emberforge_vaults_sentinel_shard\"\nsource = \"{fin}\"\n\n\
-         [dungeon]\ndescription = \"Edited by hand.\"\n"
+         [dungeon]\ndescription = \"Edited by hand.\"\n\n\
+         [[dungeon.rooms]]\nid = \"{room}\"\nencounter = \"\"\n"
     );
     // Removing an encounter that loot still drops from is caught by the loader.
     let dangling = "[[encounters]]\nid = \"o1_optional_elite\"\nremove = true\n";
@@ -451,5 +462,113 @@ fn designer_overrides_survive_regeneration_and_go_stale_loudly() {
     assert!(
         err.contains("e9_dragon") && err.contains("layout has changed"),
         "{err}"
+    );
+}
+
+// ---- 0.8: presentation data in generated dungeons.
+
+#[test]
+fn generated_dungeons_carry_rooms_modules_atmosphere_and_anchors() {
+    for (b, k, seed) in [(bp(), kit(), 2u64), (reliquary(), crypt(), 3)] {
+        let g = build::generate(&b, &k, seed).expect("generates");
+        let d = &g.content.dungeon;
+        let info = d.generated.as_ref().expect("generated info");
+        assert_eq!(
+            (info.seed, info.generator),
+            (seed, build::GENERATOR_VERSION)
+        );
+        assert_eq!(info.kit, k.kit.id);
+        // Every area belongs to exactly one room or corridor.
+        let mut count = std::collections::BTreeMap::new();
+        for r in &d.rooms {
+            for a in &r.areas {
+                *count.entry(a.clone()).or_insert(0) += 1;
+            }
+        }
+        for a in &d.areas {
+            assert_eq!(count.get(&a.name), Some(&1), "area '{}'", a.name);
+        }
+        assert!(
+            d.rooms
+                .iter()
+                .any(|r| r.role == "arena" && r.encounter.is_some())
+        );
+        assert!(d.rooms.iter().filter(|r| r.order.is_some()).count() >= 5);
+        assert!(
+            d.modules
+                .as_ref()
+                .is_some_and(|m| m.wall.is_some() && m.door.is_some())
+        );
+        assert!(d.atmosphere.contains_key("arena") && d.atmosphere.contains_key("default"));
+        let used = d.anchors.iter().filter(|a| !a.used.is_empty()).count();
+        assert!(used >= 20, "{used} anchors decorated");
+        // Same seed, same decoration.
+        let again = build::generate(&b, &k, seed).unwrap();
+        assert_eq!(again.toml, g.toml);
+    }
+}
+
+#[test]
+fn kits_without_rules_decorate_like_before() {
+    // The 0.7 palette fields still work: pillar candles and stone pillars,
+    // arena braziers, corner rocks.
+    let mut k = crypt();
+    k.decorate.clear();
+    k.palette.pillar_prop = Some(crate::kit::PropSpec {
+        model: "models/props/crypt_candelabrum.glb".into(),
+        fallback: dungeon_sim::content::DecorKind::Pillar,
+        scale: 1.0,
+        radius: 0.75,
+        height: 4.0,
+    });
+    let g = build::generate(&reliquary(), &k, 1).expect("generates");
+    let d = &g.content.dungeon;
+    let holes: usize = g.pillars.iter().map(|p| p.len()).sum();
+    let pillars = d
+        .decor
+        .iter()
+        .filter(|x| x.kind == dungeon_sim::content::DecorKind::Pillar)
+        .count();
+    let candles = d
+        .props
+        .iter()
+        .filter(|p| p.model.contains("candelabrum"))
+        .count();
+    assert_eq!(pillars + candles, holes);
+    assert!(candles > 0 && pillars > 0);
+    let mut k = kit();
+    k.decorate.clear();
+    k.palette.arena_prop = Some(crate::kit::PropSpec {
+        model: "models/props/forge_brazier.glb".into(),
+        fallback: dungeon_sim::content::DecorKind::Crystal,
+        scale: 2.0,
+        radius: 0.9,
+        height: 4.4,
+    });
+    let g = build::generate(&bp(), &k, 1).expect("generates");
+    assert!(
+        g.content
+            .dungeon
+            .props
+            .iter()
+            .any(|p| p.model.contains("brazier"))
+    );
+    assert!(!g.content.dungeon.decor.is_empty());
+}
+
+#[test]
+fn bad_decoration_rules_are_rejected() {
+    let mut k = crypt();
+    k.decorate[0].anchor = "ceiling".into();
+    k.decorate[1].prop = None;
+    k.decorate[1].decor.clear();
+    let e = k.validate();
+    assert!(
+        e.iter().any(|m| m.contains("anchor must be one of")),
+        "{e:?}"
+    );
+    assert!(
+        e.iter().any(|m| m.contains("give a prop or a decor list")),
+        "{e:?}"
     );
 }

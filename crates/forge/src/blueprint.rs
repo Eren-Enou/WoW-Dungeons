@@ -19,6 +19,10 @@ pub struct Blueprint {
     /// Optional encounters, each in its own side chamber off the main route.
     #[serde(default)]
     pub optional: Vec<EncounterSlot>,
+    /// The file it was read from (forward slashes), recorded in generated
+    /// dungeons so tools can regenerate other seeds.
+    #[serde(skip)]
+    pub source: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -137,7 +141,9 @@ impl Blueprint {
     pub fn load(path: &Path) -> Result<Blueprint, String> {
         let text = std::fs::read_to_string(path)
             .map_err(|e| format!("could not read blueprint '{}': {e}", path.display()))?;
-        Blueprint::from_toml_str(&text, &path.display().to_string())
+        let mut bp = Blueprint::from_toml_str(&text, &path.display().to_string())?;
+        bp.source = path.display().to_string().replace('\\', "/");
+        Ok(bp)
     }
 
     pub fn from_toml_str(text: &str, origin: &str) -> Result<Blueprint, String> {

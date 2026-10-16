@@ -83,18 +83,6 @@
 <polygon points="77.50,76.50 80.50,76.50 80.50,56.00 77.50,56.00" fill="rgb(120,140,185)" stroke="#2a2420" stroke-width="0.25"><title>Hall of the Hushed - Burial Cell passage (y 0.0)</title></polygon>
 <polygon points="54.00,149.25 74.50,149.25 74.50,145.75 54.00,145.75" fill="rgb(120,140,185)" stroke="#2a2420" stroke-width="0.25"><title>Choir of Dust - Forgotten Vault passage (y 0.0)</title></polygon>
 <polygon points="88.50,85.50 101.00,85.50 101.00,81.50 88.50,81.50" fill="rgb(160,115,122)" stroke="#2a2420" stroke-width="0.25"><title>The Hollow Choir - Hall of the Hushed stair (y -3.5 to 0.0)</title></polygon>
-<circle cx="43.75" cy="150.75" r="0.75" fill="#4a403a"/>
-<circle cx="50.25" cy="150.75" r="0.75" fill="#4a403a"/>
-<circle cx="43.75" cy="118.75" r="0.75" fill="#4a403a"/>
-<circle cx="50.25" cy="118.75" r="0.75" fill="#4a403a"/>
-<circle cx="75.75" cy="86.75" r="0.75" fill="#4a403a"/>
-<circle cx="82.25" cy="86.75" r="0.75" fill="#4a403a"/>
-<circle cx="107.25" cy="87.25" r="0.85" fill="#4a403a"/>
-<circle cx="114.75" cy="87.25" r="0.85" fill="#4a403a"/>
-<circle cx="107.75" cy="54.75" r="0.75" fill="#4a403a"/>
-<circle cx="114.25" cy="54.75" r="0.75" fill="#4a403a"/>
-<circle cx="107.25" cy="23.25" r="0.85" fill="#4a403a"/>
-<circle cx="114.75" cy="23.25" r="0.85" fill="#4a403a"/>
 <polyline points="47.00,179.50 47.00,147.50 47.00,115.50 47.00,83.50 79.00,83.50 79.00,115.50 111.00,115.50 111.00,83.50 111.00,51.50 111.00,19.50" fill="none" stroke="#7fe0ff" stroke-width="0.8" stroke-dasharray="2,1.5" opacity="0.8"/>
 <text x="47.00" y="172.50" font-size="2.2" fill="#f4ede4" text-anchor="middle">Sealed Gate (+0.0)</text>
 <text x="47.00" y="139.50" font-size="2.2" fill="#f4ede4" text-anchor="middle">Choir of Dust (+0.0)</text>

@@ -61,6 +61,10 @@ pub struct Doorway {
     pub along: Vec3,
     /// Width of the opening.
     pub width: f32,
+    /// Unit vector through the opening (along the passage).
+    pub through: Vec3,
+    /// Half the portal's depth along `through`.
+    pub half_depth: f32,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -97,7 +101,7 @@ impl Structure {
                 surfaces,
                 min: Vec3::ZERO,
                 max: Vec3::ZERO,
-                encounter: r.encounter.clone(),
+                encounter: r.encounter.clone().filter(|e| !e.is_empty()),
                 atmosphere: r.atmosphere.clone(),
                 corridor: matches!(
                     r.role.as_str(),
@@ -163,42 +167,82 @@ impl Structure {
             r.min = lo;
             r.max = hi;
         }
-        // Doorways: walk portals between different rooms, one per opening.
-        let mut doorways: Vec<Doorway> = Vec::new();
+        // Doorways: walk portals between different rooms. One opening can be
+        // split over several portals (a corridor meeting two floor strips of
+        // a pit or pillared room): merge touching portals of the same pair.
+        let mut boxes: Vec<((usize, usize), Vec2, Vec2, f32)> = Vec::new();
         for l in &nav.links {
             if l.kind != LinkKind::Walk {
                 continue;
             }
             let (a, b) = (surface_room[l.from as usize], surface_room[l.to as usize]);
-            if a >= b {
+            if a >= b || l.portal.points().len() < 2 {
                 continue;
             }
-            let pts = l.portal.points();
-            if pts.len() < 2 {
-                continue;
-            }
-            // The opening runs along the portal's longest extent.
             let bb = l.portal.bounds();
-            let (along, width) = if bb.size().x >= bb.size().z {
-                (Vec3::X, bb.size().x)
-            } else {
-                (Vec3::Z, bb.size().z)
-            };
-            let c = l.portal.centroid();
-            let center = Vec3::new(c.x, l.entry.y, c.z);
-            if doorways
-                .iter()
-                .any(|d| d.rooms == (a, b) && d.center.distance(center) < 1.5)
-            {
-                continue;
+            let (lo, hi) = (Vec2::new(bb.min.x, bb.min.z), Vec2::new(bb.max.x, bb.max.z));
+            match boxes.iter_mut().find(|(pair, blo, bhi, y)| {
+                *pair == (a, b)
+                    && (l.entry.y - *y).abs() < 0.5
+                    && lo.x <= bhi.x + 1.0
+                    && hi.x >= blo.x - 1.0
+                    && lo.y <= bhi.y + 1.0
+                    && hi.y >= blo.y - 1.0
+            }) {
+                Some((_, blo, bhi, _)) => {
+                    *blo = blo.min(lo);
+                    *bhi = bhi.max(hi);
+                }
+                None => boxes.push(((a, b), lo, hi, l.entry.y)),
             }
-            doorways.push(Doorway {
-                rooms: (a, b),
-                center,
-                along,
-                width,
-            });
         }
+        // Merge until stable (a box can grow to touch an earlier one).
+        let touches = |a: &((usize, usize), Vec2, Vec2, f32),
+                       b: &((usize, usize), Vec2, Vec2, f32)| {
+            a.0 == b.0
+                && (a.3 - b.3).abs() < 0.5
+                && a.1.x <= b.2.x + 1.0
+                && a.2.x >= b.1.x - 1.0
+                && a.1.y <= b.2.y + 1.0
+                && a.2.y >= b.1.y - 1.0
+        };
+        loop {
+            let mut merged = false;
+            'outer: for i in 0..boxes.len() {
+                for j in i + 1..boxes.len() {
+                    if touches(&boxes[i], &boxes[j]) {
+                        let b = boxes.remove(j);
+                        boxes[i].1 = boxes[i].1.min(b.1);
+                        boxes[i].2 = boxes[i].2.max(b.2);
+                        merged = true;
+                        break 'outer;
+                    }
+                }
+            }
+            if !merged {
+                break;
+            }
+        }
+        let doorways: Vec<Doorway> = boxes
+            .into_iter()
+            .map(|(rooms, lo, hi, y)| {
+                let size = hi - lo;
+                let (along, width, through, depth) = if size.x >= size.y {
+                    (Vec3::X, size.x, Vec3::Z, size.y)
+                } else {
+                    (Vec3::Z, size.y, Vec3::X, size.x)
+                };
+                let c = (lo + hi) * 0.5;
+                Doorway {
+                    rooms,
+                    center: Vec3::new(c.x, y, c.y),
+                    along,
+                    width,
+                    through,
+                    half_depth: depth * 0.5,
+                }
+            })
+            .collect();
         Structure {
             rooms,
             surface_room,

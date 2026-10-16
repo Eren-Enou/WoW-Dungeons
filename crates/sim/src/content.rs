@@ -138,7 +138,7 @@ pub struct RoomConfig {
     /// For corridors: the ids of the two rooms joined.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub connects: Vec<String>,
-    /// Encounter staged here.
+    /// Encounter staged here (`""` = none, for overrides).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub encounter: Option<String>,
     /// Atmosphere preset (defaults to the role's preset, if any).
@@ -188,6 +188,18 @@ pub struct ModuleSet {
     /// opening, lintel above head height).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub door: Option<ModuleConfig>,
+    /// Fills every `pillar` anchor (a hole in the walkable floor), scaled to
+    /// the hole, replacing the plain walls round it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pillar: Option<ModuleConfig>,
+}
+
+fn variant_chance() -> f32 {
+    0.2
+}
+
+fn is_default_variant_chance(v: &f32) -> bool {
+    *v == 0.2
 }
 
 /// One modular piece.
@@ -199,6 +211,16 @@ pub struct ModuleConfig {
     /// Nominal size in metres: length along the wall (or opening width for
     /// a door), height, depth.
     pub size: [f32; 3],
+    /// Alternative models of the same size, used for some pieces (chosen
+    /// deterministically from the position).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub variants: Vec<String>,
+    /// Share of pieces drawn with a variant.
+    #[serde(
+        default = "variant_chance",
+        skip_serializing_if = "is_default_variant_chance"
+    )]
+    pub variant_chance: f32,
 }
 
 /// A place the generator could put decoration (for inspection in the viewer).
@@ -963,7 +985,8 @@ impl Content {
                     format!("{p}: connects to unknown room '{c}'"),
                 );
             }
-            if let Some(e) = &r.encounter {
+            // An override can clear the reference with `encounter = ""`.
+            if let Some(e) = r.encounter.as_ref().filter(|e| !e.is_empty()) {
                 check(
                     encounters.contains(e.as_str()),
                     format!("{p}: encounter '{e}' is not an encounter id"),
@@ -990,11 +1013,22 @@ impl Content {
             );
         }
         if let Some(m) = &d.modules {
-            for (name, piece) in [("wall", &m.wall), ("corner", &m.corner), ("door", &m.door)] {
+            for (name, piece) in [
+                ("wall", &m.wall),
+                ("corner", &m.corner),
+                ("door", &m.door),
+                ("pillar", &m.pillar),
+            ] {
                 if let Some(piece) = piece {
-                    if let Some(problem) = model_path_problem(&piece.model) {
-                        check(false, format!("dungeon.modules.{name}: {problem}"));
+                    for model in std::iter::once(&piece.model).chain(&piece.variants) {
+                        if let Some(problem) = model_path_problem(model) {
+                            check(false, format!("dungeon.modules.{name}: {problem}"));
+                        }
                     }
+                    check(
+                        (0.0..=1.0).contains(&piece.variant_chance),
+                        format!("dungeon.modules.{name}: variant_chance must be in 0..=1"),
+                    );
                     check(
                         piece.size.iter().all(|v| (0.05..=50.0).contains(v)),
                         format!("dungeon.modules.{name}: size components must be in 0.05..=50"),
