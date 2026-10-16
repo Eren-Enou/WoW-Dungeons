@@ -118,6 +118,21 @@ Your companions take cover from the wail on their own.
 Difficulty: Normal, Heroic (harder, better loot) and Raid (10). The Sandbox tab
 can make any dungeon easier or harder without editing files.
 
+DUNGEON VIEWER (new in 0.8)
+---------------------------
+Look around any dungeon without fighting: double-click "Dungeon Viewer.bat",
+or press V in the hub (Dungeons tab: "Inspect in viewer"). Nothing is saved.
+- Hold the right mouse button to look; WASD to move, E/Q up and down,
+  Shift faster, Ctrl slower, mouse wheel sets the speed.
+- G walks at eye height, Tab jumps to the next room, L lists the rooms,
+  Home goes back to the entrance.
+- 1-4 show navigation, rooms, enemies and the building pieces; click
+  something to read about it.
+- [ and ] show other layouts of the generated dungeons.
+- F12 takes a screenshot, Backspace returns to the hub.
+In 0.8 the Emberforge Vaults and the Hollow Reliquary are built from modular
+stone and basalt pieces, and the light and haze change from room to room.
+
 TROUBLESHOOTING
 ---------------
 - "could not read content file": the assets folder must sit next to

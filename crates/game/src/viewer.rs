@@ -1775,6 +1775,7 @@ pub struct ViewerTest {
     ok: bool,
     mark: Vec3,
     reloads: u32,
+    seed: Option<u64>,
 }
 
 impl ViewerTest {
@@ -1827,6 +1828,7 @@ fn viewer_test(
         KeyCode::F5,
         KeyCode::Backspace,
         KeyCode::KeyF,
+        KeyCode::BracketRight,
     ] {
         if keys.just_pressed(k) {
             keys.release(k);
@@ -1929,10 +1931,33 @@ fn viewer_test(
                 ok,
                 format!("F5: reloaded ({reloads} entries), camera kept: {ok}"),
             );
+            // Generated dungeons: ] builds the next seed with dungeon-forge.
+            let seed = scene
+                .as_ref()
+                .and_then(|s| s.content.dungeon.generated.as_ref())
+                .map(|g| g.seed);
+            test.seed = seed;
+            if seed.is_some() {
+                keys.press(KeyCode::BracketRight);
+            }
+            test.step += 1;
+        }
+        9 if at(15.0) => {
+            if let Some(old) = test.seed {
+                let now = scene
+                    .as_ref()
+                    .and_then(|s| s.content.dungeon.generated.as_ref())
+                    .map(|g| g.seed);
+                let err = scene.as_ref().and_then(|s| s.error.clone());
+                test.check(
+                    now == Some(old + 1) && err.is_none(),
+                    format!("]: seed {old} -> {now:?} (error: {err:?})"),
+                );
+            }
             keys.press(KeyCode::Backspace);
             test.step += 1;
         }
-        9 if at(11.5) => {
+        10 if at(16.0) => {
             let ok = *state.get() == AppState::Hub;
             test.check(ok, format!("Backspace: back in the hub: {ok}"));
             let saved = saves.save_path.is_file();

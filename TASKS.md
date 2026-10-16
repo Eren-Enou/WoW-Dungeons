@@ -3,16 +3,24 @@
 Prioritized, actionable work. Completed milestones are summarized at the bottom;
 details and evidence live in PROGRESS.md.
 
-## Next up (after 0.7)
+## Next up (after 0.8)
 
-1. **Recorded human playtest of 0.7** (PLAYTEST_FORGE.md, 0.7 section):
-   - do the Emberforge Vaults and the Hollow Reliquary feel different?
-   - do pillars, the Guardian's wail and the patrols read on screen?
-   - is the Hollow Guardian fair?
-
-   Write the notes into the repository this time. Earlier versions were
-   played, but no notes were kept.
-2. **AI follow-ups measured in 0.7** (DUNGEON_FORGE_0_7.md, "AI"):
+1. **Recorded human playtests**: PLAYTEST_VIEWER.md (viewer and the new look)
+   and PLAYTEST_FORGE.md (0.7 section: do the two dungeons play
+   differently, is the Hollow Guardian fair). Write the notes into the
+   repository; earlier versions were played without notes.
+2. **Viewer → Studio groundwork** (DUNGEON_PRESENTATION_0_8.md, "Next steps"):
+   - turn a viewer selection into an override (0.7 format) and show
+     overrides applied;
+   - fade or cut modular walls between the camera and the player (walls drawn
+     with modules don't fade yet).
+3. **Forge: wall stub in passage mouths**: a corridor that overlaps a
+   pillared hall's aisle by only 0.6 m leaves a navigation wall stub in its
+   mouth (crypt seed 5). Change the overlap rule. This changes navigation and
+   simulation, so measure it.
+4. **Art**: textured or Blender-authored modular pieces with the same frames
+   and sizes; sloped wall pieces for stairs and ramps; more wall variants.
+5. **AI follow-ups measured in 0.7** (DUNGEON_FORGE_0_7.md, "AI"):
    - the remaining Hollow Guardian deaths (wails and bone shards; 4 wipes in
      60 runs; layouts 4 and 6 lose more, not yet diagnosed);
    - cover that accounts for the next wail;
@@ -21,39 +29,49 @@ details and evidence live in PROGRESS.md.
    - melee converging on one flank spot;
    - first frontal sweeps catching arriving melee;
    - threat failures from healer-caster packs at the pull.
-3. **Designer overrides beyond the proof of concept**:
+6. **Designer overrides beyond the proof of concept**:
    - re-run the structure checks after geometry edits;
    - key overrides to room roles rather than seeded names;
    - `test`/`report` with `--overrides`.
-4. **Milestone 0.8: presentation** (plan in ASSET_PIPELINE_RESEARCH.md):
-   - per-component GLB prefabs with procedural fallback;
-   - theme definitions, decoration anchors and original Blender art with
-     provenance rows;
-   - a package size budget.
-5. **Forge quality**:
+7. **Visibility**: only if art makes frames expensive; room grouping and
+   doorways exist, and `--viewer-tour` measures it (DUNGEON_PRESENTATION_0_8.md,
+   "Visibility").
+8. **Forge quality**:
    - free-form (non-grid) placement for more organic caves;
    - room-level culling if frame time ever needs it;
    - a third kit only after the two read as different in play.
-6. **Cinderdeep tuning from human feedback** (Normal may be too easy at level
+9. **Cinderdeep tuning from human feedback** (Normal may be too easy at level
    5); a camera rule for very large bosses.
-7. **Decor and props blocking sight**: decide whether large scenery should
+10. **Decor and props blocking sight**: decide whether large scenery should
    become solid volumes in `Nav`.
-8. **Release**: run the manual GitHub Actions workflow once pushing is
+11. **Release**: run the manual GitHub Actions workflow once pushing is
    authorised; test the ZIP on another machine and on Windows 10.
-9. **UI follow-ups from 0.3**:
+12. **UI follow-ups from 0.3**:
    - per-aura icons with tooltips;
    - several debuffs on compact raid frames;
    - key rebinding;
    - a settings panel.
-10. **Editor, part 3**: add or remove abilities and phases, place mobs
+13. **Editor, part 3**: add or remove abilities and phases, place mobs
     in-game. Consider a forge-backed "Studio" later.
-11. **Raid tuning, economy and hub**:
+14. **Raid tuning, economy and hub**:
     - Cinder Court damage between ×1.0 and ×1.4;
     - vendor rotation;
     - stash scrolling.
 
 ## Done
 
+- 0.8: dungeon viewer and modular environments:
+  - a viewer mode on the shared environment renderer (`env.rs`), with
+    camera modes, rooms, layers, inspector, tours, seed switching and a
+    self-test;
+  - modular kit pieces along navigation walls, doorways and pillars;
+  - decoration anchors and rules;
+  - per-room atmosphere;
+  - room structure in generated files;
+  - `dungeon-forge view`;
+  - packaging (forge, kits, viewer launcher).
+
+  See DUNGEON_PRESENTATION_0_8.md.
 - 0.7: meaningful dungeon variety and encounter design:
   - kit components (pitch, widths, room shapes, pillared halls, chasm);
   - blueprint identity with promised challenges;

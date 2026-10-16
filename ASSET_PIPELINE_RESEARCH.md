@@ -121,6 +121,22 @@ GPUs, models with textures or skins, Blender round trips.
 
 ## 4. Plan for 0.8 (presentation)
 
+**Status after 0.8** (details: MODULAR_ENVIRONMENTS.md,
+DUNGEON_PRESENTATION_0_8.md):
+* Item 1 is done, with one change of approach. Instead of one prefab per
+  room component, kits name wall, corner, door and pillar pieces that are
+  placed along the navigation's real walls, doorways and pillar holes. This
+  keeps every generated room size possible.
+* Items 2 and 3 are done (atmosphere presets, decoration anchors with kit
+  rules).
+* Item 4: the pieces are original but script-generated
+  (`scripts/make_prop_models.py`), not Blender-authored yet.
+* Item 5: measured; not needed (about 4 ms per frame).
+* Item 6: the packager reports the asset size (1.01 MB); there is no budget
+  check yet.
+
+The original plan follows.
+
 1. **Per-component prefabs:** a kit names a model per room or corridor
    component (e.g. `arena_floor`, `bridge_deck`, `wall_segment`) with the
    current procedural geometry as fallback. Prefab dimensions are checked

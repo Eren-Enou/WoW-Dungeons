@@ -1,25 +1,169 @@
 # Progress
 
-Status: **0.7 (meaningful dungeon variety and encounter design) implemented
-and verified** with unit tests, regression comparisons against the 0.6 build,
-multi-layout simulation matrices, automated graphical runs and a test of the
-packaged ZIP. 0.7 adds:
-* kit components (spatial vocabulary per theme);
-* blueprint identity;
-* Encounter Recipes 2.0 with a placement scorer;
-* patrols and line-of-sight pulses in the simulation, with cover AI;
-* a second kit and dungeon (The Hollow Reliquary);
-* `dungeon-forge report`;
-* a designer-overrides proof of concept.
+Status: **0.8 (dungeon viewer and modular environments) implemented and
+verified** with unit tests, simulation hash comparisons against 0.7,
+scripted viewer tests, screenshot tours of six generated layouts, the
+standard UI checks, and a test of the packaged ZIP. 0.8 adds:
+* a dungeon viewer (a mode of the game: `--viewer`, or V in the hub) on the
+  game's own environment renderer;
+* modular GLB environment pieces placed along the real walls, doorways and
+  pillars;
+* kit decoration rules at anchors;
+* per-room atmosphere;
+* room structure carried in generated dungeon files.
 
 Earlier versions have been playtested by the maintainer; no written notes are
-in the repository. 0.7 is not covered by a recorded human playtest.
-(Correction: the 0.6 status said no human had played 0.2–0.6; that was
-wrong. The "Not verified" lists below mean "not covered by a recorded
-playtest".)
+in the repository. 0.8 is not covered by a recorded human playtest
+(PLAYTEST_VIEWER.md is the script). (Correction: the 0.6 status said no human
+had played 0.2–0.6; that was wrong. The "Not verified" lists below mean "not
+covered by a recorded playtest".)
 
 Environment: Windows 11 Pro, Rust 1.99.0, Bevy 0.20.0 (pinned `=0.20.0`,
 Cargo.lock committed), NVIDIA RTX 2070 SUPER (Vulkan).
+
+## 0.8 — dungeon viewer and modular environments
+
+Review, plan, decisions, measurements: DUNGEON_PRESENTATION_0_8.md. Usage:
+DUNGEON_VIEWER_GUIDE.md. Art system: MODULAR_ENVIRONMENTS.md.
+
+Starting point: 8596ce0 (0.7.0 plus the wowdecomp research). Commits:
+
+| commit | content |
+|---|---|
+| 4c70977 | Phase A: architecture review and plan |
+| 2fe8031 | Phase B: viewer on the shared environment renderer |
+| 3c206d6 | Phases C–E: modules, anchors, decoration rules, atmosphere, regenerated content |
+| 934be77 | Phase F: viewer self-test, picking tests, `dungeon-forge view` |
+
+The docs, version 0.8.0 and packaging commit follow these.
+
+### Checks (run 2026-10-16 after the last code change)
+- `cargo fmt --all -- --check`: clean.
+- `cargo check --workspace`: clean.
+- `cargo clippy --workspace --all-targets -- -D warnings`: clean.
+- `cargo test --workspace --release`:
+  - `dungeon_forge` 21 passed;
+  - `dungeon_game` 20 passed;
+  - `dungeon_sim` 161 passed, 1 ignored (`diag_replay`);
+  - 0 failed.
+- `cargo build --release --workspace`: succeeded.
+
+### Acceptance (0.8)
+1. **A viewer mode**:
+   - `dungeon-sandbox --viewer [ID|file]`;
+   - "Inspect in viewer (V)" in the hub;
+   - `dungeon-forge view <blueprint> --seed N`;
+   - `Dungeon Viewer.bat` in the package.
+2. **Loads the existing dungeon format**: TOML by id or path.
+3. **Generated and authored dungeons**: tours and `--viewer-test` on
+   generated (Reliquary, Emberforge, six layouts) and handwritten
+   (Cinderdeep) dungeons.
+4. **Same renderer as the game**: `env.rs::spawn_environment` is called by
+   both states; there are no viewer-only visuals.
+5. **Free camera**:
+   - flight (WASD, E/Q, Shift, Ctrl, wheel speed), mouse-look on the right
+     button;
+   - walk at eye height on the floor (G), orbit (O);
+   - reset and entrance (R or Home).
+6. **Named rooms**: Tab / Shift+Tab, the room list (L), `--room NAME`.
+7. **Toggleable overlays**:
+   - navigation, with unreachable regions in magenta;
+   - structure: rooms, routes, doorways, the main route;
+   - encounters: spawns, aggro, patrols, hazards;
+   - modules and anchors.
+8. **Room and component information**:
+   - info panel: source, blueprint, seed, kit, counts, room, area and
+     elevation under the camera;
+   - click inspector for rooms, modules (asset, transform, bounds,
+     fallback), anchors and mobs.
+9. **No saves, no combat**: no `Sim` is created; `--viewer-test` confirms no
+   save is written.
+10. **Portable build**: the packaged viewer passes `--viewer-test` from
+    another folder, including seed regeneration.
+11. **Reusable visual component definitions**: kit `[modules]`, copied into
+    generated files as `[dungeon.modules]`.
+12. **Crypt modular art**: ashlar walls with niche variants, pilasters,
+    round arches, pillars filling their holes, candle sconces.
+13. **Volcanic modular art**: columnar basalt walls, basalt corner clusters,
+    iron-bound forge gates with glowing seams, lanterns, braziers.
+14. **Correct across seeds**: placement tests over all six shipped layouts
+    (three per kit); 294 tour screenshots without warnings.
+15. **Data-driven decoration anchors**: `[[decorate]]` rules over six anchor
+    kinds, deterministic, validated against walkable space; legacy kits
+    keep working.
+16. **Fallbacks**: missing models fall back per piece kind (tested and
+    screenshotted); old dungeons render as in 0.7.
+17. **Navigation and encounters unchanged**: 480 generated and 960
+    handwritten runs hash-identical to 0.7.
+18. **Handwritten content still works**: loaded, toured, played (demo).
+19. **Automated tests pass**: see Checks.
+20. **Screenshots**: tours, overlays, fallback, demo and UI shots, in
+    DUNGEON_PRESENTATION_0_8.md "Verification".
+21. **Performance**: modules versus procedural, per kit.
+22. **Documented**: DUNGEON_PRESENTATION_0_8.md, DUNGEON_VIEWER_GUIDE.md,
+    MODULAR_ENVIRONMENTS.md, PLAYTEST_VIEWER.md.
+23. **Inspection made easier**: generate, open, fly, layers, compare seeds
+    with [ ], tour to a contact sheet, reload with F5.
+
+### Simulation (release)
+- **Generated files**: the shipped generated files were regenerated
+  (generator v3: rooms, modules, atmosphere, anchors, decoration). 480 runs
+  (6 layouts × default, 10 players, Mender, Heroic × 20 seeds) are
+  hash-identical to the 0.7 files.
+- **Handwritten dungeons**: 960 runs (6 dungeons × 8 configurations × 20
+  seeds) are hash-identical to the 0.7 binary.
+
+### Graphical (automated, screenshots inspected)
+- **`--viewer-test`**: every check passes on the Hollow Reliquary, the
+  Emberforge Vaults and the Cinderdeep Hollows. It covers:
+  - entrance, room jump, 12 m of flight;
+  - walking at 1.70 m eye height on the floor;
+  - the four layers, screenshot, reload with the camera kept;
+  - `]` from seed 1 to 2 (generated);
+  - Backspace back to the hub.
+- **`--viewer-tour`** of all six shipped generated layouts: 294 shots,
+  contact sheets and `stats.csv`.
+  - Inspected: halls (overview and eye height), arenas, passages,
+    stairs, the pit room, the drop ledge, bridges.
+  - Found and fixed: wall rotation, crenellated corner posts, narrow door
+    frames, basalt "fence".
+- **Fallback tour** (models hidden): procedural walls, walled pillar holes,
+  crystal fallbacks; one warning per piece kind.
+- **Overlay tour**: every layer plus the panel.
+- **Game**:
+  - `--demo` of the Hollow Reliquary with the modular art: Victory in
+    460.9 s;
+  - `--input-test` (moved 29.7 m), `--frame-test`, `--tooltip-test`,
+    `--click-test` and `--hub-tour` pass.
+- **Packaged 0.8.0 ZIP** (30.6 MB; assets 1.01 MB):
+  - extracted and run from another folder;
+  - `--viewer-test` passes;
+  - a tour renders the kit models with no missing files.
+
+### Performance (`--no-vsync --viewer-tour`, ms/frame, mean over all views)
+
+| Dungeon | modules | procedural (0.7 look) |
+|---|---|---|
+| Emberforge Vaults | 3.94 | 3.82 |
+| Hollow Reliquary | 3.72 | 3.87 |
+
+Meshes: 2120 / 2623 with modules, of which about 300–430 are visible.
+Room-based visibility culling was not built: there's nothing to win.
+
+### Bugs found and fixed during 0.8
+- The viewer entered before the camera existed (the enter system was
+  silently skipped).
+- An inverted handedness test in the module rotation.
+- Corner posts at every wall split.
+- Door frames sized from partial portals; order-dependent portal merging.
+- A test caught the override proof of concept tripping on the new room
+  references (`encounter = ""` now clears one).
+
+### Not verified (needs a human)
+- Whether the viewer's controls and panels are pleasant, and whether the
+  new look reads well and plays well (camera around arches and pillars,
+  telegraph readability under the presets). See PLAYTEST_VIEWER.md.
+- Other GPUs and resolutions; the package on other machines.
 
 ## 0.7 — meaningful dungeon variety and encounter design
 

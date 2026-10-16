@@ -1,5 +1,80 @@
 # Changelog
 
+## 0.8 — Dungeon viewer and modular environments
+
+Review, decisions and measurements: DUNGEON_PRESENTATION_0_8.md. Using the
+viewer: DUNGEON_VIEWER_GUIDE.md. The art system: MODULAR_ENVIRONMENTS.md.
+Playtest script: PLAYTEST_VIEWER.md.
+
+### Dungeon viewer
+- **Opening it**: `dungeon-sandbox --viewer [ID | file]`, "Inspect in viewer
+  (V)" in the hub, `dungeon-forge view <blueprint> --seed N`, or
+  `Dungeon Viewer.bat` in the package. It shows a dungeon's environment
+  with the game's own renderer, without a simulation or saves.
+- **Camera**:
+  - free flight (WASD, E/Q, Shift/Ctrl, wheel speed), right-mouse look;
+  - walk at eye height on walkable floor (G), orbit (O);
+  - entrance (Home/R), next and previous room (Tab), a clickable room list
+    (L), `--room`.
+- **Layers**:
+  1. navigation, with regions the entrance can't reach in magenta;
+  2. structure: rooms, routes, doorways, the main route;
+  3. encounters: spawns, aggro, patrols, hazards;
+  4. modules and anchors.
+- **Panels**: an info panel (source, blueprint/seed/kit, counts, the room
+  and area under the camera) and a click inspector for rooms, modular
+  pieces, anchors and mobs. Read-only.
+- **Iterating**: F5 reloads the file; [ and ] generate the previous or next
+  seed with `dungeon-forge`; F12 takes a screenshot.
+- **`--viewer-tour`**: screenshots of every room plus eye-height views, an
+  HTML contact sheet and per-view frame statistics.
+- **`--viewer-test`**: a scripted check of the controls.
+- **`--no-vsync`**: for measurements.
+
+### Modular environments
+- **Kits** gain:
+  - `[modules]`: wall, corner, door and pillar GLB pieces with nominal sizes
+    and wall variants;
+  - `[atmosphere.<role>]` lighting and fog presets;
+  - `[[decorate]]` rules over decoration anchors.
+- **Placement**: pieces follow the real geometry.
+  - Walls are tiled along navigation walls, stretched to fit.
+  - Posts go where walls turn or end.
+  - Door frames are sized from the corridor's floor.
+  - Pillars fill their holes in the floor exactly.
+  - Floors stay procedural.
+- **Fallbacks**: a missing model falls back to the 0.7 procedural geometry
+  for that piece kind. Dungeons without modules render exactly as before.
+- **Anchors** (forge): pillar, pillar face, wall, door side, cut corner and
+  outer corner, with facing and clearance. Rules place props, decor and
+  lights deterministically, checked against walkable space. Kits without
+  rules keep their 0.6/0.7 decoration.
+- **Atmosphere**: fog and ambient light blend per room toward the room
+  role's preset, in play and in the viewer.
+- **Art**: ten original modular GLBs from `scripts/make_prop_models.py`,
+  with provenance rows.
+  - Crypt: ashlar wall and a niche variant, pilaster, round arch, pillar,
+    candle sconce.
+  - Volcanic: basalt wall, corner cluster, forge gate, lantern.
+
+### Dungeon Forge
+- **Generated files carry their structure**:
+  - `[dungeon.generated]` (blueprint, path, seed, kit, generator);
+  - `[[dungeon.rooms]]` (rooms and corridors with their areas, roles,
+    routes, order and encounters);
+  - the kit's modules and atmosphere;
+  - `[[dungeon.anchors]]`.
+
+  All optional and validated; the simulation never reads them.
+- `GENERATOR_VERSION` 3. The shipped layouts were regenerated; their
+  simulation is hash-identical to 0.7 (480 runs).
+- `dungeon-forge view`.
+
+### Other
+- Packaging ships `dungeon-forge.exe`, the blueprints and kits, and
+  `Dungeon Viewer.bat`, and reports the asset size.
+- Overrides can clear a room's encounter with `encounter = ""`.
+
 ## 0.7 — Meaningful dungeon variety and encounter design
 
 Review, formats, measurements and plan: DUNGEON_FORGE_0_7.md. Playtest

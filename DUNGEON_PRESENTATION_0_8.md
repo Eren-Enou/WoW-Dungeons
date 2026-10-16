@@ -5,7 +5,8 @@ the Emberforge Vaults and the Hollow Reliquary look like places, without
 touching navigation, encounters or simulation results.
 
 This file starts with the architecture review and plan written before
-implementation (Phase A). Results follow from "Results" on.
+implementation (Phase A), followed by what was built and measured
+("Results").
 
 ## Phase A — review of the 0.7 renderer
 
@@ -149,3 +150,210 @@ Simulation hashes must stay identical on all dungeons:
 * decor, props, lights and the new tables are not read by the sim.
 
 Regenerated files bump `GENERATOR_VERSION`.
+
+---
+
+# Results
+
+Everything below was verified by tests and automated graphical runs on the
+development machine (Windows 11, RTX 2070 SUPER, 1280x760). It is not
+covered by a recorded human playtest; PLAYTEST_VIEWER.md is the script for
+one.
+
+Commits on top of 8596ce0:
+
+| commit | content |
+|---|---|
+| 4c70977 | Phase A: this review and plan |
+| 2fe8031 | Phase B: the viewer on the shared environment renderer |
+| 3c206d6 | Phases C–E: modules, anchors and decoration rules, atmosphere, regenerated content |
+| 934be77 | Phase F: viewer self-test, picking tests, `dungeon-forge view` |
+
+The docs, version 0.8.0 and packaging commit follow these.
+
+Guides:
+* [DUNGEON_VIEWER_GUIDE.md](DUNGEON_VIEWER_GUIDE.md): using the viewer;
+* [MODULAR_ENVIRONMENTS.md](MODULAR_ENVIRONMENTS.md): schema, how pieces
+  are placed, adding a piece, fallbacks, performance.
+
+## Architecture as built
+
+```
+dungeon file (TOML) --> Content --> Nav --+--> env.rs  spawn_environment   (game + viewer)
+                                          |      +- floors, ramps, stairs, lava, decor, props, lights, fog
+                                          |      +- modules.rs  plan_modules -> spawn (walls, corners, doors, pillars)
+                                          |      +- structure.rs  rooms + doorways  --> EnvStructure
+                                          |      +- Atmosphere (per-room fog/ambient blend)
+                                          +--> dungeon.rs  + Sim (play)
+                                          +--> viewer.rs   (no Sim): camera, layers, inspector, tour, test
+Dungeon Forge --> the same file, plus [dungeon.generated], [[dungeon.rooms]],
+                  [dungeon.modules], [dungeon.atmosphere.*], [[dungeon.anchors]]
+```
+
+The separations the milestone asked for:
+
+| Concern | Where |
+|---|---|
+| Content | `crates/sim/src/content.rs`: the new tables are optional, validated, and never read by the simulation |
+| Simulation | Untouched: 960 handwritten and 480 generated runs are hash-identical to 0.7 |
+| Environment rendering | `env.rs` and `modules.rs`; one code path for the game and the viewer, with no viewer-only visuals |
+| Viewer controls | `viewer.rs` |
+| Development overlays | `viewer.rs` layers and `navdebug.rs` |
+| Generation | `crates/forge`; the game still doesn't depend on it, and the viewer runs the `dungeon-forge` *executable* to switch seeds |
+
+## Decisions
+
+* **A viewer mode, not a second application.** The `--viewer` flag of
+  `dungeon-sandbox` enters `AppState::Viewer`; the hub's V button opens it
+  too. One executable, one renderer, and the package needs nothing new
+  except a `.bat`.
+* **The structure travels in the file.** The renderer can't call the
+  forge, so generated files carry rooms, corridors and their areas.
+  Handwritten dungeons get rooms derived from area names. Every surface
+  belongs to exactly one room (tested). This gives the viewer, the
+  atmosphere and door frames a room graph without guessing, and is the seed
+  of a future Studio's selectable rooms with stable ids.
+* **Hybrid modules along real boundaries** (see MODULAR_ENVIRONMENTS.md).
+  The alternative was fixed-size room prefabs, which would force every room
+  of a kind to one size and give up the generator's variety.
+* **Anchors computed by the forge, rules from the kit.** The same anchor
+  kinds serve both kits: the crypt hangs candle sconces where the forge
+  hangs lanterns, and puts pillars where the forge puts nothing.
+  Placement is deterministic per seed and validated against walkable
+  space.
+* **Atmosphere as a few presets per role**, blended at the focus. It costs
+  no extra lights.
+* **Read-only selection.** The viewer selects and describes rooms, pieces,
+  anchors and mobs with their stable ids, which is what a future editor
+  would map to overrides (0.7). It edits nothing.
+
+## Problems found and fixed while building
+
+* **Initial `--viewer` state ran before the camera existed.** The enter
+  system was skipped silently. The viewer is now entered on the first
+  frame from the hub.
+* **Module rotation.** A handedness test was inverted, so most wall pieces
+  got a reflection instead of a rotation and vanished. Fixed, with a unit
+  test.
+* **Corner posts.** They appeared wherever navigation splits a straight
+  wall, which read as crenellations. Posts are now only where a wall turns
+  or ends, and never on walkable floor (a test caught one in a doorway).
+* **Door frames.**
+  * They were 1.2–1.5 m wide where a corridor meets two floor strips of a
+    pit or pillared room: the opening was split over several portals, and
+    merging was order-dependent. Portals now merge until stable.
+  * The width is measured across the corridor's own floor.
+* **A pre-existing navigation oddity, made visible.** In crypt seed 5 a
+  0.6 m stub of wall stands in a passage mouth: the corridor overlaps a
+  pillared hall's aisle by only 0.6 m, so that aisle's edge keeps its wall.
+  It is a real navigation wall (it blocks line of sight in 0.7 too), so the
+  art keeps drawing it. Listed in TASKS.md as a forge fix; fixing it would
+  change the simulation, so it isn't done in a presentation milestone.
+* **Basalt walls looked like a picket fence.** The columns now overlap in
+  front of a rock mass, in darker basalt.
+* **`dungeon-headless` was stale** after a schema change in one check run.
+  It was rebuilt and the comparison redone.
+
+## Verification
+
+* **Checks**: `cargo fmt --all -- --check`, `cargo check --workspace`,
+  `cargo clippy --workspace --all-targets -- -D warnings`,
+  `cargo test --workspace --release` and `cargo build --release --workspace`
+  all pass. Counts are in PROGRESS.md.
+* **New tests**:
+  * game:
+    * module rotation;
+    * placement over all six shipped generated layouts: walls on navigation
+      walls, openings walkable, posts off the floor, pillars filling their
+      holes, mounted decoration above head height;
+    * fallback with missing models; old dungeons without modules;
+    * picking of rooms, pieces and mobs;
+    * derived rooms of handwritten dungeons;
+  * forge:
+    * rooms cover every area once; generated info, modules, atmosphere and
+      anchors present; deterministic;
+    * legacy kits still decorate;
+    * bad rules rejected;
+    * an override clearing a room's encounter.
+* **Simulation**:
+  * shipped generated files regenerated with generator v3: 480 runs (6
+    layouts × 4 configurations × 20 seeds) hash-identical to their 0.7
+    versions;
+  * handwritten dungeons: 960 runs (6 dungeons × 8 configurations × 20
+    seeds) hash-identical to the 0.7 build.
+* **Viewer** (`--viewer-test`):
+  * all checks pass on the Hollow Reliquary and the Emberforge Vaults
+    (generated) and the Cinderdeep Hollows (handwritten): entrance, room jump,
+    flight, walk at eye height on the floor, the four layers, screenshot,
+    reload with the camera kept, next seed (generated), back to the hub;
+  * no save file was written.
+* **Tours**:
+  * all six shipped generated layouts, three per kit: 294 screenshots,
+    contact sheets, no warnings;
+  * inspected: halls, eye-height views, arenas, passages, stairs, the pit
+    room, the drop ledge, bridges;
+  * a crypt tour with the model folder hidden: procedural fallback drawn,
+    one warning per piece kind;
+  * an overlay tour with every layer and the panel.
+* **Game**:
+  * `--demo` of the crypt with the modular art: Victory in 460.9 s;
+  * `--input-test`, `--frame-test`, `--tooltip-test`, `--click-test` and
+    `--hub-tour` pass; the Dungeons tab shows "Inspect in viewer (V)".
+* **Package** (0.8.0, 30.6 MB ZIP, assets 1.01 MB), extracted to a scratch
+  folder:
+  * `--viewer-test` passes when started from another directory, including
+    seed regeneration through the packaged `dungeon-forge.exe`;
+  * a tour renders the modular art with no missing files.
+
+## Performance
+
+| Dungeon | Mean ms/frame | Worst view | Meshes (visible avg) |
+|---|---|---|---|
+| Emberforge, modules | 3.94 | 4.14 | 2120 (308) |
+| Emberforge, procedural (0.7 look) | 3.82 | 4.15 | 2080 (301) |
+| Reliquary, modules | 3.72 | 4.29 | 2623 (426) |
+| Reliquary, procedural (0.7 look) | 3.87 | 4.36 | 1214 (205) |
+
+Measured with `--no-vsync --viewer-tour`, mean over 46–49 views per
+dungeon. The procedural rows are the same build with `assets/models/kit`
+hidden.
+
+## Visibility (Phase G)
+
+**Not built.** The numbers don't justify it:
+* a dungeon renders in about 4 ms;
+* frustum culling already keeps visible meshes at 10–16% of the total.
+
+The prerequisites now exist, if art ever makes rooms expensive:
+* room grouping (`EnvStructure`);
+* doorways with positions and widths;
+* the tour's per-view frame times and mesh counts to measure against.
+
+## Known limitations
+
+* **No recorded human playtest** of the viewer or the new look.
+* **Wall fading**: walls drawn with modules don't fade when they hide the
+  player (the procedural walls did). Camera collision still uses the same
+  wall boxes, so the camera stays in front of them.
+* **Camera fit**: the camera's collision boxes are the procedural wall
+  boxes, not the modules' exact shapes (arches and pillars are
+  approximated).
+* **The art is simple**: script-generated, untextured, flat-shaded.
+* **Sloped walls** along ramps and stairs, and lava lips, stay procedural.
+* **Forward compatibility**: 0.8 generated files can't be read by 0.7
+  builds (new optional tables). 0.7 files load in 0.8.
+* **Room derivation for handwritten dungeons** relies on area names.
+  Corridors are only recognised by " - " in the name; Cinderdeep shows 0
+  corridors.
+* **Wall stub**: the 0.6 m stub in crypt seed 5 above.
+
+## Next steps
+
+1. Run PLAYTEST_VIEWER.md and keep the notes.
+2. Studio groundwork:
+   * select a room, then emit an override (0.7) from the viewer;
+   * show overrides applied.
+3. Fade or cut modular walls between the camera and the player.
+4. Forge: no narrow corridor overlaps with pillar aisles (the wall stub).
+   This changes the simulation, so it needs a measured change.
+5. Textured or Blender-authored pieces with the same frames and sizes.

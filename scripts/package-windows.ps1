@@ -55,7 +55,7 @@ if ($Build) {
     Write-Host "Building release (this can take several minutes the first time)..."
     Push-Location $repo
     try {
-        & cargo build --release -p dungeon_game -p dungeon_sim
+        & cargo build --release -p dungeon_game -p dungeon_sim -p dungeon_forge
         if ($LASTEXITCODE -ne 0) { Fail "cargo build --release failed (exit code $LASTEXITCODE). Fix the build errors above and rerun." }
     } finally {
         Pop-Location
@@ -65,6 +65,7 @@ if ($Build) {
 $release = Join-Path $repo 'target\release'
 $gameExe = Join-Path $release 'dungeon-sandbox.exe'
 $headlessExe = Join-Path $release 'dungeon-headless.exe'
+$forgeExe = Join-Path $release 'dungeon-forge.exe'
 if (-not (Test-Path $gameExe)) {
     Fail "Missing $gameExe. Rerun with -Build, or run 'cargo build --release' first."
 }
@@ -91,6 +92,19 @@ if (Test-Path $headlessExe) {
 } else {
     Write-Host "note: dungeon-headless.exe not built; packaging the game only." -ForegroundColor Yellow
 }
+if (Test-Path $forgeExe) {
+    Copy-Item $forgeExe $stage
+} else {
+    Write-Host "note: dungeon-forge.exe not built; the viewer can't switch generated seeds." -ForegroundColor Yellow
+}
+# One-click dungeon viewer (the same executable in viewer mode).
+Set-Content -Path (Join-Path $stage 'Dungeon Viewer.bat') -Encoding ascii -Value @(
+    '@echo off',
+    'rem Opens the dungeon viewer. Pass a dungeon id or file, e.g.:',
+    'rem   "Dungeon Viewer.bat" hollow_reliquary',
+    'cd /d "%~dp0"',
+    'start "" dungeon-sandbox.exe --viewer %*'
+)
 Copy-Item $howTo $stage
 foreach ($doc in 'README.md', 'CHANGELOG.md') {
     $p = Join-Path $repo $doc
@@ -106,6 +120,19 @@ Get-ChildItem -Path $content -Recurse -File | Where-Object {
     $dest = Join-Path $destContent $rel
     New-Item -ItemType Directory -Force (Split-Path -Parent $dest) | Out-Null
     Copy-Item $_.FullName $dest
+}
+
+# Dungeon Forge blueprints and kits (the viewer's [ ] regenerates seeds).
+$forgeData = Join-Path $repo 'assets\forge'
+if (Test-Path $forgeData) {
+    Get-ChildItem -Path $forgeData -Recurse -File | Where-Object {
+        $_.Extension -eq '.toml'
+    } | ForEach-Object {
+        $rel = $_.FullName.Substring($repo.Length).TrimStart('\')
+        $dest = Join-Path $stage $rel
+        New-Item -ItemType Directory -Force (Split-Path -Parent $dest) | Out-Null
+        Copy-Item $_.FullName $dest
+    }
 }
 
 # Models (glTF/GLB props) and their provenance record.
@@ -142,8 +169,9 @@ if (-not (Test-Path $zip)) { Fail "ZIP was not created at $zip." }
 
 $zipMb = [math]::Round((Get-Item $zip).Length / 1MB, 1)
 $folderMb = [math]::Round(((Get-ChildItem $stage -Recurse -File | Measure-Object Length -Sum).Sum) / 1MB, 1)
+$assetMb = [math]::Round(((Get-ChildItem (Join-Path $stage 'assets') -Recurse -File | Measure-Object Length -Sum).Sum) / 1MB, 2)
 Write-Host ""
 Write-Host "Packaged Dungeon Sandbox $version" -ForegroundColor Green
-Write-Host "  folder: $stage ($folderMb MB, $($dungeons.Count) dungeon files)"
+Write-Host "  folder: $stage ($folderMb MB, $($dungeons.Count) dungeon files, assets $assetMb MB)"
 Write-Host "  zip:    $zip ($zipMb MB)"
 Write-Host "Test it: extract the ZIP somewhere else and double-click dungeon-sandbox.exe."

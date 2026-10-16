@@ -9,7 +9,11 @@ Dungeon Forge pipeline from different theme kits), a navigation test level and a
 angled caves, ramps, bridges, drops and line of sight, levels, loot with rarities, and a sandbox for editing
 encounters without recompiling. Classic MMO controls, clickable party/raid
 frames with mouseover healing, threat-coloured nameplates and tooltips
-generated from the real rules. All assets are primitive meshes; all names, maps and numbers are
+generated from the real rules. A **dungeon viewer** flies through any dungeon
+without playing it, with navigation, structure, encounter and art layers.
+The generated dungeons are dressed with original modular stone and basalt
+pieces placed along their real walls. All assets are original (primitive
+meshes and script-generated GLB models); all names, maps and numbers are
 original.
 
 ## Quick start
@@ -219,7 +223,35 @@ additions); the design is in [NAVIGATION_0_4.md](NAVIGATION_0_4.md) and
 Environment overrides: `DUNGEON_CONTENT=<dir or file>`,
 `DUNGEON_SAVE_DIR=<dir>` (default `./saves`).
 
-## Dungeon Forge (generated dungeons, 0.6–0.7)
+## Dungeon viewer (0.8)
+
+Inspect a dungeon without recruiting, entering or fighting. It uses the
+game's own renderer, and creates no simulation and writes no save.
+
+```powershell
+.\target\release\dungeon-sandbox.exe --viewer hollow_reliquary
+.\target\release\dungeon-sandbox.exe --viewer assets\content\variants\forge\emberforge_vaults_s6.toml --layers nav,structure
+.\target\release\dungeon-forge.exe view assets\forge\blueprints\hollow_reliquary.toml --seed 7
+.\target\release\dungeon-sandbox.exe --viewer emberforge_vaults --viewer-tour   # contact sheet + frame stats
+```
+
+In the game, press V in the hub (or "Inspect in viewer" on the Dungeons
+tab); Backspace returns.
+
+| Keys | Action |
+|---|---|
+| Right mouse + WASD, E/Q | Fly; Shift/Ctrl change speed |
+| G, O | Walk at eye height, orbit |
+| Home, Tab, L | Entrance, next room, room list |
+| 1–4 | Navigation, structure, encounter and module layers |
+| Click | Inspect |
+| F5, [ ], F12 | Reload, other seeds, screenshot |
+
+Everything else is in [DUNGEON_VIEWER_GUIDE.md](DUNGEON_VIEWER_GUIDE.md).
+How the modular pieces, decoration anchors and per-room atmosphere work, and
+how to add a piece: [MODULAR_ENVIRONMENTS.md](MODULAR_ENVIRONMENTS.md).
+
+## Dungeon Forge (generated dungeons, 0.6–0.8)
 
 Dungeon Forge builds original dungeons from a **blueprint** and a **kit**, then
 validates them:
@@ -263,8 +295,10 @@ each time the dungeon is regenerated.
 under its own id, so several layouts can be played side by side. The same
 blueprint and seed always produce the same file. Formats, components,
 validation and measured results: [DUNGEON_FORGE_0_6.md](DUNGEON_FORGE_0_6.md)
-(foundation) and [DUNGEON_FORGE_0_7.md](DUNGEON_FORGE_0_7.md) (kit
-components, identity, Recipes 2.0, the crypt, report, overrides).
+(foundation), [DUNGEON_FORGE_0_7.md](DUNGEON_FORGE_0_7.md) (kit
+components, identity, Recipes 2.0, the crypt, report, overrides) and
+[DUNGEON_PRESENTATION_0_8.md](DUNGEON_PRESENTATION_0_8.md) (rooms in the
+file, modules, anchors, atmosphere).
 The plan: [DUNGEON_FORGE_PLAN.md](DUNGEON_FORGE_PLAN.md).
 
 Props (0.6): `[[dungeon.props]]` places a glTF/GLB model from `assets/models/`
@@ -360,14 +394,15 @@ crates/sim    dungeon_sim: stats & formulas, combat, auras, AI + blackboard,
 crates/forge  dungeon_forge: blueprint/kit formats, layout generator, components,
               placement scorer, validation, simulation matrix, report,
               overrides, maps (dungeon-forge CLI)
-crates/game   dungeon_game: Bevy app (hub, dungeon renderer, HUD, overlays, effects,
+crates/game   dungeon_game: Bevy app (hub, environment renderer env.rs + modules.rs,
+              dungeon play, viewer.rs, structure.rs, HUD, overlays, effects,
               results, camera, controls, tooltips, demo/test automation)
 assets/content/dungeons/   the playable dungeons (TOML)
 assets/content/variants/   example encounter variations
 packaging/    files shipped in the Windows package (HOW_TO_PLAY.txt)
 scripts/      package-windows.ps1, make_prop_models.py
 assets/forge/ kits (theme libraries), blueprints, maps of shipped layouts
-assets/models/ glTF/GLB props + PROVENANCE.md
+assets/models/ glTF/GLB props, modular kit pieces (kit/) + PROVENANCE.md
 RULES.md      authoritative rules and formulas ([WoW] / [orig] tagged)
 RESEARCH.md   references and design provenance
 PROGRESS.md   verified status, benchmarks, known problems

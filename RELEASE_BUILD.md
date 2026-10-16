@@ -12,7 +12,7 @@ Requirements: Windows 10/11 x64, Rust stable (1.97 or newer, via
 powershell -ExecutionPolicy Bypass -File scripts\package-windows.ps1 -Build
 ```
 
-`-Build` runs `cargo build --release -p dungeon_game -p dungeon_sim` first;
+`-Build` runs `cargo build --release -p dungeon_game -p dungeon_sim -p dungeon_forge` first;
 leave it out to package an existing `target\release` build. `-OutDir <path>`
 changes the output folder (default `dist\`, which git ignores).
 
@@ -21,7 +21,10 @@ The script:
 1. reads the version from `[workspace.package]` in `Cargo.toml`;
 2. recreates `dist\DungeonSandbox-<version>-windows-x64\` (only that version's
    folder and ZIP are deleted);
-3. copies `dungeon-sandbox.exe`, `dungeon-headless.exe` (if built),
+3. copies `dungeon-sandbox.exe`, `dungeon-headless.exe` and
+   `dungeon-forge.exe` (if built; 0.8: the viewer uses it to switch
+   generated seeds), writes `Dungeon Viewer.bat`, copies the blueprints and
+   kits under `assets\forge\` (`*.toml`, 0.8),
    `HOW_TO_PLAY.txt` (from `packaging\`), `README.md`, `CHANGELOG.md` and the
    `*.toml` files under `assets\content\`, plus the models under
    `assets\models\` (`.glb/.gltf/.bin/.png/.ktx2` and `PROVENANCE.md`, 0.6)
@@ -29,8 +32,8 @@ The script:
    copies (`90_*.toml`);
 4. checks the required files exist, at least one dungeon file is present and
    nothing forbidden slipped in, failing with a message that says what to do;
-5. writes `dist\DungeonSandbox-<version>-windows-x64.zip` and prints both
-   sizes.
+5. writes `dist\DungeonSandbox-<version>-windows-x64.zip` and prints the
+   folder, ZIP and asset sizes.
 
 Package layout:
 
@@ -38,10 +41,13 @@ Package layout:
 DungeonSandbox-<version>-windows-x64/
   dungeon-sandbox.exe      the game
   dungeon-headless.exe     optional AI-only simulation runner
+  dungeon-forge.exe        dungeon generator (0.6); used by the viewer (0.8)
+  Dungeon Viewer.bat       opens the dungeon viewer (0.8)
   HOW_TO_PLAY.txt          player guide (controls, loop, Cinderdeep notes)
   README.md, CHANGELOG.md
   assets/content/dungeons/*.toml, assets/content/variants/**.toml
-  assets/models/**          GLB props + PROVENANCE.md (0.6)
+  assets/models/**          GLB props and modular kit pieces + PROVENANCE.md
+  assets/forge/**           blueprints and kits (0.8)
   saves/                   created on first save (not shipped)
 ```
 
