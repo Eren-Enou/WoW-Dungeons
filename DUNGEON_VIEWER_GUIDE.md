@@ -112,14 +112,26 @@ player map.
 
 **What it shows:**
 * **Floors**, shaded by height (light high, dark low); lava is red.
-* **Room and corridor outlines**, coloured by purpose:
+* **Room and corridor outlines**, coloured by purpose. 0.9 files say why
+  every room exists; older files are classified from their route data.
+  Labels carry the purpose's letter (`r12:R`).
   * blue: main route;
-  * cyan: alternate route;
-  * green: optional encounter chamber;
-  * violet: empty side chamber;
-  * orange: overlook or shortcut;
-  * pink: return loop;
+  * gold, R: reward detour (an optional fight and/or a cache, rejoining
+    further on);
+  * rose, F: tactical flank (a side passage into a required pack's room);
+  * cyan, S: safe way round a hazardous crossing;
+  * red, !: the hazardous crossing itself (main corridors with vents);
+  * green, O: optional encounter chamber;
+  * yellow, C: treasure cache chamber;
+  * pale blue, V: landmark (no reward);
+  * violet, Q/E: quiet chamber (deliberate) or empty side chamber (0.8 files);
+  * orange, D: overlook and its one-way drop;
+  * pink, L: return loop;
+  * cyan, A: alternate route with no declared purpose (0.8 files);
   * grey: passage.
+* **Branches** (0.9) as dashed lines in their purpose's colour, from the main
+  room they leave to the one they rejoin.
+* **Hazards** as red rings at their real radius; **caches** as gold diamonds.
 * **Doorways** in yellow, and the **main route** as a dashed line.
 * **One-way drops** as orange arrows.
 * **Spawns** by rank (magenta boss, yellow elite, white trash), with a green
@@ -208,6 +220,10 @@ In a dungeon run, the atmosphere always applies.
     * role, route, order;
     * purpose; whether it is a dead end; how many rooms it lies off the main
       route;
+    * the branch it belongs to (0.9): purpose, the rooms it joins, what it
+      holds, what it bypasses (always nothing required), and what the
+      generator measured (walking lengths, flank angle and staging margin,
+      vents on the short way), with any warnings;
     * size, floor heights, areas, doorways;
     * encounter, atmosphere preset;
   * a module: kind, asset path (and whether it fell back), position, yaw,
@@ -262,5 +278,18 @@ and 0.8.1 are in PROGRESS.md.
 
 ## Branch purposes
 
-Purposes come from the generator's route data. BRANCH_PURPOSE_0_8_1.md
-reviews what they are for, and how well they currently earn their place.
+Purposes come from the generator (0.9: `[[dungeon.branches]]`, measured on
+the navigation; DUNGEON_REMIX_0_9.md). BRANCH_PURPOSE_0_8_1.md is the review
+that led to them.
+
+This is developer knowledge. Players see only the doorway clues (a teal
+tablet or a white-hot gate lamp where a branch holds something, a dim candle
+or ember lantern at a side passage, warm light at the way to a landmark) and
+the caches themselves.
+
+## Remixed layouts (0.9)
+
+When the hub's Layout row has a remix or a seed chosen for the selected
+dungeon, V (or "Inspect in viewer") opens that generated file, so you can
+look at the layout before playing it. The file lives in `generated/` beside
+the save.

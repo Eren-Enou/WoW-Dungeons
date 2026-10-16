@@ -3,24 +3,25 @@
 Prioritized, actionable work. Completed milestones are summarized at the bottom;
 details and evidence live in PROGRESS.md.
 
-## Next up (after 0.8.1)
+## Next up (after 0.9)
 
-1. **Recorded human playtests**:
-   - the open questions in PLAYTEST_NOTES_0_8.md;
-   - whether the 0.8.1 speed bar, map and inspection lighting answer the
-     first user's requests;
-   - PLAYTEST_FORGE.md (0.7 section: do the two dungeons play differently,
-     is the Hollow Guardian fair).
-2. **0.9 branch purpose** (BRANCH_PURPOSE_0_8_1.md, "Recommendations"):
-   - give every alternate route a blueprint-chosen reason, and reject ones
-     that only bypass a required pack;
-   - turn empty side chambers into explicit intents (optional, cache,
-     vista);
-   - mark optional chambers at their doorway;
-   - add `[atmosphere.side]` to the volcanic kit;
-   - optional deeper side branches;
-   - companions following the player's route;
-   - a `dungeon-forge audit` command.
+1. **Recorded human playtest of 0.9**: PLAYTEST_REMIX_0_9.md (three Hollow
+   Reliquary layouts, one Emberforge layout). Whether the routes feel like
+   choices, the clues are noticed, and replays stay interesting is not
+   validated by the simulation.
+2. **Branch follow-ups from the 0.9 measurements** (DUNGEON_REMIX_0_9.md,
+   "Results"):
+   - flanks help against screened casters and hurt against frontal packs:
+     let blueprints prefer flank targets by formation, or tell players which
+     packs reward a flank;
+   - against AI parties the safe way is about as fast as timing the vents:
+     tune vent timing so the short way is clearly shorter for a party that
+     times it, and keep measuring dithers at the vents;
+   - Emberforge generates 90/100 seeds (drop geometry and flank angles are
+     the usual causes); a smarter drop placement would raise it;
+   - side branches two rooms deep exist (`depth = 2`) but no shipped
+     blueprint uses them yet.
+
 3. **Viewer → Studio groundwork** (DUNGEON_PRESENTATION_0_8.md, "Next steps"):
    - turn a viewer selection into an override (0.7 format) and show
      overrides applied;
@@ -72,6 +73,9 @@ details and evidence live in PROGRESS.md.
 
 ## Done
 
+- 0.9: Dungeon Remix (DUNGEON_REMIX_0_9.md): purposeful routes and side
+  chambers, measured branch validation, `audit` and `routes`, treasure
+  caches, companion trail following, Classic/Remix/Seed entry in the hub.
 - 0.8.1: viewer polish, map navigation and exploration design:
   - speed bar, presets and smoothing;
   - viewer preferences;

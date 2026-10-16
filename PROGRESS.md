@@ -1,6 +1,9 @@
 # Progress
 
-Status: **0.8.1 (viewer polish, map navigation and exploration design)
+Status: **0.9 (Dungeon Remix) implemented and verified; see the 0.9
+section.**
+
+Previous: **0.8.1 (viewer polish, map navigation and exploration design)
 implemented and verified**. It adds a speed bar and presets, a 2D map,
 inspection lighting, branch-purpose classification, a branch audit
 (BRANCH_PURPOSE_0_8_1.md) and the first user's 0.8 feedback
@@ -26,6 +29,30 @@ covered by a recorded playtest".)
 
 Environment: Windows 11 Pro, Rust 1.99.0, Bevy 0.20.0 (pinned `=0.20.0`,
 Cargo.lock committed), NVIDIA RTX 2070 SUPER (Vulkan).
+
+## 0.9 - Dungeon Remix
+
+Design, measurements and limitations: DUNGEON_REMIX_0_9.md ("Results").
+Playtest script: PLAYTEST_REMIX_0_9.md. Not covered by a recorded human
+playtest.
+
+Verified (2026-10-16, final build):
+- fmt, check, clippy -D warnings clean; tests: forge 27, game 26, sim 164
+  (1 ignored); release build OK.
+- audit 100 layouts: Hollow Reliquary 100/100, Emberforge 98/100 (seeds 46,
+  56 fail, reported); 0 purposeless branches (0.8.1 blueprints: 241 / 149).
+- routes: companions walked 100% of branch rooms; flank, safe and detour
+  effects as listed in DUNGEON_REMIX_0_9.md.
+- regression vs 0.8.1 (8 configs x 15 seeds, all dungeons): wins 732 -> 732,
+  deaths 1220 -> 1216; classics: Hollow 98 -> 102 wins, Emberforge 105 -> 105.
+- --viewer-test (3 dungeons), --remix-test, --input/--frame/--tooltip/
+  --click-test, --hub-tour all exit 0; demo run Victory on the classic
+  Hollow Reliquary; screenshots looked at.
+- Package dist/DungeonSandbox-0.9.0-windows-x64.zip (31.1 MB): --remix-test
+  and --viewer-test pass from the extracted package.
+
+Known: the demo/headless default autopilot does not walk to caches (scripted
+routes do).
 
 ## 0.8.1 — viewer polish, map navigation and exploration design
 

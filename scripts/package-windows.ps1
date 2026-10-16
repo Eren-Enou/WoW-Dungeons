@@ -95,7 +95,7 @@ if (Test-Path $headlessExe) {
 if (Test-Path $forgeExe) {
     Copy-Item $forgeExe $stage
 } else {
-    Write-Host "note: dungeon-forge.exe not built; the viewer can't switch generated seeds." -ForegroundColor Yellow
+    Write-Host "note: dungeon-forge.exe not built; the viewer can't switch generated seeds and the hub can't remix." -ForegroundColor Yellow
 }
 # One-click dungeon viewer (the same executable in viewer mode).
 Set-Content -Path (Join-Path $stage 'Dungeon Viewer.bat') -Encoding ascii -Value @(

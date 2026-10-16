@@ -133,6 +133,28 @@ or press V in the hub (Dungeons tab: "Inspect in viewer"). Nothing is saved.
 In 0.8 the Emberforge Vaults and the Hollow Reliquary are built from modular
 stone and basalt pieces, and the light and haze change from room to room.
 
+DUNGEON REMIX (new in 0.9)
+--------------------------
+The Emberforge Vaults and the Hollow Reliquary can be played as shipped or
+remixed: the same fights and bosses in different rooms, with different side
+branches and approaches. In the hub's Dungeons tab, select one of them and
+use the Layout row:
+- Classic: the dungeon as shipped.
+- Remix (new seed): a new layout; its seed is shown.
+- Seed: click it, type a number, press Enter. The same seed always gives the
+  same layout, so you can replay one or share it.
+Branches are there for a reason. Look for:
+- a glowing tablet or a bright lamp beside a doorway: something is through
+  there (an optional fight, a treasure chest, or both);
+- a dim candle or ember lantern: a side passage, often a way into a guarded
+  hall from the side or behind;
+- in the Emberforge Vaults, pulsing magma vents in a corridor: time your
+  crossing, or take the longer tunnel round;
+- warm light: a landmark worth a look (no loot).
+Treasure chests open when you walk up to them; their loot is added at the
+end of the run. Nothing optional is ever needed to finish the dungeon.
+New layouts are written to a "generated" folder next to your save.
+
 TROUBLESHOOTING
 ---------------
 - "could not read content file": the assets folder must sit next to

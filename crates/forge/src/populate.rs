@@ -340,9 +340,13 @@ pub fn populate(
                     .find(|&m| plan.rooms[m].encounter.is_some())
                     .unwrap_or(to),
             );
-            let mut vents: Vec<(V2, f32)> = Vec::new();
+            // Each vent covers its corridor wall to wall (no edge to sidle
+            // past); vents keep a safe pause spot between them.
+            let mut vents: Vec<(V2, f32, f32)> = Vec::new();
             for &k in &b.hazard_corridors {
                 let c = &plan.corridors[k];
+                let radius = h.radius.max(c.width * 0.5 + 0.4);
+                let spacing = h.spacing.max(2.0 * radius + 2.5);
                 let (ma, _) = mouth(plan, k, c.a);
                 let (mb, _) = mouth(plan, k, c.b);
                 let pieces: Vec<Poly> = comp
@@ -361,10 +365,12 @@ pub fn populate(
                 let inset: Vec<Poly> = pieces.iter().filter_map(|p| p.inset(0.8)).collect();
                 for p in cands {
                     if !inset.iter().any(|q| q.contains(p))
-                        || p.dist(staging) < h.radius + 3.0
-                        || p.dist(ma) < h.radius + 1.0
-                        || p.dist(mb) < h.radius + 1.0
-                        || vents.iter().any(|(v, _)| v.dist(p) < h.spacing)
+                        || p.dist(staging) < radius + 3.0
+                        || p.dist(ma) < radius + 1.0
+                        || p.dist(mb) < radius + 1.0
+                        || vents
+                            .iter()
+                            .any(|(v, _, r)| v.dist(p) < spacing.max(r + radius + 2.5))
                     {
                         continue;
                     }
@@ -372,18 +378,18 @@ pub fn populate(
                     else {
                         continue;
                     };
-                    vents.push((p, nav.height(s, p)));
+                    vents.push((p, nav.height(s, p), radius));
                     if vents.len() >= 6 {
                         break;
                     }
                 }
             }
-            for (n, (p, y)) in vents.into_iter().enumerate() {
+            for (n, (p, y, radius)) in vents.into_iter().enumerate() {
                 encounters[owner].hazards.push(HazardConfig {
                     name: h.name.clone(),
                     pos: r2(p),
                     y: Some((y * 100.0).round() / 100.0),
-                    radius: h.radius,
+                    radius: (radius * 10.0).round() / 10.0,
                     damage: h.damage,
                     school: h.school,
                     on: h.on,

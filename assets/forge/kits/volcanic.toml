@@ -768,8 +768,8 @@ name = "Magma Vent"
 radius = 2.0
 damage = 110.0
 school = "fire"
-on = 2.0
-off = 3.0
+on = 2.5
+off = 2.5
 spacing = 5.0
 
 [remix.cache]

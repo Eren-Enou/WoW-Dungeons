@@ -273,4 +273,227 @@ It exits 2 when a declared purpose is not delivered.
 
 ## Results
 
-(Filled in as stages complete.)
+All numbers below come from runs on the final 0.9 build: generator v4, with
+the blueprints and kits as committed. Simulated parties are AI parties. None
+of this is a human playtest; PLAYTEST_REMIX_0_9.md asks the questions that
+only a person can answer.
+
+### What changed on the way (decisions made from measurements)
+
+These were found by measuring, not by design review, and fixed in the
+generator:
+
+- **Flanks and detours shorter than the main route.** The shortest path ran
+  through them, so the "direct" party pulled the optional fight by accident
+  (Emberforge seed 4: the optional Sentinel was cleared in 12/12 direct
+  runs).
+  - Detours must now be at least x1.15 the main route, and flanks x1.1.
+- **Safe routes placed inside the stretch a drop skips.** Parties dropped
+  past both the vents and the safe way, which made the choice invisible.
+  - Routes may no longer sit in a drop's span.
+- **Vents narrower than their corridor.** A radius-2 m vent in a 5–6 m
+  corridor left an edge to sidle past.
+  - Vents now cover the corridor wall to wall and keep a pause spot between
+    them.
+- **Detours rejoining a patrol's hall.** The Sentinel Patrol walked to the
+  doorway and joined the Crawler Nest fight (6 of 8 runs).
+  - Detours and safe ways no longer open into patrol rooms.
+- **Drops in 0.9 blueprints.** Drops now skip two or three empty rooms; a
+  drop that skips only one room saves no walking.
+  - The blueprint's extra rooms are grouped into one stretch so the drop has
+    something to skip.
+  - Shortcuts are placed before routes.
+- **Attempt budget** raised from 64 to 512. Most failed attempts are drop
+  geometry, which fails fast; generating 100 layouts takes 4–6 s.
+- **Classic Hollow Reliquary is now seed 2.** Seed 1's Guardian arena lost
+  20% of AI runs (48/60), against 95% wins on seed 2 (57/60). Across ten
+  layouts, the Guardian's win rate on 0.9 layouts (224/240, 93%) matches
+  0.8.1 layouts (228/240, 95%).
+
+### Audit: 100 layouts per blueprint (`dungeon-forge audit --layouts 1..100`)
+
+| | 0.8.1 blueprint | 0.9 blueprint |
+|---|---|---|
+| Hollow Reliquary generated | 100/100 | 100/100 (97 distinct shapes) |
+| purposeless branches | 241 (141 empty dead ends) | 0 |
+| alternates going round a required pack | 78 | 0 |
+| Emberforge Vaults generated | 100/100 | 98/100 (seeds 46, 56 fail: drop geometry and flank angles; reported, not substituted) |
+| purposeless branches | 149 (49 empty dead ends) | 0 |
+| drops that skip a required pack | 45/100 | 0 |
+| drops that save walking | 7/100 | 98/98 (x0.42–0.69 the main route) |
+
+Every 0.9 branch delivers its purpose:
+
+- **Hollow Reliquary** (100 each):
+  - detours: walk x1.82–4.18 the main route, all with a reward;
+  - flanks: x1.20–2.99, 60–77° off the pack's front;
+  - every layout also has an optional chamber, a landmark and a loop.
+- **Emberforge** (98 each):
+  - detours: x1.18–4.21;
+  - flanks: x1.15–3.00, 60–79° off the pack's front;
+  - safe ways: x1.18–3.36;
+  - drops and landmarks in every layout.
+- **Determinism:** the same seed gives a byte-identical file (forge test,
+  and `--remix-test` through the game).
+
+### Route choices (`dungeon-forge routes`)
+
+Setup:
+
+- Scripted leader, companions on their normal AI.
+- 4 classes (striker, warden, mender, arcanist), balanced profile, Normal,
+  5 players.
+- Optional fights are skipped except the one a detour holds.
+
+Whole-run wins and deaths are mostly decided by the Hollow Guardian. Every
+loss in the seed-4 runs, whichever route was taken, happened at the Guardian,
+which every route reaches the same way. So they are reported but not used as
+evidence for or against a branch. The evidence below is local to each
+branch.
+
+**Hollow Reliquary, 20 layouts × 12 runs per choice:**
+
+- Companions walked every room of every branch in every run (100%), with
+  0–2 overpulls per layout.
+- **Detours:** the Crawler Nest and the Reliquary Coffer were taken in
+  240/240 detour runs.
+- **Flanks:** in 12 of 20 layouts the flank changes which enemy the party
+  engages first:
+  - Warden's Screen: the Hushed Acolyte healers instead of the Ossuary
+    Warden;
+  - Censer Procession: a crawler instead of the Censer Bearer.
+- **Flanked-fight damage** against the same pack through the main door
+  ranges from −11% to +40%; on average a flank does not reduce the AI
+  party's damage in the crypt.
+
+**Emberforge Vaults, layouts 1–10 (seeds 1–10) × 16 runs per choice:**
+
+- **Safe way against the vented crossing:**
+  - direct: 0–98 vent damage per run, and about 1.3–1.5× the dithers
+    (waiting out pulses);
+  - safe way: no vent damage (15 in one layout), for 0–14 s more.
+- **Flanks** depend on the pack:
+  - Pyrecaller's Guard (casters behind a shield wall): damage taken −21% to
+    −42% in four of six layouts (−9%, +1% in the other two), with the fight
+    5–10 s longer;
+  - Emberkin Raiders: −15% and −17%;
+  - Ash Hound Pack (frontal bites): +7% and +1%.
+- **Detour:** the Obsidian Sentinel and the strongbox in 160/160 runs, for
+  about +30 s. One run had deaths in the detour's fight.
+- **Following:** companions walked every branch room in all runs.
+
+### The three Hollow Reliquary runs (32 runs per choice)
+
+Each layout is real, generated by the shipped blueprint. Each ships as
+`assets/content/variants/forge/hollow_reliquary_s<N>.toml` for the viewer;
+type the seed in the hub to play it.
+
+**Run A: seed 19, direct progression**
+- Main route: Pilgrims' Porch → … → the Hollow Guardian.
+- The flank (Bone Gate → Cloister Walk) enters the Bone Archers only 60° off
+  their front. In the sim that fight costs 13% more damage than through the
+  main door (288 vs 254), and the opener is the same.
+- The detour sits late (Sepulchre → Choir of Dust, +42 m).
+- Measured: direct won 31/32 with 10 deaths, the best of the three choices.
+- Nothing pulls the party off the main route; optional content is there for
+  those who want it.
+
+**Run B: seed 4, rewarding exploration**
+- At the very start, a reward detour leaves the Pilgrims' Porch (+68 m) to
+  the Crawler Nest and the Reliquary Coffer, and rejoins at the Hall of the
+  Hushed.
+- Measured: both rewards in 32/32 runs, no party deaths in the Crawler Nest
+  fight, Guardian outcomes unaffected.
+- The run as a whole won 32/32, against 26/32 direct. All direct losses were
+  at the Guardian, so this difference is not credited to the detour.
+
+**Run C: seed 16, tactical flank**
+- A servants' passage (Crypt Turn → Narrow Stair → Cramped Passage) enters
+  the Warden's Screen hall 83° off the pack's front, staged 7.7 m outside
+  aggro.
+- Measured: the party's first hit lands on a Hushed Acolyte (one of the
+  healers) in 32/32 flank runs, against the Ossuary Warden in 32/32 direct
+  runs.
+- Damage taken in that fight: 405 vs 448 (−10%), fight length the same
+  (30.7 vs 30.1 s).
+- Whole-run wins 31/32 vs 28/32. As above, this is not credited to the
+  flank.
+- The change in approach is real; its value for an AI party is modest.
+
+**Emberforge seed 2** shows the volcanic version of all three choices:
+- the flank into the Pyrecaller's Guard takes −32% damage;
+- the direct crossing costs 98 vent damage per run, the safe way none;
+- the detour gives the Sentinel and the strongbox in 16/16 runs.
+
+### Companions: trail following against 0.8.1 slot following
+
+Same layouts and seeds. `--slot-follow yes` restores 0.8.1 following.
+Measured on the generator one rule before the final one (the patrol rule
+came later). Both sides used identical layouts.
+
+| Hollow Reliquary, 6 layouts × 12 runs per choice | slot (0.8.1) | trail (0.9) |
+|---|---|---|
+| companions walked the whole flank | 95.8% | 100% |
+| companions walked the whole detour | 97.2% | 100% |
+| leader completed the branch | 139/144 | 144/144 |
+| dithers, all choices | 20 587 | 14 780 |
+| mean direct-run time | 476 s | 447 s |
+| stuck / unreachable | 0 / 0 | 0 / 0 |
+| overpulls | 0 | 2 |
+
+On Emberforge, the wider caverns already gave 100% following either way,
+with dithers and times about equal.
+
+### Regression batches against 0.8.1
+
+8 configurations × 15 seeds per dungeon:
+
+- classes: striker, warden, mender, arcanist;
+- 10 players;
+- profiles: aggressive, conservative;
+- Heroic.
+
+**AI change alone:** both builds on the 0.8.1 content files, all 8 dungeons.
+
+- 125/960 runs identical: companion movement changed, as intended.
+- Wins 732 → 732; deaths 1220 → 1216; dithers −1.2%; stuck seconds 40 → 33;
+  unreachable 0 → 0.
+- Per dungeon, wins moved by at most 3 (Hollow Reliquary 98 → 101, Gloomroot
+  100 → 99, Ashen Spire 89 → 87).
+- Cinder Court (the raid) was nearly unchanged: 104/120 runs identical.
+- Single configurations swing both ways. For example Ashen Spire warden
+  deaths went 0 → 8, while Hollow Reliquary aggressive went 22 → 0, from
+  divergent runs.
+- New overpull metric: 19 on Ashen Spire and 5 on Cinderdeep, out of 120
+  runs each; 0 elsewhere. The 0.8.1 build cannot measure overpulls.
+
+**Shipped classic layouts:** 0.8.1 build and content against 0.9 build and
+content.
+
+| | wins | deaths | stuck | dithers | overpulls (0.9) |
+|---|---|---|---|---|---|
+| Emberforge Vaults (seed 1) | 105 → 105 | 75 → 78 | 0 → 0 | 7722 → 10 507 | 4 (3 of them 10-player) |
+| Hollow Reliquary (seed 2) | 98 → 102 | 131 → 101 | 0 → 0 | 9925 → 8938 | 0 |
+
+Emberforge runs are 10–30 s longer, and the extra dithers are parties waiting
+out the magma vents on the classic layout's direct crossing. That is about
+2.5 dithers per member per minute, under the `test` threshold of 6.
+
+### Limitations
+
+- **Human playtest.** No human has played 0.9. Enjoyment, pacing, whether
+  the clues are noticed and whether replays stay interesting are not
+  validated.
+- **Flank value is layout-dependent.** It helps against screened casters in
+  the volcanic kit and is neutral to slightly negative in the crypt.
+  Blueprints cannot yet prefer good flank targets (TASKS).
+- **Safe ways and AI parties.** AI parties time the vents well, so for them
+  the safe way is about as fast and simply avoids damage. The short way is
+  meant to be faster for a player who times it; that is not measured.
+- **The viewer draws no hazards in 3D**, because it has no simulation; they
+  show on the 2D map and in play.
+- **Remix in the hub** rolls up to 8 seeds when one can't be built, naming
+  the skipped seeds; about 2% of Emberforge seeds can't be built. A typed
+  seed is never substituted.
+- **`depth = 2` side branches** are supported and tested, but not used by
+  the shipped blueprints.

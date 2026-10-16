@@ -170,3 +170,22 @@ mechanics or a loot system beyond the existing loot tables.
 Validate 1 to 3 with a human playtest before building further: walk three
 seeds per kit and record whether alternates and side rooms were noticed,
 taken and worth it.
+
+## What 0.9 did with these recommendations
+
+DUNGEON_REMIX_0_9.md has the details and measurements.
+
+1. **Alternate routes with a reason:** done. `[[routes]]` purpose detour,
+   flank or safe; an attempt is rejected unless the branch delivers its
+   purpose.
+2. **Side-chamber intents:** done. `[[side]]` purpose optional, cache, vista
+   or quiet, with at most one quiet room.
+3. **Doorway signals:** done. `branch_door` anchors and kit rules.
+4. **`[atmosphere.side]` for the volcanic kit:** done, plus vault and vista
+   presets for both kits.
+5. **Deeper side branches:** supported (`depth = 2`); not used by the
+   shipped blueprints yet.
+6. **Companions following the player's route:** done (trail following).
+7. **`dungeon-forge audit`:** done. Over 100 layouts per blueprint it now
+   reports 0 purposeless branches, against 241 (crypt) and 149 (volcanic)
+   for the 0.8.1 blueprints.

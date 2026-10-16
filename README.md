@@ -254,7 +254,57 @@ Everything else is in [DUNGEON_VIEWER_GUIDE.md](DUNGEON_VIEWER_GUIDE.md).
 How the modular pieces, decoration anchors and per-room atmosphere work, and
 how to add a piece: [MODULAR_ENVIRONMENTS.md](MODULAR_ENVIRONMENTS.md).
 
-## Dungeon Forge (generated dungeons, 0.6–0.8)
+## Dungeon Remix (0.9): same dungeon, different adventure
+
+The two forge dungeons (The Hollow Reliquary and The Emberforge Vaults) can
+be played as shipped or remixed. Their encounters, bosses, theme and
+completion rules stay the same. Rooms, routes, side branches and pack
+placement change by seed.
+
+In the hub's **Dungeons** tab, select a forge dungeon and use the
+**Layout** row:
+* **Classic**: the shipped layout.
+* **Remix (new seed)**: a new random seed. If it can't be built, another is
+  rolled and the skipped seeds are named.
+* **Seed**: click, type a number, press Enter. The same seed always builds
+  the same layout. A seed that can't be built is reported, and the classic
+  layout stays selected.
+
+The layout is shown in the hub, the HUD, the results screen and the run log
+(`logs/last_run.log`). New layouts are built by `dungeon-forge` (shipped
+beside the game) into `generated/` next to the save file. Progress, loot and
+companions carry over, because the dungeon keeps its id.
+
+Every branch in a 0.9 layout has a purpose:
+* **reward detours** hold an optional fight and/or a treasure cache, and
+  rejoin the main route further on;
+* **flanks** are side passages into a required pack's room, from the side or
+  behind;
+* **safe ways** go round a crossing that pulses with magma vents
+  (Emberforge);
+* **side chambers** hold an optional fight, a cache, a landmark, or are
+  deliberately quiet.
+
+Nothing goes round a required fight or a boss. Doorways into branches carry
+clues (a glowing tablet or lamp, a dim candle at a side passage). Treasure
+caches open when you walk up to them, and their loot is added at the end of
+the run like an encounter's. DUNGEON_REMIX_0_9.md has the design and the
+measurements, and PLAYTEST_REMIX_0_9.md a script for comparing layouts.
+
+```bash
+cargo run --release -p dungeon_forge -- audit assets/forge/blueprints/hollow_reliquary.toml --layouts 1..100 --json forge_out/audit.json
+cargo run --release -p dungeon_forge -- routes assets/forge/blueprints/hollow_reliquary.toml --seed 14 --runs 8
+```
+
+`audit` reports what every branch is for over many layouts and whether it
+delivers it; it exits 2 on purposeless or broken branches. `routes` plays
+each route choice of a layout (direct, every detour, flank and safe way)
+with a scripted leader and companions on their normal AI. It reports wins,
+time, deaths, hazard damage, the flanked fight against the same pack
+approached directly, whether the party walked the branch, and navigation
+trouble.
+
+## Dungeon Forge (generated dungeons, 0.6–0.9)
 
 Dungeon Forge builds original dungeons from a **blueprint** and a **kit**, then
 validates them:

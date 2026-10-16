@@ -208,6 +208,7 @@ fn remix_test(
     state: Res<State<AppState>>,
     mut next: ResMut<NextState<AppState>>,
     run: Option<Res<crate::dungeon::ActiveRun>>,
+    mut commands: Commands,
     mut exit: MessageWriter<AppExit>,
 ) {
     test.t += time.delta_secs();
@@ -251,6 +252,12 @@ fn remix_test(
             test.step += 1;
         }
         4 if at(2.6, &test) => {
+            // The Dungeons tab with the seed chosen, for people to look at.
+            commands
+                .spawn(bevy::render::view::screenshot::Screenshot::primary_window())
+                .observe(bevy::render::view::screenshot::save_to_disk(
+                    "screenshots/remix_hub.png",
+                ));
             let l = data.selected_layout().cloned();
             let file = l.as_ref().and_then(|l| l.file.clone());
             let in_generated = file
@@ -302,7 +309,7 @@ fn remix_test(
                 &mut data,
                 &mut ui,
             );
-            ui.seed_input = "3".into();
+            ui.seed_input = "46".into();
             crate::hub::apply_action(HubAction::LayoutSeedGo, &mut data, &mut ui);
             let l = data.selected_layout().cloned();
             let classic = data
@@ -310,10 +317,10 @@ fn remix_test(
                 .map(|c| c.dungeon.generated.as_ref().map(|g| g.seed));
             test.check(
                 l.as_ref().is_some_and(|l| {
-                    l.content.is_none() && l.error.as_deref().is_some_and(|e| e.contains("seed 3"))
+                    l.content.is_none() && l.error.as_deref().is_some_and(|e| e.contains("seed 46"))
                 }),
                 format!(
-                    "Emberforge seed 3 (cannot be built): {:?}",
+                    "Emberforge seed 46 (cannot be built): {:?}",
                     l.as_ref().and_then(|l| l.error.clone())
                 ),
             );

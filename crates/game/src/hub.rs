@@ -814,9 +814,29 @@ pub fn apply_action(action: HubAction, data: &mut GameData, ui: &mut HubUi) {
             save = false;
         }
         HubAction::LayoutRemix => {
-            let seed = crate::remix::random_seed();
-            choose_layout(data, crate::remix::LayoutMode::Remix, seed);
-            ui.seed_input = seed.to_string();
+            // A random seed; if it cannot be built, roll again (a few times)
+            // and say which seeds were skipped. A typed seed is never replaced.
+            let mut skipped = Vec::new();
+            for _ in 0..8 {
+                let seed = crate::remix::random_seed() + skipped.len() as u64;
+                choose_layout(data, crate::remix::LayoutMode::Remix, seed);
+                ui.seed_input = seed.to_string();
+                if data.selected_layout().is_some_and(|l| l.content.is_some()) {
+                    break;
+                }
+                skipped.push(seed);
+            }
+            if !skipped.is_empty()
+                && let Some(l) = data.selected_layout()
+                && l.content.is_some()
+            {
+                let label = l.label();
+                let list: Vec<String> = skipped.iter().map(|s| s.to_string()).collect();
+                data.flash(format!(
+                    "Seed(s) {} could not be built; next run: {label}",
+                    list.join(", ")
+                ));
+            }
             ui.seed_focus = false;
             save = false;
         }

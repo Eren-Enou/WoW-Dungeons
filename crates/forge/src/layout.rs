@@ -20,7 +20,7 @@ pub const RAMP_SLOPE: f32 = 0.3;
 pub const MIN_FALL: f32 = 3.6;
 pub const MAX_FALL: f32 = 7.5;
 /// Generation attempts before giving up with a diagnosis.
-pub const MAX_ATTEMPTS: u32 = 256;
+pub const MAX_ATTEMPTS: u32 = 512;
 /// Shortest corridor between two rooms (edge to edge).
 pub const MIN_GAP: f32 = 7.0;
 
@@ -867,6 +867,21 @@ fn try_plan(bp: &Blueprint, kit: &Kit, rng: &mut Rng) -> Result<Plan, &'static s
             }
         }
         cands.retain(|&(i, j)| !branches.iter().any(|b| b.from == i && b.to == Some(j)));
+        // Detours and safe ways never open into a patrol's room: the patrol
+        // walks its doorway and joins the fight in the branch (measured:
+        // the Sentinel Patrol overpulled the Crawler Nest in 6 of 8 runs).
+        if spec.purpose != RoutePurpose::Flank {
+            let patrols = |x: usize| {
+                matches!(kinds[x].1, Some(EncounterRef::Main(e))
+                    if kit.recipes[&bp.encounters[e].recipe].placement == Preference::Patrol)
+            };
+            cands.retain(|&(i, j)| !patrols(i) && !patrols(j));
+        }
+        // Not in a stretch the drop skips: the party dropping past it would
+        // never see the choice (a safe way round vents nobody walks past).
+        if let Some((di, _, dj)) = drop_plan {
+            cands.retain(|&(i, j)| (i..=j).all(|x| x <= di || x >= dj));
+        }
         shuffle(rng, &mut cands);
         let max_len = if spec.purpose == RoutePurpose::Flank {
             4

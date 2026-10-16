@@ -1,5 +1,81 @@
 # Changelog
 
+## 0.9 - Dungeon Remix
+
+Design, schema and measurements: DUNGEON_REMIX_0_9.md. Playtest script:
+PLAYTEST_REMIX_0_9.md.
+
+### Purposeful branches (Dungeon Forge, generator v4)
+- Blueprints declare `[[routes]]` with a purpose: `detour` (holds an
+  optional fight and/or a cache, rejoins further on), `flank` (a side
+  passage into a required pack's room), or `safe` (a longer, vent-free way
+  round a crossing with magma vents).
+- `[[side]]` declares side chambers: `optional`, `cache`, `vista` (landmark,
+  no reward) or `quiet` (at most one); `depth = 2` adds an antechamber.
+- Every branch is measured on the navigation, and an attempt is rejected
+  unless the branch delivers its purpose:
+  - walking length against the main route (detours at least x1.15; flanks
+    x1.1 to x3; safe ways x1.15 to x3.5);
+  - flank angle (at least 60 degrees off the pack's front) and aggro-free
+    staging;
+  - vents on the short way only;
+  - nothing goes round a required fight or a boss;
+  - drops save walking and skip no required fight;
+  - the final boss is reachable from every required room.
+- Branches never sit in a stretch a drop skips.
+- `[[dungeon.branches]]` records each branch's purpose, rewards and measured
+  facts.
+- Legacy blueprints (`alternate_routes`, `side_rooms`) still generate the
+  same layouts, and are reported as purposeless.
+- Every optional encounter now has loot (0.8 gave only the first one).
+- Generation attempts raised from 64 to 256.
+- `dungeon-forge audit` reports branch purposes over many layouts (JSON;
+  exit 2 on purposeless or broken branches).
+- `dungeon-forge routes` plays each route choice with a scripted leader and
+  free companions, and reports:
+  - wins, time and deaths;
+  - hazard damage;
+  - the flanked fight against the same pack approached directly;
+  - first hit and first kill;
+  - traversal by the leader and the companions;
+  - regroup time, caches, overpulls, stuck, unreachable and dithers.
+
+### Simulation
+- **Treasure caches** (`[[dungeon.caches]]`): opened by walking up to them
+  (`CacheOpened` event); they roll their loot like a cleared encounter.
+  Dungeons without caches are unaffected.
+- **Companions follow the leader's trail** when their formation slot is out
+  of the leader's sight or inside an idle pack's aggro. Movement changes
+  everywhere, and hashes with it; measured against 0.8.1 on all eight
+  dungeons.
+- **Scripted autopilot routes** (`RunOptions::route`) and a
+  `slot_follow_only` comparison switch.
+- **New metrics:** overpulls and caches opened.
+
+### Game
+- **Layout row** on the Dungeons tab for forge dungeons:
+  - Classic, Remix (a random seed; unbuildable rolls are named) or a typed
+    Seed (never substituted).
+  - Built by the external `dungeon-forge` into `generated/` beside the save.
+  - Shown in the hub, the HUD, the results screen and the run log.
+  - V opens the chosen layout in the viewer.
+  - `--remix-test` checks the flow end to end.
+- **Caches** drawn with open and closed models, a glint light, and a banner
+  when opened.
+- **Doorway clues:**
+  - crypt: teal tablets at reward branches, warm candles at landmarks, a
+    single dim candle at side passages;
+  - volcanic: white-hot gate lamps, bright lanterns and ember lanterns.
+- **Landmark rooms:** a mourner effigy (crypt) or an anvil shrine
+  (volcanic).
+- **Viewer:**
+  - the structure layer, the 2D map (purpose letters, branch lines, hazard
+    rings, cache diamonds) and the inspector show each room's purpose and
+    its branch's measured facts;
+  - the hazardous crossing is marked.
+- **New models:** 8 generated models (caches, landmarks and markers), with
+  provenance rows.
+
 ## 0.8.1: viewer polish, map navigation and exploration design
 
 Guides: DUNGEON_VIEWER_GUIDE.md (updated). Branch review:

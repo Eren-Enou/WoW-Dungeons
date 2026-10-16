@@ -33,6 +33,12 @@ pub const SAFE_MIN_RATIO: f32 = 1.15;
 pub const FLANK_MARGIN: f32 = 1.0;
 /// A flank longer than this many times the main approach is a detour.
 pub const FLANK_MAX_RATIO: f32 = 3.0;
+/// A flank is a side passage: at least this long against the main approach,
+/// so the shortest way to the pack stays the main door (no accidental flank).
+pub const FLANK_MIN_RATIO: f32 = 1.1;
+/// A detour costs walking: at least this long against the main route, so
+/// the shortest way never runs through its reward (no accidental pulls).
+pub const DETOUR_MIN_RATIO: f32 = 1.15;
 /// A safe way longer than this is no longer a reasonable alternative.
 pub const SAFE_MAX_RATIO: f32 = 3.5;
 /// A one-way drop must save at least this much walking (0.9 blueprints).
@@ -210,7 +216,14 @@ pub fn measure(
                         m.bypasses.join(", ")
                     ));
                 }
-                m.delivered = !m.rewards.is_empty() && m.bypasses.is_empty();
+                let costs = ratio.is_some_and(|r| r >= DETOUR_MIN_RATIO);
+                if !costs {
+                    rep.errors.push(format!(
+                        "{label}: the detour is x{:.2} the main route (need at least x{DETOUR_MIN_RATIO}): its reward would lie on the shortest way",
+                        ratio.unwrap_or(0.0)
+                    ));
+                }
+                m.delivered = !m.rewards.is_empty() && m.bypasses.is_empty() && costs;
                 if m.delivered {
                     m.facts.push(format!("holds {}", m.rewards.join(" and ")));
                 }
@@ -293,10 +306,10 @@ pub fn measure(
                         m.bypasses.join(", ")
                     ));
                 }
-                let short = ratio.is_some_and(|r| r <= FLANK_MAX_RATIO);
+                let short = ratio.is_some_and(|r| (FLANK_MIN_RATIO..=FLANK_MAX_RATIO).contains(&r));
                 if !short {
                     rep.errors.push(format!(
-                        "{label}: the flank is x{:.2} the main approach (at most x{FLANK_MAX_RATIO}): a detour, not an approach",
+                        "{label}: the flank is x{:.2} the main approach (need x{FLANK_MIN_RATIO} to x{FLANK_MAX_RATIO}): either the main door's shortcut or a detour, not an approach",
                         ratio.unwrap_or(f32::INFINITY)
                     ));
                 }

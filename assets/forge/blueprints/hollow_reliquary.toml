@@ -14,7 +14,7 @@ description = "The buried monastery of the Hushed: pillared naves, sealed burial
 kit = "crypt"
 level = 4
 group_size = 5
-seed = 1
+seed = 2                  # the classic (shipped) layout; seed 1's Guardian arena wiped 20% of AI runs
 
 [identity]
 summary = "A tactical fortress: narrow doors into pillared halls, casters behind shield walls, a patrol to time, a council to split, and a guardian you survive by hiding behind pillars."
