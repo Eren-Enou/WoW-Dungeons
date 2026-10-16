@@ -19,6 +19,7 @@ pub struct EnvPlugin;
 impl Plugin for EnvPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<AtmosphereFocus>()
+            .init_resource::<InspectionLighting>()
             .add_systems(
                 Update,
                 (update_focus, apply_atmosphere)
@@ -46,6 +47,15 @@ pub struct Atmosphere {
     /// Preset now being blended toward.
     pub target: String,
 }
+
+/// Viewer inspection lighting (0.8.1): no fog and neutral light. Only the
+/// viewer switches it on, and only the viewer honours it; play is never
+/// affected.
+#[derive(Resource, Default)]
+pub struct InspectionLighting(pub bool);
+
+/// Ambient brightness used by inspection lighting.
+pub const INSPECTION_BRIGHTNESS: f32 = 650.0;
 
 /// Where the atmosphere is sampled: the player in play, the camera in the
 /// viewer.
@@ -86,7 +96,12 @@ fn apply_atmosphere(
     mut atm: ResMut<Atmosphere>,
     mut ambient: ResMut<GlobalAmbientLight>,
     mut fog: Query<&mut bevy::pbr::DistanceFog, With<crate::camera::MainCamera>>,
+    inspection: Res<InspectionLighting>,
+    state: Res<State<AppState>>,
 ) {
+    if inspection.0 && *state.get() == AppState::Viewer {
+        return;
+    }
     let (Some(p), Some(st)) = (focus.0, structure) else {
         return;
     };

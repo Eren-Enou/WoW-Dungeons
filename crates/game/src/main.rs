@@ -14,6 +14,7 @@ mod env;
 mod fx;
 mod hub;
 mod hud;
+mod map2d;
 mod modules;
 mod navdebug;
 mod overlay;

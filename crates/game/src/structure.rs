@@ -29,6 +29,93 @@ pub struct RoomView {
     pub corridor: bool,
     /// Whether the dungeon file declared this room (false = derived).
     pub declared: bool,
+    /// Why this room exists (see [`Purpose`]).
+    pub purpose: Purpose,
+    /// Only one way in or out.
+    pub dead_end: bool,
+    /// Rooms (not counting corridors) between it and the main route.
+    pub off_main: Option<u32>,
+}
+
+/// Why a room or corridor exists, from the generator's own route data.
+/// Shared by the 3D structure layer, the 2D map, the inspector and the
+/// branch audit (0.8.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Purpose {
+    /// On the main route.
+    Main,
+    /// A second way between two main-route rooms.
+    Alternate,
+    /// A side chamber holding an optional encounter.
+    Optional,
+    /// A side chamber with nothing in it (exploration, pacing).
+    Empty,
+    /// A raised room above a one-way drop (a shortcut down).
+    Overlook,
+    /// A corridor that is a shortcut (overlook walkway).
+    Shortcut,
+    /// A corridor (or the rooms along it) returning to an earlier main room.
+    Loop,
+    /// An ordinary corridor.
+    Passage,
+    /// Handwritten dungeon: no route data.
+    Unknown,
+}
+
+impl Purpose {
+    pub fn label(self) -> &'static str {
+        match self {
+            Purpose::Main => "main route",
+            Purpose::Alternate => "alternate route",
+            Purpose::Optional => "optional encounter chamber",
+            Purpose::Empty => "empty side chamber",
+            Purpose::Overlook => "overlook (one-way drop shortcut)",
+            Purpose::Shortcut => "shortcut",
+            Purpose::Loop => "return loop",
+            Purpose::Passage => "passage",
+            Purpose::Unknown => "room (no route data)",
+        }
+    }
+
+    /// Colour used for this purpose on the map and in the structure layer.
+    pub fn color(self) -> [f32; 3] {
+        match self {
+            Purpose::Main => [0.35, 0.7, 1.0],
+            Purpose::Alternate => [0.3, 1.0, 0.9],
+            Purpose::Optional => [0.4, 1.0, 0.4],
+            Purpose::Empty => [0.7, 0.6, 0.85],
+            Purpose::Overlook | Purpose::Shortcut => [1.0, 0.6, 0.2],
+            Purpose::Loop => [0.85, 0.5, 1.0],
+            Purpose::Passage => [0.6, 0.6, 0.65],
+            Purpose::Unknown => [0.8, 0.8, 0.8],
+        }
+    }
+}
+
+fn purpose_of(r: &RoomView, optional: bool) -> Purpose {
+    if !r.declared {
+        return if r.corridor {
+            Purpose::Passage
+        } else {
+            Purpose::Unknown
+        };
+    }
+    if r.corridor {
+        return match r.route.as_str() {
+            "shortcut" => Purpose::Shortcut,
+            "loop" => Purpose::Loop,
+            _ => Purpose::Passage,
+        };
+    }
+    match r.route.as_str() {
+        "main" => Purpose::Main,
+        "alternate" => Purpose::Alternate,
+        "overlook" => Purpose::Overlook,
+        "side" if r.encounter.is_some() && optional => Purpose::Optional,
+        "side" if r.encounter.is_some() => Purpose::Main,
+        "side" => Purpose::Empty,
+        _ => Purpose::Unknown,
+    }
 }
 
 impl RoomView {
@@ -103,6 +190,9 @@ impl Structure {
                 max: Vec3::ZERO,
                 encounter: r.encounter.clone().filter(|e| !e.is_empty()),
                 atmosphere: r.atmosphere.clone(),
+                purpose: Purpose::Unknown,
+                dead_end: false,
+                off_main: None,
                 corridor: matches!(
                     r.role.as_str(),
                     "corridor" | "passage" | "bridge" | "stair" | "ramp" | "ledge"
@@ -134,6 +224,9 @@ impl Structure {
                         atmosphere: None,
                         corridor,
                         declared: false,
+                        purpose: Purpose::Unknown,
+                        dead_end: false,
+                        off_main: None,
                     });
                     rooms.len() - 1
                 }
@@ -243,6 +336,82 @@ impl Structure {
                 }
             })
             .collect();
+        // Room graph: doorways, plus one-way drops (from -> to).
+        let n = rooms.len();
+        let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n];
+        for d in &doorways {
+            adj[d.rooms.0].push(d.rooms.1);
+            adj[d.rooms.1].push(d.rooms.0);
+        }
+        for l in &nav.links {
+            if l.kind == LinkKind::Drop {
+                let (a, b) = (surface_room[l.from as usize], surface_room[l.to as usize]);
+                if a != b {
+                    adj[a].push(b);
+                    adj[b].push(a);
+                }
+            }
+        }
+        for a in adj.iter_mut() {
+            a.sort_unstable();
+            a.dedup();
+        }
+        let optional: std::collections::BTreeSet<&str> = content
+            .encounters
+            .iter()
+            .filter(|e| e.optional)
+            .map(|e| e.id.as_str())
+            .collect();
+        for r in rooms.iter_mut() {
+            let opt = r.encounter.as_deref().is_some_and(|e| optional.contains(e));
+            r.purpose = purpose_of(r, opt);
+        }
+        // The forge tags the rooms of a return loop (the crypt's cloister
+        // walk) "alternate"; they sit only between loop corridors.
+        for i in 0..n {
+            let loop_only = !rooms[i].corridor
+                && rooms[i].purpose == Purpose::Alternate
+                && adj[i].iter().any(|&j| rooms[j].corridor)
+                && adj[i]
+                    .iter()
+                    .filter(|&&j| rooms[j].corridor)
+                    .all(|&j| rooms[j].purpose == Purpose::Loop);
+            if loop_only {
+                rooms[i].purpose = Purpose::Loop;
+            }
+        }
+        for (i, r) in rooms.iter_mut().enumerate() {
+            r.dead_end = !r.corridor && adj[i].len() == 1;
+        }
+        // Distance from the main route, counting rooms (corridors are free).
+        if rooms.iter().any(|r| r.purpose == Purpose::Main) {
+            let mut dist: Vec<Option<u32>> = vec![None; n];
+            let mut queue = std::collections::VecDeque::new();
+            for (i, r) in rooms.iter().enumerate() {
+                if r.purpose == Purpose::Main || (r.corridor && r.route == "main") {
+                    dist[i] = Some(0);
+                    queue.push_back(i);
+                }
+            }
+            // 0-1 BFS: corridors cost nothing, rooms one.
+            while let Some(i) = queue.pop_front() {
+                let di = dist[i].unwrap_or(0);
+                for &j in &adj[i] {
+                    let step = u32::from(!rooms[j].corridor);
+                    if dist[j].is_none_or(|d| di + step < d) {
+                        dist[j] = Some(di + step);
+                        if step == 0 {
+                            queue.push_front(j);
+                        } else {
+                            queue.push_back(j);
+                        }
+                    }
+                }
+            }
+            for (i, r) in rooms.iter_mut().enumerate() {
+                r.off_main = dist[i];
+            }
+        }
         Structure {
             rooms,
             surface_room,
@@ -273,4 +442,74 @@ pub fn floor_below(nav: &Nav, p: Vec3) -> Option<usize> {
         .filter(|(_, h)| *h <= p.y + 0.5 && *h > p.y - 60.0)
         .max_by(|a, b| a.1.total_cmp(&b.1))
         .map(|(i, _)| i)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn load(file: &str) -> Content {
+        let path = format!(
+            "{}/../../assets/content/dungeons/{file}",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        Content::load(&path).unwrap()
+    }
+
+    fn purpose(st: &Structure, id: &str) -> Purpose {
+        st.rooms.iter().find(|r| r.id == id).unwrap().purpose
+    }
+
+    #[test]
+    fn generated_rooms_are_classified_by_purpose() {
+        let c = load("07_emberforge_vaults.toml");
+        let st = Structure::build(&c, &c.nav());
+        assert_eq!(purpose(&st, "r0"), Purpose::Main);
+        assert_eq!(purpose(&st, "r9"), Purpose::Main);
+        assert_eq!(purpose(&st, "r10"), Purpose::Alternate);
+        assert_eq!(purpose(&st, "r12"), Purpose::Optional); // Coal Bunker
+        assert_eq!(purpose(&st, "r13"), Purpose::Empty); // Shuttered Kiln
+        assert_eq!(purpose(&st, "r14"), Purpose::Overlook);
+        let kiln = st.rooms.iter().find(|r| r.id == "r13").unwrap();
+        assert!(kiln.dead_end);
+        assert_eq!(kiln.off_main, Some(1));
+        assert_eq!(
+            st.rooms.iter().find(|r| r.id == "r3").unwrap().off_main,
+            Some(0)
+        );
+
+        let mut c = load("08_hollow_reliquary.toml");
+        let st = Structure::build(&c, &c.nav());
+        assert_eq!(purpose(&st, "r13"), Purpose::Optional);
+        assert_eq!(purpose(&st, "r15"), Purpose::Empty);
+        assert_eq!(purpose(&st, "c16"), Purpose::Loop);
+        assert_eq!(purpose(&st, "r10"), Purpose::Alternate);
+        // A room between loop corridors only belongs to the loop.
+        let around: Vec<String> = c
+            .dungeon
+            .rooms
+            .iter()
+            .filter(|r| r.connects.iter().any(|x| x == "r10"))
+            .map(|r| r.id.clone())
+            .collect();
+        assert!(!around.is_empty());
+        for r in c.dungeon.rooms.iter_mut() {
+            if around.contains(&r.id) {
+                r.route = "loop".into();
+            }
+        }
+        let st = Structure::build(&c, &c.nav());
+        assert_eq!(purpose(&st, "r10"), Purpose::Loop);
+    }
+
+    #[test]
+    fn handwritten_rooms_have_no_route_purpose() {
+        let c = load("01_sunken_vault.toml");
+        let st = Structure::build(&c, &c.nav());
+        assert!(
+            st.rooms
+                .iter()
+                .all(|r| matches!(r.purpose, Purpose::Unknown | Purpose::Passage))
+        );
+    }
 }

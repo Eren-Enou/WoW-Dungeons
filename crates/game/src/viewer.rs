@@ -49,11 +49,15 @@ impl Plugin for ViewerPlugin {
                 Update,
                 (
                     viewer_keys,
+                    crate::map2d::map_input,
                     move_camera,
                     pick,
                     draw_layers,
                     place_labels,
                     update_panels,
+                    speed_bar,
+                    crate::map2d::map_layout,
+                    inspection_lighting,
                     frame_stats,
                     tour,
                 )
@@ -149,6 +153,70 @@ pub struct ViewerCam {
     pub room_cursor: Option<usize>,
     /// Keep the camera across reloads of the same dungeon.
     pub dungeon: String,
+    /// Smoothed flight velocity.
+    pub vel: Vec3,
+    /// Viewer preferences were read from `viewer.toml` (once per session).
+    pub prefs_loaded: bool,
+}
+
+/// Flight speed presets (metres per second).
+pub const SPEED_SLOW: f32 = 3.0;
+pub const SPEED_NORMAL: f32 = 12.0;
+pub const SPEED_FAST: f32 = 45.0;
+/// Flight speed limits.
+pub const SPEED_MIN: f32 = 0.5;
+pub const SPEED_MAX: f32 = 200.0;
+/// One fine step (- / =).
+const SPEED_STEP: f32 = 1.15;
+
+/// A readable name for a speed.
+pub fn speed_name(v: f32) -> &'static str {
+    if v < 6.0 {
+        "slow"
+    } else if v < 25.0 {
+        "normal"
+    } else {
+        "fast"
+    }
+}
+
+/// Viewer preferences, kept in `viewer.toml` beside (never inside) the
+/// player's save file.
+pub fn prefs_path(save: &Path) -> PathBuf {
+    save.parent()
+        .map(|d| d.join("viewer.toml"))
+        .unwrap_or_else(|| PathBuf::from("viewer.toml"))
+}
+
+/// (speed, inspection lighting) from the preferences file, if any.
+pub fn read_prefs(path: &Path) -> (Option<f32>, Option<bool>) {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return (None, None);
+    };
+    let mut out = (None, None);
+    for line in text.lines() {
+        let Some((k, v)) = line.split_once('=') else {
+            continue;
+        };
+        match k.trim() {
+            "speed" => out.0 = v.trim().parse::<f32>().ok().filter(|v| v.is_finite()),
+            "inspection" => out.1 = v.trim().parse::<bool>().ok(),
+            _ => {}
+        }
+    }
+    out
+}
+
+pub fn write_prefs(path: &Path, speed: f32, inspection: bool) {
+    let text = format!(
+        "# Dungeon viewer preferences (not part of the player save).\nspeed = {speed:.2}\ninspection = {inspection}\n"
+    );
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Err(e) = std::fs::write(path, text) {
+        warn!("could not write {}: {e}", path.display());
+    }
 }
 
 impl Default for ViewerCam {
@@ -163,6 +231,8 @@ impl Default for ViewerCam {
             orbit_distance: 25.0,
             room_cursor: None,
             dungeon: String::new(),
+            vel: Vec3::ZERO,
+            prefs_loaded: false,
         }
     }
 }
@@ -255,7 +325,16 @@ struct WorldLabel {
 #[derive(Component, Clone)]
 enum ViewerAction {
     GoRoom(usize),
+    /// Set the flight speed.
+    Speed(f32),
+    /// Multiply the flight speed.
+    SpeedBy(f32),
+    ToggleMap,
+    ToggleInspection,
 }
+
+#[derive(Component)]
+struct SpeedText;
 
 #[derive(Resource, Default)]
 pub struct FrameStats {
@@ -410,7 +489,19 @@ fn enter_viewer(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     asset_server: Res<AssetServer>,
+    mut images: ResMut<Assets<Image>>,
+    old_map: Option<Res<crate::map2d::MapView>>,
+    mut lighting: ResMut<crate::env::InspectionLighting>,
 ) {
+    if !cam.prefs_loaded {
+        cam.prefs_loaded = true;
+        let (speed, inspection) = read_prefs(&prefs_path(&data.save_path));
+        if let Some(v) = speed {
+            cam.speed = v.clamp(SPEED_MIN, SPEED_MAX);
+        }
+        lighting.0 = inspection.unwrap_or(false);
+    }
+    let map_open = old_map.is_some_and(|m| m.open);
     let (content, path, source, error) = match load_target(&req, &mut data) {
         Ok((c, p, s)) => (c, p, s, None),
         Err(e) => {
@@ -492,7 +583,8 @@ fn enter_viewer(
             "modules" => layers.modules = true,
             "noui" => layers.ui = false,
             "noinfo" => layers.info = false,
-            "panels" => {}
+            "panels" | "map" => {}
+            "inspect" => lighting.0 = true,
             _ => warn!("viewer: unknown layer '{l}'"),
         }
     }
@@ -502,6 +594,8 @@ fn enter_viewer(
         layers.info = req.layers.iter().any(|l| l == "panels");
     }
     spawn_panels(&mut commands, &structure, &order, &content, &nav);
+    let open = map_open || req.layers.iter().any(|l| l == "map");
+    crate::map2d::spawn_map(&mut commands, &mut images, &content, &nav, &structure, open);
     info!(
         "Viewer: '{}' ({}), {} rooms, {} surfaces",
         content.dungeon.name,
@@ -521,7 +615,20 @@ fn enter_viewer(
     });
 }
 
-fn exit_viewer(mut commands: Commands, mut blockers: ResMut<CameraBlockers>) {
+fn exit_viewer(
+    mut commands: Commands,
+    mut blockers: ResMut<CameraBlockers>,
+    data: Res<GameData>,
+    cam: Res<ViewerCam>,
+    lighting: Res<crate::env::InspectionLighting>,
+    req: Res<ViewerRequest>,
+    test: Res<ViewerTest>,
+) {
+    // Remember speed and lighting for the next viewer session (automated
+    // tours and tests don't change anyone's preferences).
+    if !req.tour && !test.on {
+        write_prefs(&prefs_path(&data.save_path), cam.speed, lighting.0);
+    }
     commands.remove_resource::<ViewerScene>();
     commands.remove_resource::<Selection>();
     blockers.0.clear();
@@ -586,6 +693,56 @@ fn spawn_panels(
         Pickable::IGNORE,
         scoped.clone(),
     ));
+    // Flight speed bar (bottom centre): readout and clickable presets.
+    commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                bottom: px(10),
+                left: percent(50),
+                margin: UiRect::left(px(-250)),
+                width: px(500),
+                padding: UiRect::all(px(5)),
+                column_gap: px(5),
+                align_items: AlignItems::Center,
+                justify_content: JustifyContent::Center,
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.6)),
+            BlocksWorld,
+            scoped.clone(),
+        ))
+        .with_children(|p| {
+            p.spawn((
+                Text::new(""),
+                text_font(14.0),
+                TextColor(Color::srgb(1.0, 0.92, 0.6)),
+                SpeedText,
+            ));
+            for (label, action) in [
+                ("Slow 7", ViewerAction::Speed(SPEED_SLOW)),
+                ("Normal 8", ViewerAction::Speed(SPEED_NORMAL)),
+                ("Fast 9", ViewerAction::Speed(SPEED_FAST)),
+                ("-", ViewerAction::SpeedBy(1.0 / SPEED_STEP)),
+                ("+", ViewerAction::SpeedBy(SPEED_STEP)),
+                ("Map M", ViewerAction::ToggleMap),
+                ("Light I", ViewerAction::ToggleInspection),
+            ] {
+                p.spawn((
+                    UiButton,
+                    Hovered::default(),
+                    action,
+                    Node {
+                        padding: UiRect::axes(px(6), px(2)),
+                        border: UiRect::all(px(1)),
+                        ..default()
+                    },
+                    BorderColor::all(Color::srgb(0.4, 0.4, 0.5)),
+                    BackgroundColor(Color::srgb(0.12, 0.12, 0.18)),
+                    children![(Text::new(label), text_font(12.0), TextColor(Color::WHITE))],
+                ));
+            }
+        });
     // Room list (L): one button per room, in route order.
     commands
         .spawn((
@@ -702,26 +859,37 @@ fn spawn_panels(
     }
 }
 
-const HELP: &str = "VIEWER  hold right mouse: look | WASD move | E/Space up, Q/C down | Shift fast, Ctrl slow | wheel: speed (orbit: distance)
-G walk at eye height | O orbit current room | F free flight | Home entrance | Tab / Shift+Tab next / previous room | L room list
+const HELP: &str = "VIEWER  hold right mouse: look | WASD move | E/Space up, Q/C down | Shift x3, Ctrl x1/4 (while held)
+speed: 7 slow, 8 normal, 9 fast, - / = finer steps, wheel | G walk at eye height | O orbit | F free flight
+M 2D map | I inspection lighting (no fog) | Home entrance | Tab / Shift+Tab next / previous room | L room list
 1 navigation  2 structure  3 encounters  4 modules & anchors  5 wall collision | click: inspect, Esc: clear
-F5 reload file | [ ] previous / next seed (generated) | F12 screenshot | H hide all | F1 this help | Backspace: back to the hub";
+F5 reload file | [ ] previous / next seed (generated) | F12 screenshot | H hide all | F1 this help | Backspace: hub";
 
 fn on_viewer_activate(
     ev: On<Activate>,
     actions: Query<&ViewerAction>,
     scene: Option<Res<ViewerScene>>,
     mut cam: ResMut<ViewerCam>,
+    map: Option<ResMut<crate::map2d::MapView>>,
+    mut lighting: ResMut<crate::env::InspectionLighting>,
 ) {
     let (Ok(action), Some(scene)) = (actions.get(ev.entity), scene) else {
         return;
     };
     match action {
         ViewerAction::GoRoom(i) => go_room(&scene, &mut cam, *i),
+        ViewerAction::Speed(v) => cam.speed = v.clamp(SPEED_MIN, SPEED_MAX),
+        ViewerAction::SpeedBy(k) => cam.speed = (cam.speed * k).clamp(SPEED_MIN, SPEED_MAX),
+        ViewerAction::ToggleMap => {
+            if let Some(mut m) = map {
+                m.open = !m.open;
+            }
+        }
+        ViewerAction::ToggleInspection => lighting.0 = !lighting.0,
     }
 }
 
-fn go_room(scene: &ViewerScene, cam: &mut ViewerCam, i: usize) {
+pub(crate) fn go_room(scene: &ViewerScene, cam: &mut ViewerCam, i: usize) {
     let r = &scene.structure.rooms[i];
     cam.frame(r.center(), r.size());
     cam.room_cursor = scene.order.iter().position(|&k| k == i);
@@ -744,9 +912,18 @@ fn viewer_keys(
     mut next: ResMut<NextState<AppState>>,
     mut commands: Commands,
     selection: Option<Res<Selection>>,
+    mut lighting: ResMut<crate::env::InspectionLighting>,
+    map: Res<crate::map2d::MapView>,
     mut shots: Local<u32>,
 ) {
     let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
+    // While the map is open, M / Esc / F / wheel / mouse belong to it.
+    if map.open {
+        if keys.just_pressed(KeyCode::Backspace) {
+            next.set(AppState::Hub);
+        }
+        return;
+    }
     if keys.just_pressed(KeyCode::Backspace) {
         next.set(AppState::Hub);
         return;
@@ -823,6 +1000,35 @@ fn viewer_keys(
             _ => layers.rooms_panel = !layers.rooms_panel,
         }
     }
+    // Flight speed: presets 7 / 8 / 9, fine steps - and =.
+    for (key, v) in [
+        (KeyCode::Digit7, SPEED_SLOW),
+        (KeyCode::Digit8, SPEED_NORMAL),
+        (KeyCode::Digit9, SPEED_FAST),
+    ] {
+        if keys.just_pressed(key) {
+            cam.speed = v;
+        }
+    }
+    for (keys_down, k) in [
+        ([KeyCode::Minus, KeyCode::NumpadSubtract], 1.0 / SPEED_STEP),
+        ([KeyCode::Equal, KeyCode::NumpadAdd], SPEED_STEP),
+    ] {
+        if keys_down.iter().any(|kk| keys.just_pressed(*kk)) {
+            cam.speed = (cam.speed * k).clamp(SPEED_MIN, SPEED_MAX);
+        }
+    }
+    if keys.just_pressed(KeyCode::KeyI) {
+        lighting.0 = !lighting.0;
+        stats.message = Some((
+            if lighting.0 {
+                "inspection lighting: no fog, neutral light (I to return)".into()
+            } else {
+                "atmospheric lighting (as in play)".into()
+            },
+            3.0,
+        ));
+    }
     if keys.just_pressed(KeyCode::Home) || keys.just_pressed(KeyCode::KeyR) {
         let e = entrance_point(&scene.content, &scene.nav);
         let toward = scene
@@ -898,10 +1104,15 @@ fn move_camera(
     pc: Res<PlayerControl>,
     scene: Res<ViewerScene>,
     req: Res<ViewerRequest>,
+    map: Res<crate::map2d::MapView>,
     mut cam: ResMut<ViewerCam>,
     mut tf: Single<&mut Transform, With<MainCamera>>,
 ) {
     let dt = time.delta_secs().min(0.1);
+    if map.open {
+        cam.vel = Vec3::ZERO;
+        return;
+    }
     if !req.tour {
         if mouse.pressed(MouseButton::Right) {
             cam.yaw -= motion.delta.x * 0.004;
@@ -912,7 +1123,7 @@ fn move_camera(
             if cam.mode == CamMode::Orbit {
                 cam.orbit_distance = (cam.orbit_distance / k).clamp(3.0, 200.0);
             } else {
-                cam.speed = (cam.speed * k).clamp(1.0, 120.0);
+                cam.speed = (cam.speed * k).clamp(SPEED_MIN, SPEED_MAX);
             }
         }
     }
@@ -931,8 +1142,16 @@ fn move_camera(
     let right = rot * Vec3::X;
     match cam.mode {
         CamMode::Fly => {
+            // Ease in and out over about 0.1 s: precise near a pillar,
+            // still immediate enough to cross a dungeon.
             let v = cam.forward() * fwd_in + right * side_in + Vec3::Y * up_in;
-            let step = v.normalize_or_zero() * cam.speed * factor * dt;
+            let want = v.normalize_or_zero() * cam.speed * factor;
+            let t = 1.0 - (-dt * 14.0).exp();
+            cam.vel = cam.vel + (want - cam.vel) * t;
+            if want == Vec3::ZERO && cam.vel.length() < 0.02 {
+                cam.vel = Vec3::ZERO;
+            }
+            let step = cam.vel * dt;
             cam.pos += step;
         }
         CamMode::Walk => {
@@ -954,6 +1173,62 @@ fn move_camera(
         }
     }
     **tf = Transform::from_translation(cam.pos).with_rotation(cam.rotation());
+}
+
+fn speed_bar(
+    cam: Res<ViewerCam>,
+    lighting: Res<crate::env::InspectionLighting>,
+    mut text: Query<&mut Text, With<SpeedText>>,
+) {
+    for mut t in &mut text {
+        t.0 = format!(
+            "Flight {:.1} m/s ({}){}",
+            cam.speed,
+            speed_name(cam.speed),
+            if lighting.0 {
+                " | inspection light"
+            } else {
+                ""
+            }
+        );
+    }
+}
+
+/// Inspection lighting (I): no fog, bright neutral ambient. Viewer only;
+/// the atmospheric look returns as soon as it is switched off.
+fn inspection_lighting(
+    lighting: Res<crate::env::InspectionLighting>,
+    scene: Res<ViewerScene>,
+    atmosphere: Option<Res<crate::env::Atmosphere>>,
+    mut ambient: ResMut<GlobalAmbientLight>,
+    mut fog: Query<&mut bevy::pbr::DistanceFog, With<MainCamera>>,
+    mut was: Local<bool>,
+) {
+    if lighting.0 {
+        ambient.color = Color::WHITE;
+        ambient.brightness = crate::env::INSPECTION_BRIGHTNESS;
+        for mut f in &mut fog {
+            f.falloff = bevy::pbr::FogFalloff::Linear {
+                start: 5000.0,
+                end: 10000.0,
+            };
+        }
+    } else if *was && atmosphere.is_none() {
+        // No per-room presets: restore the dungeon's own fog and ambient.
+        let theme = scene.content.dungeon.theme;
+        ambient.color = theme
+            .ambient
+            .map(crate::common::rgb)
+            .unwrap_or(Color::srgb(0.6, 0.65, 0.8));
+        ambient.brightness = 220.0;
+        for mut f in &mut fog {
+            f.falloff = bevy::pbr::FogFalloff::Linear {
+                start: 18.0,
+                end: 75.0,
+            };
+        }
+    }
+    *was = lighting.0;
 }
 
 // ------------------------------------------------------------- picking --
@@ -997,9 +1272,10 @@ fn pick(
     modules: Option<Res<ModuleInstances>>,
     window: Single<&Window>,
     camera: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
+    map: Res<crate::map2d::MapView>,
     mut commands: Commands,
 ) {
-    if !mouse.just_pressed(MouseButton::Left) || pc.cursor_over_ui {
+    if map.open || !mouse.just_pressed(MouseButton::Left) || pc.cursor_over_ui {
         return;
     }
     let Some(cursor) = window.cursor_position() else {
@@ -1105,20 +1381,6 @@ fn flat_circle(gizmos: &mut Gizmos, c: Vec3, r: f32, color: Color) {
     );
 }
 
-fn route_color(route: &str, role: &str) -> Color {
-    if role == "arena" {
-        return Color::srgb(1.0, 0.3, 0.3);
-    }
-    match route {
-        "main" => Color::srgb(0.35, 0.7, 1.0),
-        "alternate" => Color::srgb(0.3, 1.0, 0.9),
-        "side" => Color::srgb(0.4, 1.0, 0.4),
-        "overlook" | "shortcut" => Color::srgb(1.0, 0.6, 0.2),
-        "loop" => Color::srgb(0.8, 0.5, 1.0),
-        _ => Color::srgb(0.8, 0.8, 0.8),
-    }
-}
-
 fn draw_layers(
     scene: Res<ViewerScene>,
     layers: Res<ViewerLayers>,
@@ -1130,7 +1392,8 @@ fn draw_layers(
     if layers.structure {
         for r in &st.rooms {
             let y = r.min.y + 0.15;
-            let c = route_color(&r.route, &r.role);
+            let c = r.purpose.color();
+            let c = Color::srgb(c[0], c[1], c[2]);
             let color = if r.corridor { c.with_alpha(0.45) } else { c };
             let (a, b) = (r.min, r.max);
             let pts = [
@@ -1472,7 +1735,7 @@ fn describe_selection(
                 .filter(|d| d.rooms.0 == *i || d.rooms.1 == *i)
                 .count();
             format!(
-                "SELECTED room {} '{}'\nrole {} | route {} | order {}\nsize {:.1} x {:.1} m, floor y {:.1}..{:.1}\n{} area(s): {}\n{doors} doorway(s){} | atmosphere '{}'{}\n",
+                "SELECTED room {} '{}'\nrole {} | route {} | order {}\nsize {:.1} x {:.1} m, floor y {:.1}..{:.1}\n{} area(s): {}\n{doors} doorway(s){} | atmosphere '{}'{}\npurpose: {}{}{}\n",
                 r.id,
                 r.name,
                 r.role,
@@ -1493,7 +1756,13 @@ fn describe_selection(
                     ""
                 } else {
                     " | (derived from area names)"
-                }
+                },
+                r.purpose.label(),
+                if r.dead_end { ", dead end" } else { "" },
+                r.off_main
+                    .filter(|d| *d > 0)
+                    .map(|d| format!(", {d} room(s) off the main route"))
+                    .unwrap_or_default()
             )
         }
         Selection::Anchor(i) => {
@@ -1587,6 +1856,17 @@ struct Shot {
     room: usize,
     walk: bool,
     file: String,
+    special: Special,
+}
+
+/// Tour shots that aren't of one room.
+#[derive(Clone, Copy, PartialEq)]
+enum Special {
+    None,
+    /// The 2D map, fitted.
+    Map,
+    /// The whole dungeon from above; true = inspection lighting.
+    Overhead(bool),
 }
 
 struct ShotResult {
@@ -1631,6 +1911,8 @@ fn tour(
     scene: Res<ViewerScene>,
     stats: Res<FrameStats>,
     mut cam: ResMut<ViewerCam>,
+    mut map: ResMut<crate::map2d::MapView>,
+    mut lighting: ResMut<crate::env::InspectionLighting>,
     mut st: Local<TourState>,
     mut commands: Commands,
     mut exit: MessageWriter<AppExit>,
@@ -1649,14 +1931,38 @@ fn tour(
                 room: i,
                 walk: false,
                 file: format!("{base}.png"),
+                special: Special::None,
             });
             if !r.corridor {
                 st.shots.push(Shot {
                     room: i,
                     walk: true,
                     file: format!("{base}_eye.png"),
+                    special: Special::None,
                 });
             }
+        }
+        // The map first; the whole dungeon from above, atmospheric then
+        // inspection lighting, last.
+        st.shots.insert(
+            0,
+            Shot {
+                room: 0,
+                walk: false,
+                file: "map.png".into(),
+                special: Special::Map,
+            },
+        );
+        for (inspect, file) in [
+            (false, "overhead_atmospheric.png"),
+            (true, "overhead_inspection.png"),
+        ] {
+            st.shots.push(Shot {
+                room: 0,
+                walk: false,
+                file: file.into(),
+                special: Special::Overhead(inspect),
+            });
         }
     }
     if st.k >= st.shots.len() {
@@ -1671,7 +1977,22 @@ fn tour(
     let shot = st.shots[st.k].clone();
     if st.t == 0.0 {
         let r = &scene.structure.rooms[shot.room];
-        if shot.walk {
+        map.open = shot.special == Special::Map;
+        if map.open {
+            map.fit_now();
+        }
+        lighting.0 = shot.special == Special::Overhead(true);
+        if let Special::Overhead(_) = shot.special {
+            // Above the middle of all rooms, from the south, steeply down.
+            let (lo, hi) = scene.structure.rooms.iter().fold(
+                (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY)),
+                |(a, b), r| (a.min(r.min), b.max(r.max)),
+            );
+            let c = (lo + hi) * 0.5;
+            let ext = (hi.x - lo.x).max(hi.z - lo.z);
+            cam.look(c + Vec3::new(0.0, ext * 0.85, -ext * 0.45), c);
+            cam.mode = CamMode::Fly;
+        } else if shot.walk {
             // Stand at the room's way in, looking across it.
             let c = r.center();
             let door = scene
@@ -1733,12 +2054,23 @@ fn write_tour_report(scene: &ViewerScene, st: &TourState) {
         String::from("file,room_id,room,role,route,view,mean_ms,p95_ms,visible_meshes,meshes\n");
     for r in &st.results {
         let room = &scene.structure.rooms[r.shot.room];
-        let view = if r.shot.walk { "eye" } else { "overview" };
+        let view = match r.shot.special {
+            Special::Map => "map",
+            Special::Overhead(false) => "overhead-atmospheric",
+            Special::Overhead(true) => "overhead-inspection",
+            Special::None if r.shot.walk => "eye",
+            Special::None => "overview",
+        };
+        let (id, name, role) = if r.shot.special == Special::None {
+            (room.id.as_str(), room.name.as_str(), room.role.as_str())
+        } else {
+            ("-", "whole dungeon", "-")
+        };
         html.push_str(&format!(
             "<div class=s><a href=\"{f}\"><img src=\"{f}\"></a><br>{} {} [{}] {view}<br>{:.2} ms, {} / {} meshes visible</div>\n",
-            room.id,
-            room.name,
-            room.role,
+            id,
+            name,
+            role,
             r.mean_ms,
             r.visible,
             r.meshes,
@@ -1747,10 +2079,14 @@ fn write_tour_report(scene: &ViewerScene, st: &TourState) {
         csv.push_str(&format!(
             "{},{},\"{}\",{},{},{view},{:.3},{:.3},{},{}\n",
             r.shot.file,
-            room.id,
-            room.name,
-            room.role,
-            room.route,
+            id,
+            name,
+            role,
+            if r.shot.special == Special::None {
+                room.route.as_str()
+            } else {
+                "-"
+            },
             r.mean_ms,
             r.p95_ms,
             r.visible,
@@ -1776,6 +2112,7 @@ pub struct ViewerTest {
     mark: Vec3,
     reloads: u32,
     seed: Option<u64>,
+    map_before: Option<(f32, f32, Vec2)>,
 }
 
 impl ViewerTest {
@@ -1810,6 +2147,10 @@ fn viewer_test(
     layers: Res<ViewerLayers>,
     navdbg: Res<NavDebug>,
     saves: Res<GameData>,
+    map: Option<Res<crate::map2d::MapView>>,
+    lighting: Res<crate::env::InspectionLighting>,
+    ambient: Res<GlobalAmbientLight>,
+    fog: Query<&bevy::pbr::DistanceFog, With<MainCamera>>,
     mut exit: MessageWriter<AppExit>,
 ) {
     if !test.on {
@@ -1829,8 +2170,15 @@ fn viewer_test(
         KeyCode::Backspace,
         KeyCode::KeyF,
         KeyCode::BracketRight,
+        KeyCode::Digit7,
+        KeyCode::Digit9,
+        KeyCode::Equal,
+        KeyCode::KeyI,
+        KeyCode::KeyM,
     ] {
-        if keys.just_pressed(k) {
+        // Taps: release last frame's press (Bevy clears just_pressed itself,
+        // but the key stays down until released).
+        if keys.pressed(k) {
             keys.release(k);
         }
     }
@@ -1873,7 +2221,9 @@ fn viewer_test(
         3 if at(5.0) => {
             keys.release(KeyCode::KeyW);
             let d = cam.pos.distance(test.mark);
-            test.check(d > 5.0, format!("W (fly) for 1 s moved {d:.1} m"));
+            // Frame times are capped at 0.1 s, so a slow first second
+            // (shaders compiling) moves less than 12 m.
+            test.check(d > 3.0, format!("W (fly) for 1 s moved {d:.1} m"));
             keys.press(KeyCode::KeyG);
             test.step += 1;
         }
@@ -1920,11 +2270,76 @@ fn viewer_test(
             test.step += 1;
         }
         7 if at(8.5) => {
+            keys.press(KeyCode::Digit7);
+            keys.press(KeyCode::KeyM);
+            test.step += 1;
+        }
+        8 if at(9.0) => {
+            test.check(
+                (cam.speed - SPEED_SLOW).abs() < 1e-3,
+                format!("7: slow preset, {:.1} m/s", cam.speed),
+            );
+            let sc = scene.as_ref().unwrap();
+            let ok_open = map.as_ref().is_some_and(|m| m.open);
+            // A room's centre on the map leads back to that room.
+            let hit = map.as_ref().and_then(|m| {
+                let k = sc.structure.rooms.iter().position(|r| !r.corridor)?;
+                let c = sc.structure.rooms[k].center();
+                let screen = m.world_to_screen(V2::new(c.x, c.z));
+                let back = m.screen_to_world(screen);
+                Some((k, crate::map2d::room_under(sc, back)))
+            });
+            test.check(
+                ok_open && hit.is_some_and(|(k, r)| r == Some(k)),
+                format!("M: map open {ok_open}, room under its own map position: {hit:?}"),
+            );
+            // Close the map first: while it is open, keys belong to it.
+            keys.press(KeyCode::KeyM);
+            test.step += 1;
+        }
+        9 if at(9.5) => {
+            keys.press(KeyCode::Digit9);
+            keys.press(KeyCode::Equal);
+            keys.press(KeyCode::KeyI);
+            test.step += 1;
+        }
+        10 if at(10.0) => {
+            let want = SPEED_FAST * SPEED_STEP;
+            test.check(
+                (cam.speed - want).abs() < 1e-2 && !map.as_ref().is_some_and(|m| m.open),
+                format!(
+                    "9 then =: {:.2} m/s (want {want:.2}), map closed",
+                    cam.speed
+                ),
+            );
+            let fogless = fog.iter().all(|f| matches!(f.falloff, bevy::pbr::FogFalloff::Linear { start, .. } if start > 1000.0));
+            test.check(
+                lighting.0
+                    && (ambient.brightness - crate::env::INSPECTION_BRIGHTNESS).abs() < 1e-3
+                    && fogless,
+                format!(
+                    "I: inspection lighting {}, ambient {:.0}, fog pushed away {fogless}",
+                    lighting.0, ambient.brightness
+                ),
+            );
+            keys.press(KeyCode::KeyI);
+            test.step += 1;
+        }
+        11 if at(11.0) => {
+            let restored =
+                !lighting.0 && (ambient.brightness - crate::env::INSPECTION_BRIGHTNESS).abs() > 1.0;
+            test.check(
+                restored,
+                format!(
+                    "I again: atmospheric lighting back (ambient {:.0})",
+                    ambient.brightness
+                ),
+            );
             test.mark = cam.pos;
             keys.press(KeyCode::F5);
             test.step += 1;
         }
-        8 if at(10.5) => {
+        12 if at(13.0) => {
             let reloads = test.reloads;
             let ok = reloads >= 2 && scene.is_some() && cam.pos.distance(test.mark) < 0.01;
             test.check(
@@ -1937,12 +2352,13 @@ fn viewer_test(
                 .and_then(|s| s.content.dungeon.generated.as_ref())
                 .map(|g| g.seed);
             test.seed = seed;
+            test.map_before = map.as_ref().map(|m| (m.min_x, m.max_z, m.size));
             if seed.is_some() {
                 keys.press(KeyCode::BracketRight);
             }
             test.step += 1;
         }
-        9 if at(15.0) => {
+        13 if at(17.5) => {
             if let Some(old) = test.seed {
                 let now = scene
                     .as_ref()
@@ -1953,14 +2369,24 @@ fn viewer_test(
                     now == Some(old + 1) && err.is_none(),
                     format!("]: seed {old} -> {now:?} (error: {err:?})"),
                 );
+                let after = map.as_ref().map(|m| (m.min_x, m.max_z, m.size));
+                let rebuilt = after.is_some() && after != test.map_before;
+                test.check(
+                    rebuilt,
+                    "]: the 2D map was rebuilt for the new layout".to_string(),
+                );
             }
             keys.press(KeyCode::Backspace);
             test.step += 1;
         }
-        10 if at(16.0) => {
+        14 if at(18.5) => {
             let ok = *state.get() == AppState::Hub;
             test.check(ok, format!("Backspace: back in the hub: {ok}"));
             let saved = saves.save_path.is_file();
+            let prefs = prefs_path(&saves.save_path).is_file();
+            test.log.push(format!(
+                "viewer.toml written by the test: {prefs} (tests leave preferences alone)"
+            ));
             test.log.push(format!(
                 "save file present afterwards: {saved} (the viewer never writes it)"
             ));
@@ -2006,6 +2432,22 @@ mod tests {
 
     fn down(at: Vec3) -> Ray3d {
         Ray3d::new(at + Vec3::Y * 30.0, Dir3::NEG_Y)
+    }
+
+    #[test]
+    fn viewer_preferences_round_trip_beside_the_save() {
+        let dir = std::env::temp_dir().join(format!("viewer_prefs_{}", std::process::id()));
+        let save = dir.join("save.toml");
+        let p = prefs_path(&save);
+        assert_eq!(p, dir.join("viewer.toml"));
+        assert_eq!(read_prefs(&p), (None, None));
+        write_prefs(&p, 51.75, true);
+        assert_eq!(read_prefs(&p), (Some(51.75), Some(true)));
+        // The player save is never created by it.
+        assert!(!save.exists());
+        std::fs::write(&p, "speed = nan\ninspection = maybe\n").unwrap();
+        assert_eq!(read_prefs(&p), (None, None));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
