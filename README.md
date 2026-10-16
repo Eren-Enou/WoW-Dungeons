@@ -223,7 +223,7 @@ additions); the design is in [NAVIGATION_0_4.md](NAVIGATION_0_4.md) and
 Environment overrides: `DUNGEON_CONTENT=<dir or file>`,
 `DUNGEON_SAVE_DIR=<dir>` (default `./saves`).
 
-## Dungeon viewer (0.8)
+## Dungeon viewer (0.8, 0.8.1)
 
 Inspect a dungeon without recruiting, entering or fighting. It uses the
 game's own renderer, and creates no simulation and writes no save.
@@ -241,6 +241,9 @@ tab); Backspace returns.
 | Keys | Action |
 |---|---|
 | Right mouse + WASD, E/Q | Fly; Shift/Ctrl change speed |
+| 7 / 8 / 9, − / =, wheel | Speed presets (slow, normal, fast), fine steps (shown in the speed bar) |
+| M | 2D map of the whole dungeon: zoom, pan, click a room to go there |
+| I | Inspection lighting (no fog, neutral light) for overhead views |
 | G, O | Walk at eye height, orbit |
 | Home, Tab, L | Entrance, next room, room list |
 | 1–4 | Navigation, structure, encounter and module layers |

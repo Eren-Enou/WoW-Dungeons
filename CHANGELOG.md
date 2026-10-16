@@ -1,5 +1,65 @@
 # Changelog
 
+## 0.8.1: viewer polish, map navigation and exploration design
+
+Guides: DUNGEON_VIEWER_GUIDE.md (updated). Branch review:
+BRANCH_PURPOSE_0_8_1.md. First user feedback: PLAYTEST_NOTES_0_8.md.
+
+### Viewer
+- **Flight speed**: a speed bar at the bottom centre shows the speed in m/s
+  and its band.
+  - presets: slow 3, normal 12 and fast 45 m/s (keys 7/8/9, or buttons);
+  - fine steps of ×1.15 (−/=, numpad, or buttons);
+  - the wheel range is now 0.5–200 m/s;
+  - Shift/Ctrl unchanged.
+- **Camera**: free flight eases in and out instead of starting and stopping
+  instantly.
+- **Preferences**: speed and inspection lighting are remembered for the
+  session and saved to `viewer.toml`, beside the save file but never in it.
+  Tests and tours never write it.
+- **2D map (M)**: a top-down developer map of the whole dungeon.
+  - It shows floors shaded by height and lava; outlines coloured by purpose;
+    doorways, the main route, drops, spawns by rank, optional packs, the
+    entrance and the camera; and room ids and names (more detail as you zoom
+    in).
+  - Wheel zooms, drag pans, F fits; click a room to fly there.
+  - Rebuilt on reload and seed switch. Drawn inside the game, with no forge
+    dependency.
+- **Inspection lighting (I)**:
+  - Distant rooms faded because of the 18–75 m linear fog, not clipping or
+    culling.
+  - Inspection lighting gives neutral white light with no fog; atmosphere
+    mode is unchanged.
+  - Viewer only; the simulation and dungeon play are unaffected.
+- **Branch purposes**: rooms are classified as main, alternate, optional
+  encounter chamber, empty side chamber, overlook/shortcut, return loop or
+  passage. The structure layer, the map and the inspector show this, and the
+  inspector adds "dead end" and "N rooms off the main route". The crypt's
+  cloister-walk rooms count as loop, not alternate.
+- **Tours** now also capture `map.png` and two whole-dungeon overhead shots
+  (atmospheric and inspection lighting).
+- **`--viewer-test`** also checks:
+  - the speed presets and fine steps;
+  - the map: opening it, and that a room's map position leads back to that
+    room;
+  - inspection lighting on and off;
+  - that the map is rebuilt on seed switch;
+  - that no `viewer.toml` is written.
+
+### Reports
+- **BRANCH_PURPOSE_0_8_1.md**: an audit of ten seeds per kit, with 0.9
+  recommendations.
+  - No alternate route holds anything.
+  - 14 of 20 bypass a required pack, so they offer no real choice.
+  - Every side chamber is a one-room dead end, and the empty ones are
+    leftovers of slot counts.
+  - The overlook drop is the one branch that changes play.
+- **PLAYTEST_NOTES_0_8.md**: the first user's 0.8 feedback, the 0.8.1
+  responses, and the questions that remain unvalidated.
+
+No simulation, forge or content changes: `crates/sim`, `crates/forge` and
+`assets/` are untouched.
+
 ## 0.8 — Dungeon viewer and modular environments
 
 Review, decisions and measurements: DUNGEON_PRESENTATION_0_8.md. Using the

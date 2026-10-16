@@ -46,8 +46,8 @@ selection.
 | `--viewer [ID or FILE]` | Start in the viewer |
 | `--blueprint FILE --seed N` | Generate that layout first (with `dungeon-forge`) and open it |
 | `--room NAME` | Start at a room (its id, e.g. `r6`, or its name) |
-| `--layers a,b,...` | Switch layers on at start: `nav`, `collision`, `structure`, `encounters`, `modules`; `noui`, `noinfo` hide panels; `panels` keeps them in a tour |
-| `--viewer-tour` | Screenshot every room and corridor (overview), plus an eye-height view inside every room. Writes `screenshots/viewer/<id>/index.html` (a contact sheet) and `stats.csv` (frame time and meshes per shot), then exits |
+| `--layers a,b,...` | Switch layers on at start: `nav`, `collision`, `structure`, `encounters`, `modules`; `noui`, `noinfo` hide panels; `panels` keeps them in a tour; `map` opens the 2D map; `inspect` turns inspection lighting on |
+| `--viewer-tour` | Screenshot every room and corridor (overview), plus an eye-height view inside every room, the 2D map (`map.png`) and the whole dungeon from above with atmospheric and inspection lighting (`overhead_atmospheric.png`, `overhead_inspection.png`). Writes `screenshots/viewer/<id>/index.html` (a contact sheet) and `stats.csv` (frame time and meshes per shot), then exits |
 | `--viewer-test` | Scripted check of the controls (see "Verification"); exits 0 when all pass |
 | `--no-vsync` | Uncapped frame rate, for frame-time measurements |
 
@@ -58,8 +58,12 @@ selection.
 | Hold right mouse | Look around |
 | W A S D | Move (in the look direction) |
 | E / Space, Q / C | Up / down |
-| Shift / Ctrl | 3x faster / 4x slower |
-| Mouse wheel | Flight speed (shown in the panel); in orbit mode, distance |
+| Shift / Ctrl | 3x faster / 4x slower (while held) |
+| 7 / 8 / 9 | Flight speed presets: slow (3 m/s), normal (12), fast (45) |
+| − / = (also numpad − / +) | Flight speed down / up one step (×1.15) |
+| Mouse wheel | Flight speed (0.5–200 m/s); in orbit mode, distance |
+| M | 2D map of the whole dungeon (see "The 2D map") |
+| I | Inspection lighting on/off (see "Inspection lighting") |
 | G | Walk mode: eye height (1.7 m) over walkable floor; you can't leave the floor, so you see what a player sees |
 | O | Orbit the selection (or the room ahead); A/D turn, E/Q raise, W/S zoom, right mouse too |
 | F | Back to free flight |
@@ -79,6 +83,82 @@ selection.
 | F1 | Hide the controls help |
 | Backspace | Back to the hub |
 
+## Flight speed and camera (0.8.1)
+
+The bar at the bottom centre shows the flight speed in m/s and its preset
+band ("slow" below 6 m/s, "normal" below 25, "fast" above). Its buttons do the same as the
+keys: Slow 7, Normal 8, Fast 9, − and +, Map M, Light I.
+
+* **Speed range:** 0.5 to 200 m/s. Shift and Ctrl multiply it while held.
+* **Smoothing:** flight eases in and out (about 0.1 s), so short taps still
+  move precisely. Walk and orbit modes are unchanged.
+* **Near walls:**
+  * walk mode keeps the eye over walkable floor, which stays 0.4 m from
+    walls, so it never clips;
+  * free flight passes through walls, pillars and arches on purpose, so you
+    can inspect from anywhere. The near plane is 0.1 m, so geometry only
+    disappears when the camera is effectively inside it.
+
+**Preferences.** The speed and the inspection-lighting setting are remembered
+for the session. When you leave the viewer they are saved to `viewer.toml`,
+next to the save file (in `DUNGEON_SAVE_DIR` when set). This is a separate
+file: the player save is never read or written by the viewer.
+`--viewer-test` and `--viewer-tour` never write it.
+
+## The 2D map (0.8.1)
+
+M opens a top-down map of the whole dungeon. It is a developer view, not a
+player map.
+
+**What it shows:**
+* **Floors**, shaded by height (light high, dark low); lava is red.
+* **Room and corridor outlines**, coloured by purpose:
+  * blue: main route;
+  * cyan: alternate route;
+  * green: optional encounter chamber;
+  * violet: empty side chamber;
+  * orange: overlook or shortcut;
+  * pink: return loop;
+  * grey: passage.
+* **Doorways** in yellow, and the **main route** as a dashed line.
+* **One-way drops** as orange arrows.
+* **Spawns** by rank (magenta boss, yellow elite, white trash), with a green
+  ring for optional packs.
+* **The entrance** (green dot) and **the camera** (red square, with dots for
+  its heading).
+
+**Room labels:** ids when fitted, names once zoomed in, and role, purpose,
+floor height and encounter close up.
+
+**Controls:**
+
+| Input | Action |
+|---|---|
+| Mouse wheel | Zoom about the cursor |
+| Left drag | Pan |
+| Left click | Fly the 3D camera to that room and close the map |
+| F | Fit the whole dungeon |
+| M or Esc | Close |
+
+The map is drawn from the same nav and room data as the 3D view, inside the
+game: the game does not use the forge's SVG code. It is rebuilt on F5 and on
+[ / ].
+
+## Inspection lighting (0.8.1)
+
+Why distant rooms fade from above: each room's atmosphere uses linear
+distance fog, typically 18–75 m. It is not far-plane clipping (the far plane
+is 1000 m), and it is not culling (only off-screen meshes are culled).
+
+I switches to inspection lighting:
+* neutral white ambient light;
+* fog pushed beyond 5 km.
+
+The whole dungeon is then readable from any height. Press I again to return
+to the room-by-room atmosphere. It changes only the viewer's camera and
+lights: the dungeon file, the simulation and normal play are never affected.
+In a dungeon run, the atmosphere always applies.
+
 ## What the layers show
 
 1. **Navigation**:
@@ -88,8 +168,7 @@ selection.
    * areas the entrance can't reach in **magenta**, labelled "NOT REACHABLE",
      unless the file marks them `unreachable`. The info panel warns too.
 2. **Structure**:
-   * room and corridor bounds, coloured by route (main blue, alternate cyan,
-     side green, overlook/shortcut orange, loop violet, arena red);
+   * room and corridor bounds, coloured by purpose, as on the 2D map;
    * doorways (yellow frames);
    * the main route as arrows;
    * room labels with id, role and route.
@@ -125,8 +204,12 @@ selection.
 * **Status (bottom right)**: frame time (mean and 95th percentile), visible
   and total meshes, entities.
 * **Selection**:
-  * a room: role, route, order, size, floor heights, areas, doorways,
-    encounter, atmosphere preset;
+  * a room:
+    * role, route, order;
+    * purpose; whether it is a dead end; how many rooms it lies off the main
+      route;
+    * size, floor heights, areas, doorways;
+    * encounter, atmosphere preset;
   * a module: kind, asset path (and whether it fell back), position, yaw,
     scale, bounds, room;
   * an anchor: kind, position, facing, room, clearance and what was placed;
@@ -162,9 +245,22 @@ selection.
 * G: walk mode stays 1.7 m over walkable floor;
 * 1–4: the layers switch on;
 * F12;
+* 7 and M:
+  * the slow preset;
+  * the map opens;
+  * a room's position on the map leads back to that room;
+* 9 and =: the fast preset, then one step up (51.75 m/s);
+* I: inspection lighting (ambient 650, fog pushed away);
+* I again: the atmosphere returns;
 * F5: reload, with the camera kept;
-* ]: the next seed is generated and loaded, on generated dungeons;
+* ]: on generated dungeons, the next seed is generated and loaded, and the
+  map is rebuilt;
 * Backspace: back to the hub.
 
 It then prints a report and exits 0 when all checks pass. Results for 0.8
-are in PROGRESS.md.
+and 0.8.1 are in PROGRESS.md.
+
+## Branch purposes
+
+Purposes come from the generator's route data. BRANCH_PURPOSE_0_8_1.md
+reviews what they are for, and how well they currently earn their place.

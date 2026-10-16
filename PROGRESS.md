@@ -1,7 +1,13 @@
 # Progress
 
-Status: **0.8 (dungeon viewer and modular environments) implemented and
-verified** with unit tests, simulation hash comparisons against 0.7,
+Status: **0.8.1 (viewer polish, map navigation and exploration design)
+implemented and verified**. It adds a speed bar and presets, a 2D map,
+inspection lighting, branch-purpose classification, a branch audit
+(BRANCH_PURPOSE_0_8_1.md) and the first user's 0.8 feedback
+(PLAYTEST_NOTES_0_8.md); see the 0.8.1 section.
+
+0.8 (dungeon viewer and modular environments) was implemented and
+verified with unit tests, simulation hash comparisons against 0.7,
 scripted viewer tests, screenshot tours of six generated layouts, the
 standard UI checks, and a test of the packaged ZIP. 0.8 adds:
 * a dungeon viewer (a mode of the game: `--viewer`, or V in the hub) on the
@@ -20,6 +26,100 @@ covered by a recorded playtest".)
 
 Environment: Windows 11 Pro, Rust 1.99.0, Bevy 0.20.0 (pinned `=0.20.0`,
 Cargo.lock committed), NVIDIA RTX 2070 SUPER (Vulkan).
+
+## 0.8.1 — viewer polish, map navigation and exploration design
+
+Usage: DUNGEON_VIEWER_GUIDE.md (speed, map and inspection sections).
+Analysis: BRANCH_PURPOSE_0_8_1.md. Feedback: PLAYTEST_NOTES_0_8.md.
+
+Changes are confined to the game crate:
+- `viewer.rs`, plus the new `map2d.rs`;
+- in `structure.rs`, `Purpose`, `dead_end` and `off_main`;
+- in `env.rs`, the `InspectionLighting` resource.
+
+`crates/sim`, `crates/forge` and `assets/` are unchanged, so the simulation
+and the generated content are unchanged by construction. `dungeon_sim` does
+not depend on the game crate, and no hash comparison was needed or run.
+
+### Checks (run 2026-10-16 after the last code change)
+- `cargo fmt --all -- --check`: clean.
+- `cargo check --workspace`: clean.
+- `cargo clippy --workspace --all-targets -- -D warnings`: clean, after
+  fixing two lints in `map2d.rs`.
+- `cargo test --workspace --release`:
+  - `dungeon_forge` 21 passed;
+  - `dungeon_game` 24 passed. New: purpose classification on the shipped
+    Emberforge and Reliquary files, including a loop-room case;
+    handwritten rooms have no route purpose; viewer preferences round-trip
+    beside the save, without creating it; map coordinates and floors;
+  - `dungeon_sim` 161 passed, 1 ignored;
+  - 0 failed.
+- `cargo build --release --workspace`: succeeded.
+
+### Graphical checks
+All runs used `DUNGEON_SAVE_DIR` pointing at a scratch folder.
+
+- **`--viewer-test`** passed on hollow_reliquary, emberforge_vaults and
+  cinderdeep_hollows. It checked:
+  - entering, R/Home, Tab, fly, walk and layers 1–4, as before;
+  - the 7 slow preset (3.0 m/s);
+  - the M map: it opens, and a room's map position leads back to that room;
+  - 9 then = (51.75 m/s);
+  - I: ambient 650 and fog pushed away; I again restores the atmosphere;
+  - F5 reload;
+  - ]: the next seed, with the 2D map rebuilt;
+  - Backspace.
+
+  No `viewer.toml` and no save were written.
+- **`--viewer-tour`** passed (exit 0) on three seeds per kit:
+  - Emberforge: the shipped seed 1, s6 and s8;
+  - Reliquary: the shipped seed 1, s5 and s10.
+
+  Each tour includes `map.png` and the overhead shots. Looked at:
+  - **Maps**: purpose colours match the room data. Reliquary s5's
+    cloister-walk rooms are pink (loop) after the classification fix.
+    Emberforge s8 shows the overlook in orange, the optional bunker in green
+    and the alternate in cyan.
+  - **Overheads**: the atmospheric overhead is dark beyond the fog range, as
+    diagnosed; the inspection overhead shows the whole dungeon clearly.
+  - **Labels**: fitted map labels overlapped on compact crypt layouts. Ids
+    are now shown when fitted and names once zoomed in; re-checked on
+    Emberforge s8.
+- **Standard UI checks**: `--input-test`, `--frame-test`, `--tooltip-test`,
+  `--click-test` and `--hub-tour` all exit 0.
+- **Demo**: `--demo --level 7 --screenshots` ran a Gloomroot Warrens run to
+  "Victory in 257.8s". Demo mode stays open afterwards, so the process was
+  stopped by hand (exit 1 from the kill).
+- **Inspection lighting doesn't reach gameplay**:
+  - the system runs only in `AppState::Viewer`;
+  - `apply_atmosphere` only defers to it in the Viewer state;
+  - nothing writes dungeon files.
+
+### Packaged build
+- `scripts/package-windows.ps1` produced
+  `dist/DungeonSandbox-0.8.1-windows-x64.zip` (30.7 MB; assets 1.01 MB).
+- Extracted with Expand-Archive, the packaged `dungeon-sandbox.exe --viewer
+  <id> --viewer-test` passed on hollow_reliquary and emberforge_vaults, with
+  all 16 checks OK. The scratch save folder stayed empty.
+
+### Branch audit
+- 10 seeds per blueprint, analysed with a scratch script.
+- Findings and 0.9 recommendations are in BRANCH_PURPOSE_0_8_1.md.
+- In short:
+  - alternate routes hold nothing, and most bypass a required pack;
+  - side chambers are always one-room dead ends, and the empty ones are
+    leftover slots;
+  - the overlook drop is the only branch that changes play.
+
+### Not verified
+- **No human playtest of 0.8.1.** Whether the speed bar, smoothing, map and
+  inspection lighting satisfy the first user's requests is unconfirmed. The
+  open questions in PLAYTEST_NOTES_0_8.md (how layouts feel, whether side
+  branches feel worthwhile, discoverability of optional encounters, whether
+  the kits feel different, readability in combat) remain **unvalidated**.
+- **Camera feel near walls**: assessed by reading the code and the tests,
+  not by a person.
+- **Hardware**: the package was tested on this machine only.
 
 ## 0.8 — dungeon viewer and modular environments
 
