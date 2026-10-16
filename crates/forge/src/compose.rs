@@ -84,6 +84,15 @@ fn poly_area(name: String, pts: Vec<V2>, y: f32) -> AreaConfig {
     }
 }
 
+/// An area's walkable outline (rectangle or polygon).
+pub fn area_poly(a: &AreaConfig) -> Option<Poly> {
+    match (&a.points, a.min, a.max) {
+        (Some(p), _, _) => Poly::new(p).ok(),
+        (None, Some(lo), Some(hi)) => Some(Poly::from_rect(Rect::new(lo, hi))),
+        _ => None,
+    }
+}
+
 fn r2(v: V2) -> V2 {
     // Round to centimetres: stable, readable output.
     V2::new((v.x * 100.0).round() / 100.0, (v.z * 100.0).round() / 100.0)

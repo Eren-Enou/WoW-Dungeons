@@ -64,6 +64,17 @@ fn pillar_squares_with(content: &Content, exists: &dyn Fn(&str) -> bool) -> Vec<
         .collect()
 }
 
+/// Landmark plinths (0.9): holes whose landmark prop replaces the walls.
+pub fn plinth_squares(content: &Content) -> Vec<(V2, f32, f32)> {
+    content
+        .dungeon
+        .anchors
+        .iter()
+        .filter(|a| a.kind == "plinth")
+        .map(|a| (a.pos, a.clearance, a.y))
+        .collect()
+}
+
 /// Is this wall the side of a pillar the pillar module replaces?
 pub fn wall_in_pillar(w: &Wall, squares: &[(V2, f32, f32)]) -> bool {
     let mid = (w.a + w.b) * 0.5;
@@ -223,6 +234,12 @@ pub fn plan_modules_with(
     };
     let room_of = |p: Vec3| structure.room_at(nav, p + Vec3::Y * 0.5);
     let squares = pillar_squares_with(content, exists);
+    // Walls round pillars and landmark plinths are replaced, not drawn.
+    let hidden: Vec<(V2, f32, f32)> = squares
+        .iter()
+        .copied()
+        .chain(plinth_squares(content))
+        .collect();
 
     // ---- Walls.
     if let Some(m) = &set.wall {
@@ -235,7 +252,7 @@ pub fn plan_modules_with(
         }
         let len0 = m.size[0];
         for (wi, w) in nav.walls.iter().enumerate() {
-            if !wall_eligible(w) || wall_in_pillar(w, &squares) {
+            if !wall_eligible(w) || wall_in_pillar(w, &hidden) {
                 continue;
             }
             let len = w.a.dist(w.b);
@@ -279,7 +296,7 @@ pub fn plan_modules_with(
             let walls: Vec<&Wall> = nav
                 .walls
                 .iter()
-                .filter(|w| wall_eligible(w) && !wall_in_pillar(w, &squares))
+                .filter(|w| wall_eligible(w) && !wall_in_pillar(w, &hidden))
                 .collect();
             let straight_through = |at: Vec3| {
                 let ends: Vec<&&Wall> = walls

@@ -252,6 +252,56 @@ pub fn draw(content: &Content, nav: &Nav, st: &Structure) -> MapPicture {
             Some(3.0),
         );
     }
+    // Branches (0.9): a dashed line through each through-route's rooms, in
+    // its purpose's colour, from the main room it leaves to the one it rejoins.
+    let room_by_id = |id: &str| st.rooms.iter().find(|r| r.id == id);
+    for b in &content.dungeon.branches {
+        let Some(to) = &b.to else { continue };
+        let mut pts: Vec<V2> = Vec::new();
+        for id in std::iter::once(&b.from)
+            .chain(b.rooms.iter().filter(|x| x.starts_with('r')))
+            .chain(std::iter::once(to))
+        {
+            if let Some(r) = room_by_id(id) {
+                let c = r.center();
+                pts.push(V2::new(c.x, c.z));
+            }
+        }
+        let col = st
+            .rooms
+            .iter()
+            .find(|r| r.branch.is_some() && b.rooms.contains(&r.id))
+            .map(|r| r.purpose.color())
+            .unwrap_or([0.8, 0.8, 0.8]);
+        let c = [
+            (col[0] * 255.0) as u8,
+            (col[1] * 255.0) as u8,
+            (col[2] * 255.0) as u8,
+            220,
+        ];
+        for w2 in pts.windows(2) {
+            cv.line(pic.to_px(w2[0]), pic.to_px(w2[1]), 1.5, c, Some(2.0));
+        }
+    }
+    // Hazards (vents, route hazards): red rings at their radius.
+    for h in content.encounters.iter().flat_map(|e| &e.hazards) {
+        let c = pic.to_px(h.pos);
+        let r = h.radius * ppm;
+        for k in 0..32 {
+            let a = k as f32 / 32.0 * std::f32::consts::TAU;
+            cv.dot(c + Vec2::new(a.cos(), a.sin()) * r, 1.0, [255, 70, 40, 255]);
+        }
+    }
+    // Treasure caches (0.9): gold diamonds.
+    for cache in &content.dungeon.caches {
+        let c = pic.to_px(cache.pos);
+        for k in -5i32..=5 {
+            let w = 5 - k.abs();
+            for x in -w..=w {
+                cv.put(c.x as i32 + x, c.y as i32 + k, [255, 220, 90, 255]);
+            }
+        }
+    }
     // Spawns.
     for e in &content.encounters {
         let mut centre = V2::ZERO;
@@ -376,10 +426,11 @@ pub fn spawn_map(
         moved: false,
     });
     let legend = "MAP (M close, F fit, wheel zoom (names, then details), drag pan, click a room to go there)\n\
-        floors: light = high, dark = low (red: lava) | outlines: blue main, cyan alternate, green optional chamber,\n\
-        violet empty side chamber, orange overlook/shortcut, pink loop, grey passage\n\
-        yellow: doorways | dashed: main route | orange arrow: one-way drop | green dot: entrance\n\
-        spawns: magenta boss, yellow elite, white trash; green ring: optional pack | red square: you";
+        floors: light = high, dark = low (red: lava) | outlines: blue main, gold R detour, rose F flank, cyan S safe way,\n\
+        red ! hazardous crossing, green O optional, yellow C cache, pale V landmark, violet Q/E quiet/empty,\n\
+        orange D drop, pink L loop, grey passage | dashed: main route and branches | red rings: hazards\n\
+        yellow: doorways | gold diamond: cache | green dot: entrance | spawns: magenta boss, yellow elite,\n\
+        white trash; green ring: optional pack | red square: you";
     commands
         .spawn((
             Node {
@@ -426,10 +477,15 @@ pub fn spawn_map(
                         )
                     })
                     .unwrap_or_default();
-                let short = format!("{} {}", r.id, r.name);
+                let tag = r.purpose.letter();
+                let id = if tag.is_empty() {
+                    r.id.clone()
+                } else {
+                    format!("{}:{tag}", r.id)
+                };
+                let short = format!("{id} {}", r.name);
                 let long = format!(
-                    "{} {}\n{} | {} | y {:.1}{enc}",
-                    r.id,
+                    "{id} {}\n{} | {} | y {:.1}{enc}",
                     r.name,
                     r.role,
                     r.purpose.label(),

@@ -34,7 +34,8 @@ fn same_seed_same_dungeon_byte_for_byte() {
 fn seeds_give_different_layouts_with_every_feature() {
     let (b, k) = (bp(), kit());
     let mut shapes = std::collections::BTreeSet::new();
-    for seed in 1..=8 {
+    // Seed 3 has no layout that delivers every purpose (see the audit).
+    for seed in [1u64, 2, 4, 5, 6, 7, 8, 9] {
         let g = build::generate(&b, &k, seed).unwrap_or_else(|e| panic!("seed {seed}: {e}"));
         let p = &g.plan;
         let cells: Vec<(i32, i32)> = p.main.iter().map(|&r| p.rooms[r].cell).collect();
@@ -65,6 +66,9 @@ fn seeds_give_different_layouts_with_every_feature() {
             "seed {seed}: ramps"
         );
         assert!(g.structure.ok() && g.space.ok());
+        // 0.9: every branch delivers its declared purpose.
+        assert!(g.branches.ok(), "seed {seed}: {:?}", g.branches.errors);
+        assert!(g.measured.iter().all(|m| m.delivered), "seed {seed}");
     }
     assert!(
         shapes.len() >= 6,
@@ -75,7 +79,7 @@ fn seeds_give_different_layouts_with_every_feature() {
 
 #[test]
 fn generated_dungeon_has_the_planned_navigation() {
-    let g = build::generate(&bp(), &kit(), 3).expect("seed 3");
+    let g = build::generate(&bp(), &kit(), 4).expect("seed 4");
     let nav = g.content.nav();
     // One-way drop: a drop link exists and nothing walks back up it.
     let drops: Vec<_> = nav
@@ -148,6 +152,8 @@ fn impossible_layouts_fail_with_a_diagnosis_not_a_loop() {
     b.layout.alternate_route = true;
     b.layout.shortcut = crate::blueprint::Shortcut::Loop;
     b.identity.challenges.clear();
+    b.routes.clear();
+    b.side.clear();
     let err = match build::generate(&b, &kit(), 1) {
         Ok(_) => panic!("a two-room dungeon has no alternate route or loop"),
         Err(e) => e,
@@ -308,8 +314,15 @@ fn the_two_kits_build_different_dungeons() {
     let ember = build::generate(&bp(), &kit(), 1).expect("emberforge");
     let crypt = build::generate(&reliquary(), &crypt(), 1).expect("reliquary");
     assert_ne!(ember.plan.cell, crypt.plan.cell);
-    // The crypt has pillared halls and a void chasm; the vaults have lava.
-    assert!(ember.pillars.iter().all(|p| p.is_empty()));
+    // The crypt has pillared halls and a void chasm; the vaults have lava
+    // (and no pillars but the landmark's plinth).
+    assert!(
+        ember
+            .pillars
+            .iter()
+            .zip(&ember.plan.rooms)
+            .all(|(p, r)| p.is_empty() || r.kind == crate::layout::RoomKind::Vista)
+    );
     assert!(crypt.pillars.iter().any(|p| !p.is_empty()));
     assert!(!ember.content.dungeon.lava.is_empty());
     assert!(crypt.content.dungeon.lava.is_empty());
@@ -523,7 +536,14 @@ fn kits_without_rules_decorate_like_before() {
     });
     let g = build::generate(&reliquary(), &k, 1).expect("generates");
     let d = &g.content.dungeon;
-    let holes: usize = g.pillars.iter().map(|p| p.len()).sum();
+    // Pillar holes (a landmark room's plinth is not a pillar).
+    let holes: usize = g
+        .pillars
+        .iter()
+        .zip(&g.plan.rooms)
+        .filter(|(_, r)| r.kind != crate::layout::RoomKind::Vista)
+        .map(|(p, _)| p.len())
+        .sum();
     let pillars = d
         .decor
         .iter()
@@ -571,4 +591,190 @@ fn bad_decoration_rules_are_rejected() {
         e.iter().any(|m| m.contains("give a prop or a decor list")),
         "{e:?}"
     );
+}
+
+// ---- 0.9: purposeful branches.
+
+#[test]
+fn every_declared_purpose_is_built_and_delivered() {
+    use crate::layout::BranchKind as K;
+    for (b, k, seeds, want) in [
+        (
+            bp(),
+            kit(),
+            [1u64, 2, 4],
+            vec![K::Flank, K::Safe, K::Detour, K::Vista, K::Drop],
+        ),
+        (
+            reliquary(),
+            crypt(),
+            [1, 2, 3],
+            vec![K::Flank, K::Detour, K::Optional, K::Vista, K::Loop],
+        ),
+    ] {
+        for seed in seeds {
+            let g = build::generate(&b, &k, seed).expect("generates");
+            let kinds: Vec<K> = g.plan.branches.iter().map(|x| x.kind).collect();
+            for w in &want {
+                assert!(kinds.contains(w), "seed {seed}: no {w:?} in {kinds:?}");
+            }
+            assert!(g.measured.iter().all(|m| m.delivered), "seed {seed}");
+            let d = &g.content.dungeon;
+            assert_eq!(d.branches.len(), g.plan.branches.len());
+            // Rewards are real, and the cache rolls loot of its own.
+            let detour = d.branches.iter().find(|x| x.purpose == "detour").unwrap();
+            assert!(detour.rewards.iter().any(|r| r.starts_with('o')));
+            let cache = &d.caches[0];
+            assert!(detour.rewards.contains(&cache.id));
+            assert!(
+                g.content
+                    .loot
+                    .iter()
+                    .any(|l| l.source.as_deref() == Some(cache.id.as_str()))
+            );
+            // Every optional encounter drops something (0.8 gave only the first).
+            for e in g.content.encounters.iter().filter(|e| e.optional) {
+                assert!(
+                    g.content
+                        .loot
+                        .iter()
+                        .any(|l| l.source.as_deref() == Some(e.id.as_str())),
+                    "{} has no loot",
+                    e.id
+                );
+            }
+            // Nothing goes round a required encounter, and the facts say so.
+            assert!(d.branches.iter().all(|x| x.bypasses.is_empty()));
+            let flank = d.branches.iter().find(|x| x.purpose == "flank").unwrap();
+            assert!(flank.target.is_some());
+            assert!(
+                flank
+                    .facts
+                    .iter()
+                    .any(|f| f.contains("off the pack's front"))
+            );
+            // Rooms say which branch they belong to.
+            for r in &d.rooms {
+                assert!(!r.purpose.is_empty(), "{} has no purpose", r.id);
+            }
+        }
+    }
+}
+
+#[test]
+fn safe_routes_put_vents_on_the_short_way_only() {
+    let g = build::generate(&bp(), &kit(), 2).expect("generates");
+    let safe = g
+        .plan
+        .branches
+        .iter()
+        .find(|b| b.kind == crate::layout::BranchKind::Safe)
+        .expect("a safe route");
+    let vents: Vec<_> = g
+        .content
+        .encounters
+        .iter()
+        .flat_map(|e| &e.hazards)
+        .filter(|h| h.name == "Magma Vent")
+        .collect();
+    assert!(!vents.is_empty());
+    // Alternate vents are half a cycle apart: there is always a moment to cross.
+    if vents.len() > 1 {
+        assert!(vents.iter().any(|v| v.offset > 0.0) && vents.iter().any(|v| v.offset == 0.0));
+    }
+    let m = &g.measured[g
+        .plan
+        .branches
+        .iter()
+        .position(|b| std::ptr::eq(b, safe))
+        .unwrap()];
+    let ratio = m.branch_len.unwrap() / m.main_len.unwrap();
+    assert!((crate::purpose::SAFE_MIN_RATIO..=crate::purpose::SAFE_MAX_RATIO).contains(&ratio));
+}
+
+#[test]
+fn drops_in_purposeful_blueprints_skip_no_required_fight() {
+    for seed in [1u64, 2, 4, 5] {
+        let g = build::generate(&bp(), &kit(), seed).expect("generates");
+        for (b, m) in g.plan.branches.iter().zip(&g.measured) {
+            if b.kind == crate::layout::BranchKind::Drop {
+                assert!(m.bypasses.is_empty(), "seed {seed}: {:?}", m.bypasses);
+                assert!(m.branch_len.unwrap() < m.main_len.unwrap());
+            }
+        }
+    }
+}
+
+#[test]
+fn purposeless_or_impossible_branches_are_rejected_with_reasons() {
+    // A detour with nothing in it.
+    let mut b = reliquary();
+    b.routes[1].optional = None;
+    b.routes[1].cache = false;
+    let e = build::validate_pair(&b, &crypt()).join("\n");
+    assert!(e.contains("a detour needs a reward"), "{e}");
+    // Mixing 0.9 tables with the purposeless legacy fields.
+    let mut b = reliquary();
+    b.layout.alternate_routes = 1;
+    let e = build::validate_pair(&b, &crypt()).join("\n");
+    assert!(e.contains("not both"), "{e}");
+    // The crypt has no route hazard, so it cannot build a safe route.
+    let mut b = reliquary();
+    b.routes.push(crate::blueprint::RouteSpec {
+        purpose: crate::blueprint::RoutePurpose::Safe,
+        optional: None,
+        cache: false,
+        target: None,
+    });
+    let e = build::validate_pair(&b, &crypt()).join("\n");
+    assert!(e.contains("route_hazard"), "{e}");
+    // A flank target that is not a main encounter.
+    let mut b = reliquary();
+    b.routes[0].target = Some("crawler_rush".into());
+    let e = build::validate_pair(&b, &crypt()).join("\n");
+    assert!(e.contains("not a main [[encounters]] recipe"), "{e}");
+    // Two quiet rooms.
+    let mut b = reliquary();
+    for _ in 0..2 {
+        b.side.push(crate::blueprint::SideSpec {
+            purpose: crate::blueprint::SidePurpose::Quiet,
+            optional: None,
+            depth: 1,
+        });
+    }
+    let e = build::validate_pair(&b, &crypt()).join("\n");
+    assert!(e.contains("at most one deliberately empty room"), "{e}");
+}
+
+#[test]
+fn legacy_blueprints_keep_their_layouts_and_the_audit_flags_them() {
+    // The 0.8.1 blueprint shape: alternate routes and empty side rooms, no
+    // purposes. Same layout as before 0.9 (same rooms and corridors); the
+    // audit reports every such branch as purposeless.
+    let mut b = reliquary();
+    b.routes.clear();
+    b.side.clear();
+    b.layout.alternate_routes = 1;
+    b.layout.side_rooms = [1, 2];
+    assert!(build::validate_pair(&b, &crypt()).is_empty());
+    let a = crate::audit::audit(&b, &crypt(), 1..=3);
+    assert_eq!(a.generated, 3);
+    assert!(a.purposeless > 0);
+    assert!(!a.clean());
+    assert!(a.problems.iter().any(|p| p.contains("no declared purpose")));
+    // The 0.9 blueprint is clean over the same seeds.
+    let a = crate::audit::audit(&reliquary(), &crypt(), 1..=3);
+    assert!(a.clean(), "{:?}", a.problems);
+    assert_eq!(a.purposeless, 0);
+}
+
+#[test]
+fn optional_encounters_without_a_home_still_get_a_side_room() {
+    let mut b = reliquary();
+    // Drop the side entry that held optional 1: it gets a chamber anyway.
+    b.side
+        .retain(|s| s.purpose != crate::blueprint::SidePurpose::Optional);
+    let g = build::generate(&b, &crypt(), 1).expect("generates");
+    assert!(g.content.encounters.iter().any(|e| e.id.starts_with("o1_")));
+    assert!(g.measured.iter().all(|m| m.delivered));
 }

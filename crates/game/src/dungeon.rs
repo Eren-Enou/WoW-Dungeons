@@ -52,6 +52,7 @@ impl Plugin for DungeonPlugin {
                 fade_occluders,
                 sync_telegraphs,
                 sync_hazards,
+                sync_caches,
                 draw_gizmos,
                 finish_run,
             )
@@ -71,6 +72,8 @@ const ERROR_SECS: f32 = 1.5;
 #[derive(Resource)]
 pub struct ActiveRun {
     pub sim: Sim,
+    /// Which layout this run plays (0.9): "classic layout" or the seed.
+    pub layout: String,
     pub acc: f32,
     pub prev_pos: Vec<V2>,
     /// Elevations at the previous tick (interpolated like positions).
@@ -134,6 +137,40 @@ struct TelegraphVisual {
     inner: bool,
 }
 
+/// Opened caches show their open model (or vanish) and lose their glint.
+fn sync_caches(
+    run: Res<ActiveRun>,
+    mut caches: Query<(Entity, &mut crate::env::CacheVisual)>,
+    glints: Query<(Entity, &crate::env::CacheGlint)>,
+    asset_server: Res<AssetServer>,
+    mut commands: Commands,
+) {
+    for (e, mut v) in &mut caches {
+        let open = run
+            .sim
+            .caches
+            .get(v.index)
+            .is_some_and(|c| c.opened_at.is_some());
+        if !open || v.opened {
+            continue;
+        }
+        v.opened = true;
+        match &v.open_model {
+            Some(m) => {
+                commands.entity(e).insert(WorldAssetRoot(
+                    asset_server.load(bevy::gltf::GltfAssetLabel::Scene(0).from_asset(m.clone())),
+                ));
+            }
+            None => commands.entity(e).despawn(),
+        }
+        for (g, glint) in &glints {
+            if glint.0 == v.index {
+                commands.entity(g).despawn();
+            }
+        }
+    }
+}
+
 #[derive(Component)]
 struct HazardVisual {
     index: usize,
@@ -148,9 +185,10 @@ fn start_run(
     demo: Option<Res<DemoConfig>>,
 ) {
     let content = data
-        .selected_content()
+        .run_content()
         .cloned()
         .expect("hub only enters with valid content");
+    let layout = data.layout_label();
     let seed = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
@@ -163,6 +201,8 @@ fn start_run(
         overrides: data.profile.sandbox,
         autopilot: autoplay,
         skip_optional: false,
+        route: Vec::new(),
+        slot_follow_only: false,
     };
     let mut sim = Sim::with_options(&content, &party, seed, options);
     if autoplay && let Some(p) = sim.player {
@@ -173,7 +213,7 @@ fn start_run(
         }
     }
     info!(
-        "Entering '{}' [{}] with seed {seed} and {} party members",
+        "Entering '{}' [{}], {layout}, with seed {seed} and {} party members",
         content.dungeon.name,
         sim.difficulty.name,
         party.len()
@@ -201,6 +241,7 @@ fn start_run(
         end_timer: None,
         visuals_spawned: 0,
         wall_color: rgb(content.dungeon.theme.wall),
+        layout,
     };
     let optional = content.encounters.len() - required;
     let extra = if optional > 0 {
@@ -735,6 +776,14 @@ pub fn process_events(mut run: ResMut<ActiveRun>) {
                     Color::srgb(0.6, 1.0, 0.6),
                 );
             }
+            EventKind::CacheOpened { cache, .. } => {
+                let name = run.sim.caches[*cache].name.to_string();
+                run.set_banner(
+                    format!("Opened: {name} (its loot is yours at the end of the run)"),
+                    3.0,
+                    Color::srgb(1.0, 0.85, 0.4),
+                );
+            }
             EventKind::Outcome { outcome } => {
                 let (text, color) = match outcome {
                     RunOutcome::Victory => (
@@ -995,7 +1044,13 @@ fn finish_run(
     let rewards = data.profile.grant_rewards(&content, &report);
     data.save();
     let log_path = std::path::Path::new("logs").join("last_run.log");
-    let text: String = sim.events.iter().map(|e| sim.describe(e) + "\n").collect();
+    let header = format!(
+        "# {} - {} - sim seed {}\n",
+        sim.content.dungeon.name, run.layout, sim.seed
+    );
+    let text: String = std::iter::once(header)
+        .chain(sim.events.iter().map(|e| sim.describe(e) + "\n"))
+        .collect();
     let log_path = std::fs::create_dir_all("logs")
         .and_then(|_| std::fs::write(&log_path, text))
         .map(|_| log_path.display().to_string())
@@ -1010,6 +1065,7 @@ fn finish_run(
             }
             EventKind::PhaseChange { .. }
             | EventKind::EncounterCleared { .. }
+            | EventKind::CacheOpened { .. }
             | EventKind::EncounterReset { .. }
             | EventKind::Enrage { .. }
             | EventKind::Revive { .. }
@@ -1025,7 +1081,11 @@ fn finish_run(
     commands.insert_resource(LastResult {
         summary,
         rewards,
-        dungeon_name: content.dungeon.name.clone(),
+        dungeon_name: if run.layout == "classic layout" {
+            content.dungeon.name.clone()
+        } else {
+            format!("{} ({})", content.dungeon.name, run.layout)
+        },
         difficulty_name: sim.difficulty.name.clone(),
         highlights,
         log_path,

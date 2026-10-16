@@ -253,6 +253,8 @@ pub struct RunReport {
     pub rarity_bonus: u32,
     pub outcome: RunOutcome,
     pub cleared: Vec<String>,
+    /// Treasure caches opened (0.9); each rolls its loot like a cleared encounter.
+    pub opened: Vec<String>,
     /// (rank, level) of every enemy killed.
     pub kills: Vec<(EnemyRank, u32)>,
     pub duration: f32,
@@ -285,6 +287,12 @@ impl RunReport {
                 .iter()
                 .filter(|e| e.cleared)
                 .map(|e| e.id.clone())
+                .collect(),
+            opened: sim
+                .caches
+                .iter()
+                .filter(|c| c.opened_at.is_some())
+                .map(|c| c.id.clone())
                 .collect(),
             kills,
             duration: sim.ended_at.unwrap_or(sim.time),
@@ -696,7 +704,7 @@ impl Profile {
         }
         let mut rng = Rng::new(report.seed ^ 0x10_07);
         let mut items = Vec::new();
-        for id in &report.cleared {
+        for id in report.cleared.iter().chain(&report.opened) {
             if let Some(item) = self.roll_item(content, id, report.rarity_bonus, &mut rng) {
                 self.stash.push(item.clone());
                 items.push(item);
@@ -1080,6 +1088,7 @@ mod tests {
             rarity_bonus: 0,
             outcome: RunOutcome::Victory,
             cleared: content.encounters.iter().map(|e| e.id.clone()).collect(),
+            opened: vec![],
             kills: vec![(EnemyRank::Trash, 1), (EnemyRank::Boss, 3)],
             duration: 100.0,
             deaths: 0,

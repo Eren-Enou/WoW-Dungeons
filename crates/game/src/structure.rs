@@ -35,6 +35,10 @@ pub struct RoomView {
     pub dead_end: bool,
     /// Rooms (not counting corridors) between it and the main route.
     pub off_main: Option<u32>,
+    /// The purpose the generator wrote (0.9; empty in older files).
+    pub declared_purpose: String,
+    /// The `[[dungeon.branches]]` entry it belongs to (0.9).
+    pub branch: Option<usize>,
 }
 
 /// Why a room or corridor exists, from the generator's own route data.
@@ -58,6 +62,20 @@ pub enum Purpose {
     Loop,
     /// An ordinary corridor.
     Passage,
+    /// 0.9: a through-route holding a reward (optional fight and/or cache).
+    Detour,
+    /// 0.9: a second way into a required pack's room, from its side or rear.
+    Flank,
+    /// 0.9: the longer, hazard-free way round a dangerous crossing.
+    Safe,
+    /// 0.9: the short way that crosses pulsing hazards (its counterpart).
+    Risky,
+    /// 0.9: a side chamber holding a treasure cache.
+    Cache,
+    /// 0.9: a landmark room (no reward).
+    Vista,
+    /// 0.9: a deliberately quiet room.
+    Quiet,
     /// Handwritten dungeon: no route data.
     Unknown,
 }
@@ -73,7 +91,35 @@ impl Purpose {
             Purpose::Shortcut => "shortcut",
             Purpose::Loop => "return loop",
             Purpose::Passage => "passage",
+            Purpose::Detour => "reward detour",
+            Purpose::Flank => "tactical flank",
+            Purpose::Safe => "safe way round",
+            Purpose::Risky => "hazardous crossing (short way)",
+            Purpose::Cache => "treasure cache chamber",
+            Purpose::Vista => "landmark (no reward)",
+            Purpose::Quiet => "quiet chamber (deliberately empty)",
             Purpose::Unknown => "room (no route data)",
+        }
+    }
+
+    /// One letter for compact map labels.
+    pub fn letter(self) -> &'static str {
+        match self {
+            Purpose::Main => "",
+            Purpose::Alternate => "A",
+            Purpose::Optional => "O",
+            Purpose::Empty => "E",
+            Purpose::Overlook | Purpose::Shortcut => "D",
+            Purpose::Loop => "L",
+            Purpose::Passage => "",
+            Purpose::Detour => "R",
+            Purpose::Flank => "F",
+            Purpose::Safe => "S",
+            Purpose::Risky => "!",
+            Purpose::Cache => "C",
+            Purpose::Vista => "V",
+            Purpose::Quiet => "Q",
+            Purpose::Unknown => "",
         }
     }
 
@@ -87,12 +133,35 @@ impl Purpose {
             Purpose::Overlook | Purpose::Shortcut => [1.0, 0.6, 0.2],
             Purpose::Loop => [0.85, 0.5, 1.0],
             Purpose::Passage => [0.6, 0.6, 0.65],
+            Purpose::Detour => [1.0, 0.82, 0.25],
+            Purpose::Flank => [1.0, 0.35, 0.55],
+            Purpose::Safe => [0.3, 1.0, 0.9],
+            Purpose::Risky => [1.0, 0.25, 0.15],
+            Purpose::Cache => [1.0, 0.95, 0.45],
+            Purpose::Vista => [0.8, 0.92, 1.0],
+            Purpose::Quiet => [0.7, 0.6, 0.85],
             Purpose::Unknown => [0.8, 0.8, 0.8],
         }
     }
 }
 
 fn purpose_of(r: &RoomView, optional: bool) -> Purpose {
+    // 0.9 files say why each room exists.
+    match r.declared_purpose.as_str() {
+        "main" if r.corridor => return Purpose::Passage,
+        "main" => return Purpose::Main,
+        "detour" => return Purpose::Detour,
+        "flank" => return Purpose::Flank,
+        "safe" => return Purpose::Safe,
+        "optional" => return Purpose::Optional,
+        "cache" => return Purpose::Cache,
+        "vista" => return Purpose::Vista,
+        "quiet" => return Purpose::Quiet,
+        "loop" => return Purpose::Loop,
+        "drop" if r.corridor => return Purpose::Shortcut,
+        "drop" => return Purpose::Overlook,
+        _ => {}
+    }
     if !r.declared {
         return if r.corridor {
             Purpose::Passage
@@ -198,6 +267,12 @@ impl Structure {
                     "corridor" | "passage" | "bridge" | "stair" | "ramp" | "ledge"
                 ) && !r.connects.is_empty(),
                 declared: true,
+                declared_purpose: r.purpose.clone(),
+                branch: content
+                    .dungeon
+                    .branches
+                    .iter()
+                    .position(|b| !r.branch.is_empty() && b.id == r.branch),
             });
         }
         // Surfaces no declared room covers: group by name.
@@ -227,6 +302,8 @@ impl Structure {
                         purpose: Purpose::Unknown,
                         dead_end: false,
                         off_main: None,
+                        declared_purpose: String::new(),
+                        branch: None,
                     });
                     rooms.len() - 1
                 }
@@ -380,6 +457,20 @@ impl Structure {
                 rooms[i].purpose = Purpose::Loop;
             }
         }
+        // The short way of a safe route: main corridors with a hazard on them.
+        if content.dungeon.branches.iter().any(|b| b.purpose == "safe") {
+            for h in content.encounters.iter().flat_map(|e| &e.hazards) {
+                let (_, s) = nav.project(h.pos, h.y.unwrap_or(0.0));
+                if let Some(&k) = surface_room.get(s as usize)
+                    && k < rooms.len()
+                    && rooms[k].corridor
+                    && rooms[k].purpose == Purpose::Passage
+                    && rooms[k].declared_purpose == "main"
+                {
+                    rooms[k].purpose = Purpose::Risky;
+                }
+            }
+        }
         for (i, r) in rooms.iter_mut().enumerate() {
             r.dead_end = !r.corridor && adj[i].len() == 1;
         }
@@ -462,44 +553,93 @@ mod tests {
 
     #[test]
     fn generated_rooms_are_classified_by_purpose() {
-        let c = load("07_emberforge_vaults.toml");
-        let st = Structure::build(&c, &c.nav());
-        assert_eq!(purpose(&st, "r0"), Purpose::Main);
-        assert_eq!(purpose(&st, "r9"), Purpose::Main);
-        assert_eq!(purpose(&st, "r10"), Purpose::Alternate);
-        assert_eq!(purpose(&st, "r12"), Purpose::Optional); // Coal Bunker
-        assert_eq!(purpose(&st, "r13"), Purpose::Empty); // Shuttered Kiln
-        assert_eq!(purpose(&st, "r14"), Purpose::Overlook);
-        let kiln = st.rooms.iter().find(|r| r.id == "r13").unwrap();
-        assert!(kiln.dead_end);
-        assert_eq!(kiln.off_main, Some(1));
-        assert_eq!(
-            st.rooms.iter().find(|r| r.id == "r3").unwrap().off_main,
-            Some(0)
+        use Purpose as P;
+        // 0.9 files say why each room exists; the structure reads it.
+        let ember = load("07_emberforge_vaults.toml");
+        let st = Structure::build(&ember, &ember.nav());
+        for p in [
+            P::Main,
+            P::Detour,
+            P::Flank,
+            P::Safe,
+            P::Risky,
+            P::Vista,
+            P::Overlook,
+        ] {
+            assert!(
+                st.rooms.iter().any(|r| r.purpose == p),
+                "emberforge: no {p:?}"
+            );
+        }
+        for r in st.rooms.iter().filter(|r| r.declared_purpose == "flank") {
+            assert_eq!(r.purpose, P::Flank);
+            assert!(r.branch.is_some());
+        }
+        let crypt = load("08_hollow_reliquary.toml");
+        let st = Structure::build(&crypt, &crypt.nav());
+        for p in [P::Main, P::Detour, P::Flank, P::Optional, P::Vista, P::Loop] {
+            assert!(
+                st.rooms.iter().any(|r| r.purpose == p),
+                "reliquary: no {p:?}"
+            );
+        }
+        assert!(
+            !st.rooms.iter().any(|r| r.purpose == P::Risky),
+            "no vents in the crypt"
         );
+        // The landmark is a dead end one room off the main route.
+        let vista = st
+            .rooms
+            .iter()
+            .find(|r| r.purpose == P::Vista && !r.corridor)
+            .unwrap();
+        assert!(vista.dead_end);
+        assert_eq!(vista.off_main, Some(1));
+        let vista_id = vista.id.clone();
+        let detour_id = st
+            .rooms
+            .iter()
+            .find(|r| r.purpose == P::Detour && !r.corridor)
+            .unwrap()
+            .id
+            .clone();
+        let optional_id = st
+            .rooms
+            .iter()
+            .find(|r| r.purpose == P::Optional && r.encounter.is_some())
+            .unwrap()
+            .id
+            .clone();
 
-        let mut c = load("08_hollow_reliquary.toml");
-        let st = Structure::build(&c, &c.nav());
-        assert_eq!(purpose(&st, "r13"), Purpose::Optional);
-        assert_eq!(purpose(&st, "r15"), Purpose::Empty);
-        assert_eq!(purpose(&st, "c16"), Purpose::Loop);
-        assert_eq!(purpose(&st, "r10"), Purpose::Alternate);
+        // Files without purposes (0.8) are classified from their route data.
+        let mut old = crypt.clone();
+        for r in old.dungeon.rooms.iter_mut() {
+            r.purpose.clear();
+            r.branch.clear();
+        }
+        old.dungeon.branches.clear();
+        let st = Structure::build(&old, &old.nav());
+        assert_eq!(purpose(&st, &vista_id), P::Empty);
+        assert_eq!(purpose(&st, &detour_id), P::Alternate);
+        assert_eq!(purpose(&st, &optional_id), P::Optional);
+        assert!(st.rooms.iter().any(|r| r.purpose == P::Loop));
         // A room between loop corridors only belongs to the loop.
-        let around: Vec<String> = c
+        let mut looped = old.clone();
+        let around: Vec<String> = looped
             .dungeon
             .rooms
             .iter()
-            .filter(|r| r.connects.iter().any(|x| x == "r10"))
+            .filter(|r| r.connects.contains(&detour_id))
             .map(|r| r.id.clone())
             .collect();
         assert!(!around.is_empty());
-        for r in c.dungeon.rooms.iter_mut() {
+        for r in looped.dungeon.rooms.iter_mut() {
             if around.contains(&r.id) {
                 r.route = "loop".into();
             }
         }
-        let st = Structure::build(&c, &c.nav());
-        assert_eq!(purpose(&st, "r10"), Purpose::Loop);
+        let st = Structure::build(&looped, &looped.nav());
+        assert_eq!(purpose(&st, &detour_id), P::Loop);
     }
 
     #[test]

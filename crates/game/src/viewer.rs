@@ -377,7 +377,7 @@ fn start_in_viewer(mut req: ResMut<ViewerRequest>, mut next: ResMut<NextState<Ap
 
 /// The `dungeon-forge` executable next to this one (packaged build) or in
 /// the cargo target folder (development).
-fn forge_exe() -> Option<PathBuf> {
+pub(crate) fn forge_exe() -> Option<PathBuf> {
     let name = if cfg!(windows) {
         "dungeon-forge.exe"
     } else {
@@ -1715,6 +1715,45 @@ fn update_panels(
     };
 }
 
+/// What the generator recorded about a branch (0.9): purpose, joins,
+/// rewards, what it goes round, measured facts and warnings. Developer
+/// knowledge; the game shows players only the doorway clues.
+fn branch_text(b: &dungeon_sim::content::BranchConfig) -> String {
+    let mut s = format!(
+        "branch {} ({}): from {}{}{}\n",
+        b.id,
+        b.purpose,
+        b.from,
+        b.to.as_ref()
+            .map(|t| format!(" to {t}"))
+            .unwrap_or_else(|| " (dead end)".into()),
+        b.target
+            .as_ref()
+            .map(|t| format!(" | flanks the pack in {t}"))
+            .unwrap_or_default()
+    );
+    s.push_str(&format!(
+        "holds: {} | bypasses: {}\n",
+        if b.rewards.is_empty() {
+            "nothing".to_string()
+        } else {
+            b.rewards.join(", ")
+        },
+        if b.bypasses.is_empty() {
+            "nothing required".to_string()
+        } else {
+            b.bypasses.join(", ")
+        }
+    ));
+    for f in &b.facts {
+        s.push_str(&format!("  - {f}\n"));
+    }
+    for w in &b.warnings {
+        s.push_str(&format!("  ! {w}\n"));
+    }
+    s
+}
+
 fn describe_selection(
     scene: &ViewerScene,
     sel: &Selection,
@@ -1763,7 +1802,11 @@ fn describe_selection(
                     .filter(|d| *d > 0)
                     .map(|d| format!(", {d} room(s) off the main route"))
                     .unwrap_or_default()
-            )
+            ) + &r
+                .branch
+                .and_then(|b| scene.content.dungeon.branches.get(b))
+                .map(branch_text)
+                .unwrap_or_default()
         }
         Selection::Anchor(i) => {
             let a = &scene.content.dungeon.anchors[*i];

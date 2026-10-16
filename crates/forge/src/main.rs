@@ -41,6 +41,21 @@ USAGE
       dungeon viewer (dungeon-sandbox --viewer); a dungeon file opens directly.
   dungeon-forge seeds <blueprint.toml> [--from N] [--count N] [--out-dir DIR]
       Generate many seeds; report which succeed and how different they are.
+  dungeon-forge routes <dungeon.toml|blueprint.toml> [--seed N | --layouts A..B] [--runs N]
+                       [--sizes ..] [--profiles ..] [--classes ..] [--difficulties ..] [--level N]
+                       [--json FILE.json]
+      Route choices, simulated (0.9): the direct route and every detour, flank
+      and safe way, each walked by a scripted leader with companions following
+      on their normal AI. Per choice: wins, time, deaths, hazard damage, the
+      flanked fight (time/damage), whether the leader and companions walked
+      the branch, regroup time, caches, optional clears, overpulls, stuck,
+      unreachable and dithers.
+  dungeon-forge audit <blueprint.toml> [--layouts A..B] [--json FILE.json]
+      Branch purposes over many layouts (0.9): per purpose how many were built
+      and delivered, walking length against the main route, flank angles,
+      rewards, required encounters bypassed, purposeless branches and empty
+      dead ends. Exits 2 when any branch is purposeless or broken, or a seed
+      fails to generate; every problem names its seed and branch.
 
 The kit named by a blueprint is read from <blueprint dir>/../kits/<kit>.toml.
 Exit codes: 0 ok, 1 error, 2 tests found failures.
@@ -141,6 +156,8 @@ fn main() -> ExitCode {
         "inspect" => cmd_inspect(&args),
         "test" => cmd_test(&args),
         "seeds" => cmd_seeds(&args),
+        "audit" => cmd_audit(&args),
+        "routes" => cmd_routes(&args),
         "report" => cmd_report(&args),
         "view" => cmd_view(&args),
         other => Err(format!(
@@ -357,7 +374,19 @@ fn load_targets(args: &Args) -> Result<Vec<Target>, String> {
             None => vec![args.num::<u64>("seed")?.unwrap_or(bp.blueprint.seed)],
         };
         for seed in seeds {
-            let g = build::generate(&bp, &kit, seed)?;
+            // A range of layouts reports seeds that cannot be generated and
+            // goes on; a single seed is an error.
+            let g = match build::generate(&bp, &kit, seed) {
+                Ok(g) => g,
+                Err(e) if args.get("layouts").is_some() => {
+                    println!(
+                        "seed {seed}: could not generate, skipped: {}",
+                        e.lines().next().unwrap_or("")
+                    );
+                    continue;
+                }
+                Err(e) => return Err(e),
+            };
             let tmp = PathBuf::from(format!("forge_out/{}_s{seed}.toml", bp.blueprint.id));
             write_out(&tmp, &g.toml)?;
             let origin = simtest::generated_from(&g.toml);
@@ -699,6 +728,159 @@ fn signature(plan: &Plan) -> String {
             .collect::<Vec<_>>()
             .join("+")
     )
+}
+
+fn cmd_routes(args: &Args) -> Result<ExitCode, String> {
+    use dungeon_forge::routes;
+    args.known(&[
+        "seed",
+        "layouts",
+        "runs",
+        "sizes",
+        "profiles",
+        "classes",
+        "difficulties",
+        "level",
+        "json",
+        "slot-follow",
+    ])?;
+    let targets = load_targets(args)?;
+    let runs = args.num::<u64>("runs")?.unwrap_or(5);
+    // --slot-follow yes: companions follow as before 0.9 (no trail), to compare.
+    let slot_only = args.get("slot-follow").is_some_and(|v| v == "yes");
+    let sizes: Vec<usize> = args
+        .list("sizes", &["5"])
+        .iter()
+        .map(|s| {
+            s.parse()
+                .map_err(|_| format!("--sizes: '{s}' is not a number"))
+        })
+        .collect::<Result<_, _>>()?;
+    let profiles = args.list("profiles", &["balanced"]);
+    let classes = args.list("classes", &["striker", "warden", "mender", "arcanist"]);
+    let diffs = args.list("difficulties", &["normal"]);
+    let mut all = Vec::new();
+    for t in &targets {
+        let level = args
+            .num::<u32>("level")?
+            .unwrap_or(t.content.dungeon.recommended_level);
+        let nav = t.content.nav();
+        let choices = routes::choices(&t.content, &nav);
+        println!(
+            "{} ({}): {} choice(s), {runs} run(s) per configuration",
+            t.content.dungeon.name,
+            t.origin.clone().unwrap_or_else(|| t.hint.clone()),
+            choices.len()
+        );
+        let mut stats = Vec::new();
+        let mut rows = Vec::new();
+        for ch in &choices {
+            let mut runs_ch = Vec::new();
+            for &size in &sizes {
+                for p in &profiles {
+                    for c in &classes {
+                        for d in &diffs {
+                            let config = simtest::Config {
+                                size,
+                                class: c.clone(),
+                                profile: p.clone(),
+                                difficulty: d.clone(),
+                                level,
+                            };
+                            for seed in 1..=runs {
+                                runs_ch.push(routes::run_choice(
+                                    &t.content,
+                                    ch,
+                                    &config,
+                                    seed,
+                                    dungeon_sim::runner::DEFAULT_MAX_SECONDS,
+                                    slot_only,
+                                ));
+                            }
+                            if size != 5 {
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            stats.push(routes::stats(ch, &runs_ch));
+            rows.push(runs_ch);
+        }
+        print!("{}", routes::table(&stats));
+        let fmt = |f: Option<(f32, f32, u32, usize)>| {
+            f.map(|(s, d, x, n)| {
+                format!("{s:.1} s, {d:.0} damage taken, {x} deaths over {n} fights")
+            })
+            .unwrap_or_else(|| "not fought".into())
+        };
+        for (k, ch) in choices.iter().enumerate().skip(1) {
+            println!("  {}: rooms {}", ch.name, ch.rooms.join(" "));
+            if let Some(e) = ch.target {
+                println!(
+                    "    '{}' by the flank: {}",
+                    t.content.encounters[e].display_name(),
+                    fmt(routes::fight_of(&rows[k], e))
+                );
+                println!(
+                    "    '{}' by the main door (direct): {}",
+                    t.content.encounters[e].display_name(),
+                    fmt(routes::fight_of(&rows[0], e))
+                );
+                let (fh, fk) = routes::openers_of(&rows[k], e);
+                let (dh, dk) = routes::openers_of(&rows[0], e);
+                println!("      first hit:    flank {fh} | direct {dh}");
+                println!("      first killed: flank {fk} | direct {dk}");
+            }
+        }
+        let rows: Vec<routes::RouteRun> = rows.into_iter().flatten().collect();
+        all.push(serde_json::json!({
+            "dungeon": t.content.dungeon.id,
+            "origin": t.origin,
+            "file": t.hint,
+            "choices": choices,
+            "stats": stats,
+            "runs": rows,
+        }));
+    }
+    if let Some(p) = args.get("json") {
+        let json = serde_json::to_string_pretty(&all).map_err(|e| e.to_string())?;
+        write_out(Path::new(p), &json)?;
+        println!("wrote {p}");
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn cmd_audit(args: &Args) -> Result<ExitCode, String> {
+    args.known(&["layouts", "json"])?;
+    let path = first_path(args, "blueprint")?;
+    let (bp, kit) = load_pair(&path)?;
+    let (a, b) = match args.get("layouts") {
+        None => (1, 10),
+        Some(r) => {
+            let (a, b) = r
+                .split_once("..")
+                .ok_or_else(|| format!("--layouts: use FROM..TO, e.g. 1..100 (got '{r}')"))?;
+            (
+                a.parse::<u64>()
+                    .map_err(|_| format!("--layouts: '{a}' is not a number"))?,
+                b.parse::<u64>()
+                    .map_err(|_| format!("--layouts: '{b}' is not a number"))?,
+            )
+        }
+    };
+    let report = dungeon_forge::audit::audit(&bp, &kit, a..=b);
+    print!("{}", dungeon_forge::audit::text(&report));
+    if let Some(p) = args.get("json") {
+        let json = serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?;
+        write_out(Path::new(p), &json)?;
+        println!("wrote {p}");
+    }
+    Ok(if report.clean() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(2)
+    })
 }
 
 fn cmd_seeds(args: &Args) -> Result<ExitCode, String> {

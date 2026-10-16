@@ -96,6 +96,65 @@ pub struct DungeonConfig {
     /// Decoration anchors the generator computed (kept for inspection).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub anchors: Vec<AnchorConfig>,
+    /// Branches off the main route and what they are for (0.9). Tools and
+    /// the viewer read them; the simulation never does.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub branches: Vec<BranchConfig>,
+    /// Treasure caches (0.9): opened by walking up to them; each rolls the
+    /// loot whose `source` is its id. The simulation reads these.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub caches: Vec<CacheConfig>,
+}
+
+/// A treasure cache (0.9).
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CacheConfig {
+    /// Unique among encounters and caches; loot `source` refers to it.
+    pub id: String,
+    pub name: String,
+    pub pos: V2,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub y: Option<f32>,
+    /// A party member this close (on the same level) opens it.
+    pub radius: f32,
+    /// What it looks like (scenery; the game draws `fallback` if missing).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub yaw: f32,
+}
+
+/// A branch off the main route and its purpose (0.9, presentation data).
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct BranchConfig {
+    /// `b0`, `b1`, ...
+    pub id: String,
+    /// `detour`, `flank`, `safe`, `optional`, `cache`, `vista`, `quiet`,
+    /// `loop`, `drop` or `unspecified`.
+    pub purpose: String,
+    /// Main-route room it leaves from, and the one it rejoins (through routes).
+    pub from: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to: Option<String>,
+    /// Its rooms and corridors, in order from `from`.
+    pub rooms: Vec<String>,
+    /// Flank: the room of the pack it approaches.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    /// Encounter and cache ids it holds.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rewards: Vec<String>,
+    /// Required encounters it goes round (always empty for valid branches).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bypasses: Vec<String>,
+    /// What the generator measured (lengths, angles), for people.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub facts: Vec<String>,
+    /// Things worth a designer's look.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 /// Where a generated dungeon came from.
@@ -115,7 +174,21 @@ pub struct GeneratedInfo {
 /// Room roles tools understand (others are rejected so typos surface).
 pub const ROOM_ROLES: &[&str] = &[
     "entrance", "chamber", "hall", "arena", "pit", "side", "overlook", "passage", "corridor",
-    "bridge", "stair", "ramp", "ledge", "room",
+    "bridge", "stair", "ramp", "ledge", "room", "vault", "vista",
+];
+
+/// Branch purposes tools understand (0.9).
+pub const BRANCH_PURPOSES: &[&str] = &[
+    "detour",
+    "flank",
+    "safe",
+    "optional",
+    "cache",
+    "vista",
+    "quiet",
+    "loop",
+    "drop",
+    "unspecified",
 ];
 
 /// A logical room or corridor of the dungeon.
@@ -144,6 +217,12 @@ pub struct RoomConfig {
     /// Atmosphere preset (defaults to the role's preset, if any).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub atmosphere: Option<String>,
+    /// Why it exists (0.9): `main`, a branch purpose, or empty.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub purpose: String,
+    /// The branch it belongs to (`b<k>`), if any.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub branch: String,
 }
 
 fn default_brightness() -> f32 {
@@ -998,6 +1077,53 @@ impl Content {
                     format!("{p}: atmosphere '{a}' is not in dungeon.atmosphere"),
                 );
             }
+            check(
+                r.purpose.is_empty()
+                    || r.purpose == "main"
+                    || BRANCH_PURPOSES.contains(&r.purpose.as_str()),
+                format!(
+                    "{p}: purpose '{}' is not main or one of {}",
+                    r.purpose,
+                    BRANCH_PURPOSES.join(", ")
+                ),
+            );
+            check(
+                r.branch.is_empty() || d.branches.iter().any(|b| b.id == r.branch),
+                format!("{p}: branch '{}' is not in dungeon.branches", r.branch),
+            );
+        }
+        let rewards: BTreeSet<&str> = self
+            .encounters
+            .iter()
+            .map(|e| e.id.as_str())
+            .chain(d.caches.iter().map(|c| c.id.as_str()))
+            .collect();
+        for (i, b) in d.branches.iter().enumerate() {
+            let p = format!("dungeon.branches[{i}] ('{}')", b.id);
+            check(
+                BRANCH_PURPOSES.contains(&b.purpose.as_str()),
+                format!(
+                    "{p}: purpose '{}' is not one of {}",
+                    b.purpose,
+                    BRANCH_PURPOSES.join(", ")
+                ),
+            );
+            for r in std::iter::once(&b.from)
+                .chain(b.to.iter())
+                .chain(b.target.iter())
+                .chain(&b.rooms)
+            {
+                check(
+                    ids.contains(r.as_str()),
+                    format!("{p}: room '{r}' is not in dungeon.rooms"),
+                );
+            }
+            for r in &b.rewards {
+                check(
+                    rewards.contains(r.as_str()),
+                    format!("{p}: reward '{r}' is not an encounter or cache id"),
+                );
+            }
         }
         let colour = |c: [f32; 3]| c.iter().all(|v| (0.0..=1.0).contains(v));
         for (k, a) in &d.atmosphere {
@@ -1823,6 +1949,30 @@ impl Content {
                 }
             }
         }
+        let mut cache_ids = BTreeSet::new();
+        for (i, c) in self.dungeon.caches.iter().enumerate() {
+            let p = format!("dungeon.caches[{i}] ('{}')", c.id);
+            check(
+                !c.id.is_empty()
+                    && cache_ids.insert(c.id.as_str())
+                    && !self.encounters.iter().any(|e| e.id == c.id),
+                format!("{p}: id must be non-empty and unique among caches and encounters"),
+            );
+            check(
+                (0.5..=6.0).contains(&c.radius),
+                format!("{p}: radius {} must be in 0.5..=6 m", c.radius),
+            );
+            if let Some(m) = &c.model
+                && let Some(problem) = model_path_problem(m)
+            {
+                check(false, format!("{p}: model {problem}"));
+            }
+            if let Some(nav) = &nav
+                && let Err(e) = Content::place(nav, c.pos, c.y)
+            {
+                check(false, format!("{p}.pos {:?} {e}", <[f32; 2]>::from(c.pos)));
+            }
+        }
         check(
             boss_count >= 1,
             "the dungeon must spawn at least one boss".into(),
@@ -1868,8 +2018,9 @@ impl Content {
             );
             if let Some(src) = &l.source {
                 check(
-                    self.encounters.iter().any(|e| e.id == *src),
-                    format!("{p}: source '{src}' is not an encounter id"),
+                    self.encounters.iter().any(|e| e.id == *src)
+                        || self.dungeon.caches.iter().any(|c| c.id == *src),
+                    format!("{p}: source '{src}' is not an encounter or cache id"),
                 );
             }
         }

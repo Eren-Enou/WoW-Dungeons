@@ -1008,8 +1008,8 @@ fn update_texts(run: Res<ActiveRun>, mut q: Query<(&mut Text, &mut TextColor, &H
             }
             HudText::Info => {
                 let mut s = format!(
-                    "{}\ntime {:.0}s | seed {}\n",
-                    sim.content.dungeon.name, sim.time, sim.seed
+                    "{}\n{} | time {:.0}s | sim seed {}\n",
+                    sim.content.dungeon.name, run.layout, sim.time, sim.seed
                 );
                 for e in &sim.encounters {
                     let mark = if e.cleared {

@@ -11,7 +11,7 @@ use crate::populate;
 use dungeon_sim::content::{Content, Difficulty, DungeonConfig, NavConfig, RewardConfig};
 
 /// Bumped whenever the same blueprint + seed would produce different output.
-pub const GENERATOR_VERSION: u32 = 3;
+pub const GENERATOR_VERSION: u32 = 4;
 
 pub struct Generated {
     pub plan: Plan,
@@ -27,6 +27,9 @@ pub struct Generated {
     pub pillars: Vec<Vec<dungeon_sim::nav::Rect>>,
     pub structure: CheckReport,
     pub space: CheckReport,
+    /// Branch purposes as measured (0.9), one per plan branch.
+    pub branches: CheckReport,
+    pub measured: Vec<crate::purpose::Measured>,
 }
 
 fn difficulties() -> Vec<Difficulty> {
@@ -103,6 +106,45 @@ pub fn validate_pair(bp: &Blueprint, kit: &Kit) -> Vec<String> {
             ));
         }
     }
+    // Purposes the kit must support (0.9).
+    if bp
+        .routes
+        .iter()
+        .any(|r| r.purpose == crate::blueprint::RoutePurpose::Safe)
+        && kit.remix.route_hazard.is_none()
+    {
+        e.push(format!(
+            "routes: a \"safe\" route needs a hazard on its short way, and kit '{}' defines no [remix.route_hazard]",
+            kit.kit.id
+        ));
+    }
+    let caches = bp.routes.iter().any(|r| r.cache)
+        || bp
+            .side
+            .iter()
+            .any(|s| s.purpose == crate::blueprint::SidePurpose::Cache);
+    if caches && kit.remix.cache.is_none() {
+        e.push(format!(
+            "a cache needs the kit's [remix.cache] (name and model); kit '{}' has none",
+            kit.kit.id
+        ));
+    }
+    for (k, r) in bp.routes.iter().enumerate() {
+        if let Some(o) = r.optional
+            && let Some(slot) = bp.optional.get(o.wrapping_sub(1))
+            && kit.recipes.get(&slot.recipe).is_some_and(|x| {
+                !matches!(
+                    x.room,
+                    crate::kit::RoomPref::Chamber | crate::kit::RoomPref::Hall
+                )
+            })
+        {
+            e.push(format!(
+                "routes[{k}]: optional {o} ('{}') needs a chamber or hall recipe to sit on a detour",
+                slot.recipe
+            ));
+        }
+    }
     for (i, s) in bp.optional.iter().enumerate() {
         if kit
             .recipes
@@ -141,6 +183,7 @@ pub fn generate(bp: &Blueprint, kit: &Kit, seed: u64) -> Result<Generated, Strin
         match finish(bp, kit, plan) {
             Ok(g) => return Ok(g),
             Err(Failure::Space(what)) => tally.add(format!("space: {what}")),
+            Err(Failure::Purpose(what)) => tally.add(format!("purpose: {what}")),
             Err(Failure::Invalid(why)) => {
                 tally.add("validation");
                 first_validation.get_or_insert(why);
@@ -167,6 +210,8 @@ pub fn generate(bp: &Blueprint, kit: &Kit, seed: u64) -> Result<Generated, Strin
 enum Failure {
     /// An encounter found no spot satisfying its recipe (retry).
     Space(String),
+    /// A branch does not deliver its declared purpose (retry).
+    Purpose(String),
     /// The composed dungeon failed validation (a generator bug).
     Invalid(String),
 }
@@ -202,6 +247,8 @@ fn dungeon_config(bp: &Blueprint, kit: &Kit, comp: &compose::Composed) -> Dungeo
         atmosphere: Default::default(),
         modules: None,
         anchors: Vec::new(),
+        branches: Vec::new(),
+        caches: Vec::new(),
     }
 }
 
@@ -249,12 +296,41 @@ fn finish(bp: &Blueprint, kit: &Kit, plan: Plan) -> Result<Generated, Failure> {
         kit: kit.kit.id.clone(),
         generator: GENERATOR_VERSION,
     });
+    content.dungeon.caches = pop.caches.clone();
     content.dungeon.rooms = rooms_config(&plan, &comp, &content, &pop.rooms);
     content.dungeon.atmosphere = kit.atmosphere.clone();
     content.dungeon.modules = kit.modules.clone();
     content.dungeon.anchors = comp.anchors.clone();
     // Only the templates the dungeon uses (plus what they summon).
-    let content = prune_templates(content);
+    let mut content = prune_templates(content);
+    // Branch purposes, measured on this layout's navigation (0.9).
+    let nav0 = content
+        .build_nav()
+        .map_err(|e| Failure::Invalid(e.join("\n")))?;
+    let (branches, measured) = crate::purpose::measure(
+        &plan,
+        &comp,
+        kit,
+        &content,
+        &nav0,
+        &pop.rooms,
+        &pop.anchors,
+        &pop.cache_rooms,
+        bp.purposeful(),
+    );
+    if let Some(e) = branches.errors.first() {
+        // Keep the tally key short: "branch bK (purpose, ...): what".
+        let why = e.split_once("): ").map(|(a, b)| {
+            let kind = a
+                .split('(')
+                .nth(1)
+                .and_then(|k| k.split(',').next())
+                .unwrap_or("?");
+            format!("{kind}: {}", b.split(" (").next().unwrap_or(b))
+        });
+        return Err(Failure::Purpose(why.unwrap_or_else(|| e.clone())));
+    }
+    content.dungeon.branches = crate::purpose::branch_configs(&plan, &measured);
     let body = content.to_toml()?;
     let toml = format!("{}{body}", header(bp, &plan));
     // The game's loader is the first validator.
@@ -282,6 +358,8 @@ fn finish(bp: &Blueprint, kit: &Kit, plan: Plan) -> Result<Generated, Failure> {
         pillars: comp.pillars,
         structure,
         space,
+        branches,
+        measured,
     })
 }
 
@@ -309,6 +387,10 @@ fn rooms_config(
             Route::Side => ("side", None),
             Route::Overlook => ("overlook", None),
         };
+        let (purpose, branch) = match r.branch {
+            Some(b) => (plan.branches[b].kind.label().to_string(), format!("b{b}")),
+            None => ("main".to_string(), String::new()),
+        };
         let encounter = encounter_rooms
             .iter()
             .position(|&er| er == i)
@@ -323,6 +405,8 @@ fn rooms_config(
             connects: Vec::new(),
             encounter,
             atmosphere: None,
+            purpose,
+            branch,
         });
     }
     for (k, c) in plan.corridors.iter().enumerate() {
@@ -344,6 +428,11 @@ fn rooms_config(
             EdgeRole::Shortcut => "shortcut",
             EdgeRole::Loop => "loop",
         };
+        let owner = plan.branches.iter().position(|b| b.corridors.contains(&k));
+        let (purpose, branch) = match owner {
+            Some(b) => (plan.branches[b].kind.label().to_string(), format!("b{b}")),
+            None => ("main".to_string(), String::new()),
+        };
         out.push(dungeon_sim::content::RoomConfig {
             id: format!("c{k}"),
             name: format!("{} - {}", plan.rooms[c.a].name, plan.rooms[c.b].name),
@@ -354,6 +443,8 @@ fn rooms_config(
             connects: vec![format!("r{}", c.a), format!("r{}", c.b)],
             encounter: None,
             atmosphere: None,
+            purpose,
+            branch,
         });
     }
     out
@@ -401,6 +492,7 @@ fn header(bp: &Blueprint, plan: &Plan) -> String {
          # Blueprint '{id}', seed {seed} (layout attempt {attempt}).\n\
          # Main route {main} rooms; {alt} alternate-route rooms; {side} side rooms;\n\
          # {ramps} ramps, {bridges} bridges, {drops} one-way drops, {loops} return loops.\n\
+         # Branches: {branches}.\n\
          # This is an ordinary dungeon file: edit it freely, but regenerating\n\
          # with dungeon-forge overwrites it. See DUNGEON_FORGE_0_7.md.\n\n",
         name = bp.blueprint.name,
@@ -422,5 +514,14 @@ fn header(bp: &Blueprint, plan: &Plan) -> String {
         bridges = count(&|c| c.style == Style::Bridge),
         drops = count(&|c| c.style == Style::Drop),
         loops = count(&|c| c.role == EdgeRole::Loop),
+        branches = if plan.branches.is_empty() {
+            "none".to_string()
+        } else {
+            plan.branches
+                .iter()
+                .map(|b| b.kind.label())
+                .collect::<Vec<_>>()
+                .join(", ")
+        },
     )
 }

@@ -28,6 +28,8 @@ pub struct GameData {
     pub message: Option<(String, f32)>,
     /// Working copy for the in-game encounter editor.
     pub editor: Option<Content>,
+    /// The layout chosen for a forge-made dungeon (0.9; classic when unset).
+    pub layout: Option<crate::remix::LayoutChoice>,
 }
 
 impl GameData {
@@ -42,6 +44,7 @@ impl GameData {
             content_errors: Vec::new(),
             message: err.map(|e| (format!("Save problem: {e}"), 10.0)),
             editor: None,
+            layout: None,
         };
         data.reload_content();
         for e in &data.content_errors {
@@ -104,6 +107,28 @@ impl GameData {
 
     pub fn selected_content(&self) -> Option<&Content> {
         self.library.get(&self.profile.selected_dungeon)
+    }
+
+    /// The layout the selected dungeon chooses for its next run (0.9).
+    pub fn selected_layout(&self) -> Option<&crate::remix::LayoutChoice> {
+        self.layout
+            .as_ref()
+            .filter(|l| l.dungeon == self.profile.selected_dungeon)
+    }
+
+    /// What the next run plays: the remixed or seeded layout when one is
+    /// chosen and generated, else the selected dungeon as shipped.
+    pub fn run_content(&self) -> Option<&Content> {
+        self.selected_layout()
+            .and_then(|l| l.content.as_ref())
+            .or_else(|| self.selected_content())
+    }
+
+    /// "classic layout", "remix, seed 4821 (generator v4)", ...
+    pub fn layout_label(&self) -> String {
+        self.selected_layout()
+            .map(|l| l.label())
+            .unwrap_or_else(|| "classic layout".into())
     }
 
     pub fn save(&mut self) {

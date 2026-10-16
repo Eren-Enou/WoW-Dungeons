@@ -4,8 +4,8 @@
 //! route gets heights, and corridors get styles and offsets that fit the
 //! rooms they join. `compose` turns the resulting `Plan` into walkable areas.
 
-use crate::blueprint::{Blueprint, Shortcut};
-use crate::kit::{Kit, RoomPref, ShapeSpec};
+use crate::blueprint::{Blueprint, OptionalHome, RoutePurpose, Shortcut, SidePurpose};
+use crate::kit::{Kit, Preference, RoomPref, ShapeSpec};
 use dungeon_sim::math::V2;
 use dungeon_sim::rng::Rng;
 use serde::Serialize;
@@ -20,7 +20,7 @@ pub const RAMP_SLOPE: f32 = 0.3;
 pub const MIN_FALL: f32 = 3.6;
 pub const MAX_FALL: f32 = 7.5;
 /// Generation attempts before giving up with a diagnosis.
-pub const MAX_ATTEMPTS: u32 = 64;
+pub const MAX_ATTEMPTS: u32 = 256;
 /// Shortest corridor between two rooms (edge to edge).
 pub const MIN_GAP: f32 = 7.0;
 
@@ -123,6 +123,95 @@ pub enum RoomKind {
     Overlook,
     /// A passage elbow that lengthens a winding route.
     Bend,
+    /// A treasure cache's room (0.9).
+    Vault,
+    /// A landmark room (0.9): decoration and light, no reward.
+    Vista,
+}
+
+/// Why a branch exists (0.9): a blueprint purpose, or a legacy/structural
+/// kind for the audit and the viewer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum BranchKind {
+    Detour,
+    Flank,
+    Safe,
+    Optional,
+    Cache,
+    Vista,
+    Quiet,
+    /// The return-loop shortcut.
+    Loop,
+    /// The overlook and its one-way drop.
+    Drop,
+    /// A legacy alternate route or empty side room (no declared purpose).
+    Unspecified,
+}
+
+impl BranchKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            BranchKind::Detour => "detour",
+            BranchKind::Flank => "flank",
+            BranchKind::Safe => "safe",
+            BranchKind::Optional => "optional",
+            BranchKind::Cache => "cache",
+            BranchKind::Vista => "vista",
+            BranchKind::Quiet => "quiet",
+            BranchKind::Loop => "loop",
+            BranchKind::Drop => "drop",
+            BranchKind::Unspecified => "unspecified",
+        }
+    }
+
+    /// Branches that leave the main route and come back to it.
+    pub fn through(self) -> bool {
+        matches!(
+            self,
+            BranchKind::Detour
+                | BranchKind::Flank
+                | BranchKind::Safe
+                | BranchKind::Loop
+                | BranchKind::Drop
+                | BranchKind::Unspecified
+        )
+    }
+}
+
+/// Every [`BranchKind::label`].
+pub const BRANCH_LABELS: &[&str] = &[
+    "detour",
+    "flank",
+    "safe",
+    "optional",
+    "cache",
+    "vista",
+    "quiet",
+    "loop",
+    "drop",
+    "unspecified",
+];
+
+/// A branch off the main route and what it is for (0.9).
+#[derive(Debug, Clone, Serialize)]
+pub struct Branch {
+    pub kind: BranchKind,
+    /// Main room it leaves from.
+    pub from: usize,
+    /// Main room it rejoins (through routes); `None` for dead ends.
+    pub to: Option<usize>,
+    /// Its rooms, in order from `from`.
+    pub rooms: Vec<usize>,
+    /// Its corridors, in order from `from`.
+    pub corridors: Vec<usize>,
+    /// The optional encounter it holds (index into the blueprint's `optional`).
+    pub optional: Option<usize>,
+    /// The room holding its treasure cache.
+    pub cache: Option<usize>,
+    /// Flank: the main room whose pack it approaches.
+    pub target: Option<usize>,
+    /// Safe: the main corridors (the short way) that carry route hazards.
+    pub hazard_corridors: Vec<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -171,6 +260,10 @@ pub struct Room {
     pub encounter: Option<EncounterRef>,
     /// Direction of travel when the party first enters (packs face it).
     pub entry: Option<Dir>,
+    /// The branch it belongs to (0.9), if any.
+    pub branch: Option<usize>,
+    /// Holds a treasure cache (0.9).
+    pub cache: bool,
 }
 
 impl Room {
@@ -269,6 +362,8 @@ pub struct Plan {
     pub corridors: Vec<Corridor>,
     /// Main-route room indices in order (entrance first, final arena last).
     pub main: Vec<usize>,
+    /// Every branch off the main route and its purpose (0.9).
+    pub branches: Vec<Branch>,
 }
 
 impl Plan {
@@ -385,6 +480,8 @@ fn new_room(
         name: String::new(),
         encounter: None,
         entry: None,
+        branch: None,
+        cache: false,
     }
 }
 
@@ -418,6 +515,9 @@ pub fn advice(t: &FailureTally) -> String {
             "alternate route" => "no room for a second way; use fewer alternate_routes or optional rooms",
             "optional room" => "no free cell beside the route for a side room; use fewer optional encounters or side_rooms",
             "side room" => "no free cell for an empty side chamber; use fewer side_rooms",
+            "detour route" => "no free cells for a reward detour between neighbouring main rooms; use fewer routes or side chambers",
+            "flank route" => "no free cells for a flank into an eligible pack's room (non-boss, not a patrol unless targeted); use another target or fewer routes",
+            "safe route" => "no free cells for a safe way round a crossing; use fewer routes",
             "shortcut" => "no cell touches an earlier and a later room; try another seed or shortcut = \"none\"",
             "heights" => "the height changes do not fit the corridors; use fewer descents",
             "corridor fit" => "two rooms' walls don't line up for a straight corridor (ramp, bridge or drop); lower the kit's room jitter or use fewer descents and bridges",
@@ -443,8 +543,14 @@ fn try_plan(bp: &Blueprint, kit: &Kit, rng: &mut Rng) -> Result<Plan, &'static s
     let e = bp.encounters.len();
     // Extra room before encounter k (k in 0..e); several may share a slot.
     let mut before: Vec<u32> = vec![0; e];
-    for _ in 0..extras {
-        before[rng.index(e)] += 1;
+    if bp.purposeful() && l.shortcut == Shortcut::Drop {
+        // 0.9: one stretch of empty rooms for the drop to skip (a drop past
+        // a required fight would only send the party back for it).
+        before[rng.index(e)] += extras;
+    } else {
+        for _ in 0..extras {
+            before[rng.index(e)] += 1;
+        }
     }
     let mut kinds: Vec<(RoomKind, Option<EncounterRef>)> = vec![(RoomKind::Entrance, None)];
     for (k, slot) in bp.encounters.iter().enumerate() {
@@ -551,9 +657,310 @@ fn try_plan(bp: &Blueprint, kit: &Kit, rng: &mut Rng) -> Result<Plan, &'static s
     for i in 1..n {
         corridors.push(link(i - 1, i, EdgeRole::Main, &rooms));
     }
-
-    // ---- Alternate routes: BFS through free cells between rooms i and j.
+    let mut branches: Vec<Branch> = Vec::new();
     let mut alts: Vec<(usize, usize, Vec<usize>)> = Vec::new();
+
+    let is_boss_room = |x: usize| matches!(kinds[x].1, Some(EncounterRef::Main(e)) if kit.recipe_has_boss(&bp.encounters[e].recipe));
+    let required = |x: usize| matches!(kinds[x].1, Some(EncounterRef::Main(_)));
+    // The shortcut (drop or loop). 0.9 blueprints place it before their
+    // routes and side rooms, so the cells it needs are still free; legacy
+    // blueprints place it last, as before (same layouts for the same seed).
+    let mut drop_plan: Option<(usize, usize, usize)> = None; // (from main i, overlook, to main j)
+    let mut loop_plan: Option<(usize, usize)> = None;
+    macro_rules! shortcut {
+        () => {
+            match l.shortcut {
+                Shortcut::None => {}
+                Shortcut::Drop => {
+                    let mut cands: Vec<(usize, usize, (i32, i32))> = Vec::new();
+                    for i in 0..n {
+                        // Skip at most two rooms, and never a boss.
+                        // 0.9: skip two or three rooms (one skipped room saves no
+                        // walking: the overlook adds a step of its own).
+                        let span = if bp.purposeful() {
+                            (i + 3)..n.saturating_sub(1).min(i + 5)
+                        } else {
+                            (i + 2)..n.saturating_sub(1).min(i + 4)
+                        };
+                        for j in span {
+                            if skips_boss(bp, kit, &kinds, i, j) || kinds[j].0 == RoomKind::Bend {
+                                continue;
+                            }
+                            // 0.9: a shortcut, not a way past required fights.
+                            if bp.purposeful() && (i + 1..j).any(required) {
+                                continue;
+                            }
+                            for d in Dir::ALL {
+                                let c = add(cells[i], d);
+                                if !used.contains(&c) && Dir::between(c, cells[j]).is_some() {
+                                    cands.push((i, j, c));
+                                }
+                            }
+                        }
+                    }
+                    if cands.is_empty() {
+                        return Err("shortcut");
+                    }
+                    let (i, j, c) = cands[rng.index(cands.len())];
+                    used.insert(c);
+                    let along = Dir::between(cells[i], c).unwrap_or(Dir::N);
+                    let mut r = new_room(rng, kit, RoomKind::Overlook, Route::Overlook, c, along);
+                    r.entry = Some(along);
+                    r.branch = Some(branches.len());
+                    rooms.push(r);
+                    let o = rooms.len() - 1;
+                    corridors.push(link(i, o, EdgeRole::Shortcut, &rooms));
+                    let mut drop = link(o, j, EdgeRole::Shortcut, &rooms);
+                    drop.style = Style::Drop;
+                    drop.width = 4.0;
+                    corridors.push(drop);
+                    drop_plan = Some((i, o, j));
+                    branches.push(Branch {
+                        kind: BranchKind::Drop,
+                        from: i,
+                        to: Some(j),
+                        rooms: vec![o],
+                        corridors: vec![corridors.len() - 2, corridors.len() - 1],
+                        optional: None,
+                        cache: None,
+                        target: None,
+                        hazard_corridors: Vec::new(),
+                    });
+                }
+                Shortcut::Loop => {
+                    let mut cands: Vec<(usize, usize)> = Vec::new();
+                    for i in 0..n {
+                        for j in (i + 3)..n.saturating_sub(1).min(i + 6) {
+                            if !skips_boss(bp, kit, &kinds, i, j)
+                                && kinds[j].0 != RoomKind::Bend
+                                && kinds[i].0 != RoomKind::Bend
+                            {
+                                cands.push((i, j));
+                            }
+                        }
+                    }
+                    shuffle(rng, &mut cands);
+                    // Neighbours join directly; otherwise a cloister walk through up
+                    // to five free cells.
+                    let direct = cands
+                        .iter()
+                        .copied()
+                        .find(|&(i, j)| Dir::between(cells[i], cells[j]).is_some());
+                    if let Some((i, j)) = direct {
+                        corridors.push(link(j, i, EdgeRole::Loop, &rooms));
+                        loop_plan = Some((i, j));
+                        branches.push(Branch {
+                            kind: BranchKind::Loop,
+                            from: j,
+                            to: Some(i),
+                            rooms: Vec::new(),
+                            corridors: vec![corridors.len() - 1],
+                            optional: None,
+                            cache: None,
+                            target: None,
+                            hazard_corridors: Vec::new(),
+                        });
+                    } else {
+                        let mut found = None;
+                        for (i, j) in cands {
+                            if let Some(path) = free_path(&used, cells[j], cells[i], 5) {
+                                found = Some((i, j, path));
+                                break;
+                            }
+                        }
+                        let Some((i, j, path)) = found else {
+                            return Err("shortcut");
+                        };
+                        let mut ids = Vec::new();
+                        let mut cors = Vec::new();
+                        let mut prev = j;
+                        let bi = branches.len();
+                        for (k, c) in path.iter().enumerate() {
+                            used.insert(*c);
+                            let entry =
+                                Dir::between(if k == 0 { cells[j] } else { path[k - 1] }, *c);
+                            let mut r = new_room(
+                                rng,
+                                kit,
+                                RoomKind::Bend,
+                                Route::Alternate,
+                                *c,
+                                entry.unwrap_or(Dir::N),
+                            );
+                            r.entry = entry;
+                            r.branch = Some(bi);
+                            rooms.push(r);
+                            let id = rooms.len() - 1;
+                            corridors.push(link(prev, id, EdgeRole::Loop, &rooms));
+                            cors.push(corridors.len() - 1);
+                            ids.push(id);
+                            prev = id;
+                        }
+                        corridors.push(link(prev, i, EdgeRole::Loop, &rooms));
+                        cors.push(corridors.len() - 1);
+                        branches.push(Branch {
+                            kind: BranchKind::Loop,
+                            from: j,
+                            to: Some(i),
+                            rooms: ids.clone(),
+                            corridors: cors,
+                            optional: None,
+                            cache: None,
+                            target: None,
+                            hazard_corridors: Vec::new(),
+                        });
+                        // Heights along the walk are spread like an alternate route.
+                        alts.push((j, i, ids));
+                        loop_plan = None;
+                    }
+                }
+            }
+        };
+    }
+    if bp.purposeful() {
+        shortcut!();
+    }
+
+    // ---- Purposeful routes (0.9). Each is built to deliver its purpose;
+    // `check::branches` measures that it does.
+    for (k, spec) in bp.routes.iter().enumerate() {
+        let mut cands: Vec<(usize, usize)> = Vec::new();
+        match spec.purpose {
+            RoutePurpose::Detour | RoutePurpose::Safe => {
+                for i in 0..n {
+                    for j in [i + 1, i + 2] {
+                        // Never into the final arena or a boss room, and
+                        // never round a room that holds an encounter.
+                        if j + 1 >= n || is_boss_room(j) || (i + 1..j).any(|x| kinds[x].1.is_some())
+                        {
+                            continue;
+                        }
+                        cands.push((i, j));
+                    }
+                }
+            }
+            RoutePurpose::Flank => {
+                for (j, kind) in kinds.iter().enumerate().take(n.saturating_sub(1)).skip(1) {
+                    let Some(EncounterRef::Main(e)) = kind.1 else {
+                        continue;
+                    };
+                    let recipe = &bp.encounters[e].recipe;
+                    if kit.recipe_has_boss(recipe) {
+                        continue;
+                    }
+                    match &spec.target {
+                        Some(t) if t != recipe => continue,
+                        // Patrols walk across the room; flank them only on request.
+                        None if kit.recipes[recipe].placement == Preference::Patrol => continue,
+                        _ => {}
+                    }
+                    for gap in 1..=3 {
+                        let Some(i) = j.checked_sub(gap) else {
+                            continue;
+                        };
+                        if (i + 1..j).any(required) {
+                            continue;
+                        }
+                        cands.push((i, j));
+                    }
+                }
+            }
+        }
+        cands.retain(|&(i, j)| !branches.iter().any(|b| b.from == i && b.to == Some(j)));
+        shuffle(rng, &mut cands);
+        let max_len = if spec.purpose == RoutePurpose::Flank {
+            4
+        } else {
+            3
+        };
+        let mut found = None;
+        for (i, j) in cands {
+            if let Some(path) = free_path(&used, cells[i], cells[j], max_len) {
+                found = Some((i, j, path));
+                break;
+            }
+        }
+        let Some((i, j, path)) = found else {
+            return Err(match spec.purpose {
+                RoutePurpose::Detour => "detour route",
+                RoutePurpose::Flank => "flank route",
+                RoutePurpose::Safe => "safe route",
+            });
+        };
+        let bi = branches.len();
+        let opt = bp.route_optional(k);
+        let reward_at = path.len() / 2;
+        let mut ids = Vec::new();
+        let mut cors = Vec::new();
+        let mut cache = None;
+        let mut prev = i;
+        for (t, c) in path.iter().enumerate() {
+            used.insert(*c);
+            let entry = Dir::between(if t == 0 { cells[i] } else { path[t - 1] }, *c);
+            let reward = spec.purpose == RoutePurpose::Detour && t == reward_at;
+            let kind = if reward {
+                match opt.map(|o| kit.recipes[&bp.optional[o].recipe].room) {
+                    Some(RoomPref::Hall) => RoomKind::Hall,
+                    Some(_) => RoomKind::Chamber,
+                    None => RoomKind::Vault,
+                }
+            } else {
+                RoomKind::Bend
+            };
+            let mut r = new_room(
+                rng,
+                kit,
+                kind,
+                Route::Alternate,
+                *c,
+                entry.unwrap_or(Dir::N),
+            );
+            r.entry = entry;
+            r.branch = Some(bi);
+            if reward {
+                r.encounter = opt.map(EncounterRef::Optional);
+                r.cache = spec.cache;
+            }
+            rooms.push(r);
+            let id = rooms.len() - 1;
+            if reward && spec.cache {
+                cache = Some(id);
+            }
+            corridors.push(link(prev, id, EdgeRole::Alternate, &rooms));
+            cors.push(corridors.len() - 1);
+            ids.push(id);
+            prev = id;
+        }
+        corridors.push(link(prev, j, EdgeRole::Alternate, &rooms));
+        cors.push(corridors.len() - 1);
+        alts.push((i, j, ids.clone()));
+        branches.push(Branch {
+            kind: match spec.purpose {
+                RoutePurpose::Detour => BranchKind::Detour,
+                RoutePurpose::Flank => BranchKind::Flank,
+                RoutePurpose::Safe => BranchKind::Safe,
+            },
+            from: i,
+            to: Some(j),
+            rooms: ids,
+            corridors: cors,
+            optional: if spec.purpose == RoutePurpose::Detour {
+                opt
+            } else {
+                None
+            },
+            cache,
+            target: (spec.purpose == RoutePurpose::Flank).then_some(j),
+            // Main corridors i -> j (corridor e joins main rooms e and e+1).
+            hazard_corridors: if spec.purpose == RoutePurpose::Safe {
+                (i..j).collect()
+            } else {
+                Vec::new()
+            },
+        });
+    }
+
+    // ---- Legacy alternate routes: BFS through free cells between rooms i and j.
     for _ in 0..l.alternates() {
         let mut cands: Vec<(usize, usize)> = Vec::new();
         for i in 0..n {
@@ -599,17 +1006,74 @@ fn try_plan(bp: &Blueprint, kit: &Kit, rng: &mut Rng) -> Result<Plan, &'static s
             ids.push(id);
             prev = id;
         }
+        let mut cors: Vec<usize> = (corridors.len() - ids.len()..corridors.len()).collect();
         corridors.push(link(prev, j, EdgeRole::Alternate, &rooms));
+        cors.push(corridors.len() - 1);
+        for &id in &ids {
+            rooms[id].branch = Some(branches.len());
+        }
+        branches.push(Branch {
+            kind: BranchKind::Unspecified,
+            from: i,
+            to: Some(j),
+            rooms: ids.clone(),
+            corridors: cors,
+            optional: None,
+            cache: None,
+            target: None,
+            hazard_corridors: Vec::new(),
+        });
         alts.push((i, j, ids));
     }
 
-    // ---- Side rooms: optional encounters, then empty chambers to explore.
-    let empties =
-        l.side_rooms[0] + rng.index((l.side_rooms[1] - l.side_rooms[0] + 1) as usize) as u32;
-    let wants: Vec<Option<usize>> = (0..bp.optional.len())
-        .map(Some)
-        .chain((0..empties).map(|_| None))
-        .collect();
+    // ---- Side rooms. 0.9 blueprints say what each is for; legacy ones get
+    // optional encounters, then empty chambers (purpose unspecified).
+    struct Want {
+        kind: BranchKind,
+        optional: Option<usize>,
+        depth: usize,
+    }
+    let mut wants: Vec<Want> = Vec::new();
+    if bp.purposeful() {
+        for (k, s) in bp.side.iter().enumerate() {
+            wants.push(Want {
+                kind: match s.purpose {
+                    SidePurpose::Optional => BranchKind::Optional,
+                    SidePurpose::Cache => BranchKind::Cache,
+                    SidePurpose::Vista => BranchKind::Vista,
+                    SidePurpose::Quiet => BranchKind::Quiet,
+                },
+                optional: bp.side_optional(k),
+                depth: s.depth,
+            });
+        }
+        for (o, h) in bp.optional_homes().iter().enumerate() {
+            if *h == OptionalHome::Legacy {
+                wants.push(Want {
+                    kind: BranchKind::Optional,
+                    optional: Some(o),
+                    depth: 1,
+                });
+            }
+        }
+    } else {
+        let empties =
+            l.side_rooms[0] + rng.index((l.side_rooms[1] - l.side_rooms[0] + 1) as usize) as u32;
+        for o in 0..bp.optional.len() {
+            wants.push(Want {
+                kind: BranchKind::Optional,
+                optional: Some(o),
+                depth: 1,
+            });
+        }
+        for _ in 0..empties {
+            wants.push(Want {
+                kind: BranchKind::Unspecified,
+                optional: None,
+                depth: 1,
+            });
+        }
+    }
     for want in wants {
         let mut hosts: Vec<usize> = (1..n.saturating_sub(1))
             .filter(|&h| kinds[h].0 != RoomKind::Bend)
@@ -627,23 +1091,76 @@ fn try_plan(bp: &Blueprint, kit: &Kit, rng: &mut Rng) -> Result<Plan, &'static s
                 if used.contains(&c) {
                     continue;
                 }
-                used.insert(c);
-                let kind = match want.map(|k| kit.recipes[&bp.optional[k].recipe].room) {
-                    None | Some(RoomPref::Chamber) => RoomKind::Side,
-                    Some(other) => room_kind_for(other),
-                };
-                let mut r = new_room(rng, kit, kind, Route::Side, c, d);
-                r.encounter = want.map(EncounterRef::Optional);
-                r.entry = Some(d);
-                rooms.push(r);
-                let id = rooms.len() - 1;
-                corridors.push(link(h, id, EdgeRole::Side, &rooms));
+                let mut chain = vec![(c, d)];
+                if want.depth == 2 {
+                    // An antechamber first, the chamber one cell further.
+                    let mut d2s = Dir::ALL.to_vec();
+                    shuffle(rng, &mut d2s);
+                    let Some(d2) = d2s.into_iter().find(|dd| {
+                        let c2 = add(c, *dd);
+                        c2 != cells[h] && !used.contains(&c2)
+                    }) else {
+                        continue;
+                    };
+                    chain.push((add(c, d2), d2));
+                }
+                let bi = branches.len();
+                let mut ids = Vec::new();
+                let mut cors = Vec::new();
+                let mut cache = None;
+                let mut prev = h;
+                for (t, &(cc, dd)) in chain.iter().enumerate() {
+                    used.insert(cc);
+                    let last = t + 1 == chain.len();
+                    let kind = if !last {
+                        RoomKind::Bend
+                    } else {
+                        match want.kind {
+                            BranchKind::Cache => RoomKind::Vault,
+                            BranchKind::Vista => RoomKind::Vista,
+                            _ => match want
+                                .optional
+                                .map(|k| kit.recipes[&bp.optional[k].recipe].room)
+                            {
+                                None | Some(RoomPref::Chamber) => RoomKind::Side,
+                                Some(other) => room_kind_for(other),
+                            },
+                        }
+                    };
+                    let mut r = new_room(rng, kit, kind, Route::Side, cc, dd);
+                    if last {
+                        r.encounter = want.optional.map(EncounterRef::Optional);
+                        r.cache = want.kind == BranchKind::Cache;
+                    }
+                    r.entry = Some(dd);
+                    r.branch = Some(bi);
+                    rooms.push(r);
+                    let id = rooms.len() - 1;
+                    if last && want.kind == BranchKind::Cache {
+                        cache = Some(id);
+                    }
+                    corridors.push(link(prev, id, EdgeRole::Side, &rooms));
+                    cors.push(corridors.len() - 1);
+                    ids.push(id);
+                    prev = id;
+                }
+                branches.push(Branch {
+                    kind: want.kind,
+                    from: h,
+                    to: None,
+                    rooms: ids,
+                    corridors: cors,
+                    optional: want.optional,
+                    cache,
+                    target: None,
+                    hazard_corridors: Vec::new(),
+                });
                 placed = true;
                 break 'host;
             }
         }
         if !placed {
-            return Err(if want.is_some() {
+            return Err(if want.optional.is_some() {
                 "optional room"
             } else {
                 "side room"
@@ -651,103 +1168,9 @@ fn try_plan(bp: &Blueprint, kit: &Kit, rng: &mut Rng) -> Result<Plan, &'static s
         }
     }
 
-    // ---- Shortcut.
-    let mut drop_plan: Option<(usize, usize, usize)> = None; // (from main i, overlook, to main j)
-    let mut loop_plan: Option<(usize, usize)> = None;
-    match l.shortcut {
-        Shortcut::None => {}
-        Shortcut::Drop => {
-            let mut cands: Vec<(usize, usize, (i32, i32))> = Vec::new();
-            for i in 0..n {
-                // Skip at most two rooms, and never a boss.
-                for j in (i + 2)..n.saturating_sub(1).min(i + 4) {
-                    if skips_boss(bp, kit, &kinds, i, j) || kinds[j].0 == RoomKind::Bend {
-                        continue;
-                    }
-                    for d in Dir::ALL {
-                        let c = add(cells[i], d);
-                        if !used.contains(&c) && Dir::between(c, cells[j]).is_some() {
-                            cands.push((i, j, c));
-                        }
-                    }
-                }
-            }
-            if cands.is_empty() {
-                return Err("shortcut");
-            }
-            let (i, j, c) = cands[rng.index(cands.len())];
-            used.insert(c);
-            let along = Dir::between(cells[i], c).unwrap_or(Dir::N);
-            let mut r = new_room(rng, kit, RoomKind::Overlook, Route::Overlook, c, along);
-            r.entry = Some(along);
-            rooms.push(r);
-            let o = rooms.len() - 1;
-            corridors.push(link(i, o, EdgeRole::Shortcut, &rooms));
-            let mut drop = link(o, j, EdgeRole::Shortcut, &rooms);
-            drop.style = Style::Drop;
-            drop.width = 4.0;
-            corridors.push(drop);
-            drop_plan = Some((i, o, j));
-        }
-        Shortcut::Loop => {
-            let mut cands: Vec<(usize, usize)> = Vec::new();
-            for i in 0..n {
-                for j in (i + 3)..n.saturating_sub(1).min(i + 6) {
-                    if !skips_boss(bp, kit, &kinds, i, j)
-                        && kinds[j].0 != RoomKind::Bend
-                        && kinds[i].0 != RoomKind::Bend
-                    {
-                        cands.push((i, j));
-                    }
-                }
-            }
-            shuffle(rng, &mut cands);
-            // Neighbours join directly; otherwise a cloister walk through up
-            // to five free cells.
-            let direct = cands
-                .iter()
-                .copied()
-                .find(|&(i, j)| Dir::between(cells[i], cells[j]).is_some());
-            if let Some((i, j)) = direct {
-                corridors.push(link(j, i, EdgeRole::Loop, &rooms));
-                loop_plan = Some((i, j));
-            } else {
-                let mut found = None;
-                for (i, j) in cands {
-                    if let Some(path) = free_path(&used, cells[j], cells[i], 5) {
-                        found = Some((i, j, path));
-                        break;
-                    }
-                }
-                let Some((i, j, path)) = found else {
-                    return Err("shortcut");
-                };
-                let mut ids = Vec::new();
-                let mut prev = j;
-                for (k, c) in path.iter().enumerate() {
-                    used.insert(*c);
-                    let entry = Dir::between(if k == 0 { cells[j] } else { path[k - 1] }, *c);
-                    let mut r = new_room(
-                        rng,
-                        kit,
-                        RoomKind::Bend,
-                        Route::Alternate,
-                        *c,
-                        entry.unwrap_or(Dir::N),
-                    );
-                    r.entry = entry;
-                    rooms.push(r);
-                    let id = rooms.len() - 1;
-                    corridors.push(link(prev, id, EdgeRole::Loop, &rooms));
-                    ids.push(id);
-                    prev = id;
-                }
-                corridors.push(link(prev, i, EdgeRole::Loop, &rooms));
-                // Heights along the walk are spread like an alternate route.
-                alts.push((j, i, ids));
-                loop_plan = None;
-            }
-        }
+    // ---- Shortcut (legacy blueprints: after everything else).
+    if !bp.purposeful() {
+        shortcut!();
     }
 
     let mut plan = Plan {
@@ -757,6 +1180,7 @@ fn try_plan(bp: &Blueprint, kit: &Kit, rng: &mut Rng) -> Result<Plan, &'static s
         rooms,
         corridors,
         main,
+        branches,
     };
     for k in 0..plan.corridors.len() {
         let c = &plan.corridors[k];
@@ -1049,6 +1473,8 @@ fn name_rooms(plan: &mut Plan, kit: &Kit, rng: &mut Rng) {
             RoomKind::Side => &names.side,
             RoomKind::Overlook => &names.overlook,
             RoomKind::Bend => &names.bend,
+            RoomKind::Vault => &names.vault,
+            RoomKind::Vista => &names.vista,
         };
         let mut free: Vec<&String> = pool.iter().filter(|n| !taken.contains(*n)).collect();
         let name = if free.is_empty() {

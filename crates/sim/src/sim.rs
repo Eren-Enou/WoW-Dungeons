@@ -197,6 +197,22 @@ pub struct RunOptions {
     pub autopilot: bool,
     /// Autopilot skips optional encounters.
     pub skip_optional: bool,
+    /// A route for the autopilot leader to follow before its usual "next
+    /// uncleared encounter" (0.9): stands in for a player choosing a path.
+    /// Empty = the usual behaviour.
+    pub route: Vec<RouteStep>,
+    /// Followers always use their formation slot, as before 0.9 (no trail).
+    /// For comparisons only.
+    pub slot_follow_only: bool,
+}
+
+/// One step of a scripted leader route (0.9).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum RouteStep {
+    /// Walk here (the party gathers first, as before every pull).
+    Goto(V3),
+    /// Pull this encounter (by index) and fight it until it is cleared.
+    Clear(usize),
 }
 
 impl Default for RunOptions {
@@ -206,8 +222,21 @@ impl Default for RunOptions {
             overrides: Overrides::default(),
             autopilot: false,
             skip_optional: false,
+            route: Vec::new(),
+            slot_follow_only: false,
         }
     }
+}
+
+/// A treasure cache in a run (0.9).
+#[derive(Debug, Clone)]
+pub struct CacheState {
+    pub id: String,
+    pub name: Label,
+    pub pos: V3,
+    pub radius: f32,
+    pub opened_at: Option<f32>,
+    pub opened_by: Option<ActorId>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -811,6 +840,8 @@ pub struct Sim {
     pub encounters: Vec<EncounterState>,
     pub telegraphs: Vec<Telegraph>,
     pub hazards: Vec<HazardState>,
+    /// Treasure caches (0.9), in content order.
+    pub caches: Vec<CacheState>,
     next_telegraph_id: u32,
     pub events: Vec<Event>,
     /// Navigation trouble (dithers, stuck recoveries) with positions, for
@@ -822,6 +853,12 @@ pub struct Sim {
     /// Party member the others follow out of combat.
     pub leader: ActorId,
     pub leader_heading: V2,
+    /// Where the leader has walked recently, oldest first, a point per metre
+    /// (0.9): followers whose formation slot is out of the leader's sight
+    /// walk this trail instead, so they take the leader's way.
+    pub leader_trail: Vec<V3>,
+    /// The scripted route's current step (`RunOptions::route`).
+    pub route_step: usize,
     pub options: RunOptions,
     /// Queued ability press: slot and optional explicit (mouseover) target.
     pending_player_cast: Option<(usize, Option<ActorId>)>,
@@ -870,6 +907,7 @@ impl Sim {
             encounters: Vec::new(),
             telegraphs: Vec::new(),
             hazards: Vec::new(),
+            caches: Vec::new(),
             next_telegraph_id: 1,
             events: Vec::new(),
             nav_log: Vec::new(),
@@ -878,6 +916,8 @@ impl Sim {
             player: None,
             leader: 0,
             leader_heading: V2::new(0.0, 1.0),
+            leader_trail: Vec::new(),
+            route_step: 0,
             options,
             pending_player_cast: None,
             boss: 0,
@@ -1019,6 +1059,17 @@ impl Sim {
                     tick_timer: 0.0,
                 });
             }
+        }
+        for c in &sim.content.dungeon.caches {
+            let (pos, _) = Content::place(&sim.nav, c.pos, c.y).expect("validated cache");
+            sim.caches.push(CacheState {
+                id: c.id.clone(),
+                name: Label::from(c.name.as_str()),
+                pos,
+                radius: c.radius,
+                opened_at: None,
+                opened_by: None,
+            });
         }
         let fin = sim.content.final_encounter();
         sim.boss = sim.encounters[fin]
@@ -1458,12 +1509,14 @@ impl Sim {
         self.tick += 1;
         self.refresh_combat_flags();
         self.advance_patrols();
+        self.advance_route();
         self.run_ai();
         self.process_player_cast();
         self.move_actors();
         self.separate_party();
         self.settle_heights();
         self.check_aggro();
+        self.check_caches();
         self.update_auras();
         self.update_casts_and_cooldowns();
         self.auto_attacks();
@@ -1504,10 +1557,34 @@ impl Sim {
         }
     }
 
+    /// Step the scripted route past waypoints reached and encounters cleared.
+    fn advance_route(&mut self) {
+        while let Some(step) = self.options.route.get(self.route_step) {
+            let done = match *step {
+                RouteStep::Goto(p) => {
+                    let l = &self.actors[self.leader];
+                    l.pos.dist(p.xz()) <= 2.0 && (l.y - p.y).abs() <= 2.0
+                }
+                RouteStep::Clear(e) => self.encounters.get(e).is_none_or(|x| x.cleared),
+            };
+            if !done {
+                break;
+            }
+            self.route_step += 1;
+        }
+    }
+
     fn run_ai(&mut self) {
         let leader = &self.actors[self.leader];
         if leader.moved_last_tick {
             self.leader_heading = V2::from_heading(leader.facing);
+            let here = leader.loc();
+            if self.leader_trail.last().is_none_or(|t| t.dist(here) >= 1.0) {
+                self.leader_trail.push(here);
+                if self.leader_trail.len() > 48 {
+                    self.leader_trail.remove(0);
+                }
+            }
         }
         self.board = ai::compute_blackboard(self);
         for id in 0..self.actors.len() {
@@ -2075,6 +2152,16 @@ impl Sim {
             }
         }
         if newly {
+            // Another pack still fighting: this pull is an overpull.
+            let busy = self.encounters.iter().enumerate().any(|(k, x)| {
+                k != enc
+                    && x.mobs.iter().any(|&m| {
+                        self.actors[m].alive && self.actors[m].mode() == Some(EnemyMode::Engaged)
+                    })
+            });
+            if busy {
+                self.metrics.overpulls += 1;
+            }
             self.encounters[enc].pulls += 1;
             self.emit(EventKind::Aggro {
                 encounter: enc,
@@ -2648,6 +2735,27 @@ impl Sim {
         // dither commits to what the AI actually wanted a moment ago.
         n.prev_goal = Some(ai_goal);
         dir * (speed * DT).min(d.len())
+    }
+
+    /// A living party member who walks up to an unopened cache (on its
+    /// level) opens it.
+    fn check_caches(&mut self) {
+        for i in 0..self.caches.len() {
+            if self.caches[i].opened_at.is_some() {
+                continue;
+            }
+            let (pos, radius) = (self.caches[i].pos, self.caches[i].radius);
+            let by = self.alive_party().find(|&p| {
+                let q = &self.actors[p];
+                q.loc().xz().dist(pos.xz()) <= radius + q.radius
+                    && (q.y - pos.y).abs() <= BODY_ALLOWANCE + 1.0
+            });
+            if let Some(by) = by {
+                self.caches[i].opened_at = Some(self.time);
+                self.caches[i].opened_by = Some(by);
+                self.emit(EventKind::CacheOpened { cache: i, by });
+            }
+        }
     }
 
     fn check_aggro(&mut self) {

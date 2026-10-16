@@ -153,6 +153,89 @@ use dungeon_sim::nav::Nav;
 use std::f32::consts::FRAC_PI_2;
 
 /// A wall that fades out when it hides the player from the camera (game only).
+/// A treasure cache's model (0.9); the dungeon swaps it for the open model
+/// when the simulation reports it opened.
+#[derive(Component)]
+pub struct CacheVisual {
+    pub index: usize,
+    pub opened: bool,
+    /// `<model>_open.glb`, when that file exists.
+    pub open_model: Option<String>,
+}
+
+/// The small glint light over a closed cache.
+#[derive(Component)]
+pub struct CacheGlint(pub usize);
+
+/// Caches stand where the content puts them: the kit's model (or a gold
+/// box when the file is missing) with a glint light while closed.
+pub fn spawn_caches(
+    commands: &mut Commands,
+    content: &Content,
+    nav: &Nav,
+    scope: AppState,
+    asset_server: &AssetServer,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+) {
+    let scoped = DespawnOnExit(scope);
+    for (i, c) in content.dungeon.caches.iter().enumerate() {
+        let (p, _) = nav.project(c.pos, c.y.unwrap_or(0.0));
+        let at = Vec3::new(p.x, p.y, p.z);
+        let rot = Quat::from_rotation_y(c.yaw.to_radians());
+        let model = c
+            .model
+            .clone()
+            .filter(|m| crate::cave::prop_model_available(m));
+        let open_model = model
+            .as_ref()
+            .map(|m| m.replace(".glb", "_open.glb"))
+            .filter(|m| crate::cave::prop_model_available(m));
+        let visual = CacheVisual {
+            index: i,
+            opened: false,
+            open_model,
+        };
+        match model {
+            Some(m) => {
+                commands.spawn((
+                    WorldAssetRoot(
+                        asset_server.load(bevy::gltf::GltfAssetLabel::Scene(0).from_asset(m)),
+                    ),
+                    Transform::from_translation(at).with_rotation(rot),
+                    visual,
+                    scoped.clone(),
+                ));
+            }
+            None => {
+                commands.spawn((
+                    Mesh3d(meshes.add(Cuboid::new(1.3, 0.8, 0.8))),
+                    MeshMaterial3d(materials.add(StandardMaterial {
+                        base_color: Color::srgb(0.7, 0.55, 0.2),
+                        emissive: LinearRgba::rgb(0.6, 0.4, 0.1),
+                        ..default()
+                    })),
+                    Transform::from_translation(at + Vec3::Y * 0.4).with_rotation(rot),
+                    visual,
+                    scoped.clone(),
+                ));
+            }
+        }
+        commands.spawn((
+            PointLight {
+                color: Color::srgb(1.0, 0.82, 0.45),
+                intensity: 90_000.0,
+                range: 6.0,
+                shadow_maps_enabled: false,
+                ..default()
+            },
+            Transform::from_translation(at + Vec3::Y * 1.4),
+            CacheGlint(i),
+            scoped.clone(),
+        ));
+    }
+}
+
 #[derive(Component)]
 pub struct Occluder {
     pub material: Handle<StandardMaterial>,
@@ -277,6 +360,15 @@ pub fn spawn_environment(
     }
     let props = crate::cave::spawn_props(commands, content, scope, asset_server);
     blockers.0.extend(props);
+    spawn_caches(
+        commands,
+        content,
+        nav,
+        scope,
+        asset_server,
+        meshes,
+        materials,
+    );
     // Exit portal at the entrance.
     commands.spawn((
         Mesh3d(meshes.add(Torus::new(1.2, 1.6))),
@@ -476,7 +568,8 @@ pub fn spawn_level_geometry(
     // Walls: smooth slabs or jagged rock, at any angle, never over the floor.
     // Walls the modular art draws (and pillar sides it replaces) only keep
     // their camera blockers.
-    let squares = crate::modules::pillar_squares(content);
+    let mut squares = crate::modules::pillar_squares(content);
+    squares.extend(crate::modules::plinth_squares(content));
     for w in &nav.walls {
         let modular = crate::modules::wall_uses_module(content, w)
             || crate::modules::wall_in_pillar(w, &squares);

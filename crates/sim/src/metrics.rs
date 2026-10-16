@@ -33,6 +33,8 @@ pub struct Metrics {
     pub cc_applied: u32,
     pub cc_broken: u32,
     pub dispels: u32,
+    /// Packs pulled while another was still fighting (0.9).
+    pub overpulls: u32,
 }
 
 impl Metrics {
@@ -109,6 +111,10 @@ pub struct RunSummary {
     pub nav_stuck_seconds: f32,
     pub nav_unreachable_seconds: f32,
     pub nav_dithers: u32,
+    /// Packs pulled while another was still fighting (0.9).
+    pub overpulls: u32,
+    /// Treasure caches opened (0.9).
+    pub caches_opened: usize,
     pub event_count: usize,
     /// FNV-1a hash over the formatted event log, for determinism checks.
     pub log_hash: u64,
@@ -232,6 +238,8 @@ impl RunSummary {
                 .map(|&p| sim.actors[p].nav.unreachable_time)
                 .sum(),
             nav_dithers: sim.party.iter().map(|&p| sim.actors[p].nav.dithers).sum(),
+            overpulls: sim.metrics.overpulls,
+            caches_opened: sim.caches.iter().filter(|c| c.opened_at.is_some()).count(),
             event_count: sim.events.len(),
             log_hash,
             members,

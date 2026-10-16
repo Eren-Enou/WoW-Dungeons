@@ -163,6 +163,11 @@ pub enum EventKind {
     EncounterCleared {
         encounter: usize,
     },
+    /// A treasure cache was opened (0.9).
+    CacheOpened {
+        cache: usize,
+        by: ActorId,
+    },
     Outcome {
         outcome: RunOutcome,
     },
@@ -319,6 +324,9 @@ pub fn describe(sim: &Sim, e: &Event) -> String {
         }
         EventKind::EncounterCleared { encounter } => {
             format!("Encounter '{}' cleared", sim.encounters[*encounter].id)
+        }
+        EventKind::CacheOpened { cache, by } => {
+            format!("{} opens {}", n(*by), sim.caches[*cache].name)
         }
         EventKind::Outcome { outcome } => format!("RUN OVER: {outcome:?}"),
     };

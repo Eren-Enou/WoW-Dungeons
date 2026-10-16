@@ -1,9 +1,10 @@
 # Dungeon Forge blueprint: The Hollow Reliquary (original).
 #
 # Same generator, same components, different kit and intent: a buried
-# monastery laid out along a processional axis, with burial cells off the
-# nave, a parallel aisle, a cloister walk back, and tactical fights built on
-# pillars, screens and patrols.
+# monastery laid out along a processional axis, with a burial cell and a
+# mourner's chapel off the nave, a servants' passage to flank a guarded hall,
+# a detour to a sealed offertory, a cloister walk back, and tactical fights
+# built on pillars, screens and patrols.
 #   cargo run --release -p dungeon_forge -- generate assets/forge/blueprints/hollow_reliquary.toml
 
 [blueprint]
@@ -22,13 +23,11 @@ challenges = ["protect_caster", "line_of_sight", "patrol", "council", "interrupt
 [layout]
 extra_rooms = [0, 1]
 descents = 1              # one stair down to the lower crypt
-alternate_routes = 1      # a parallel aisle
 shortcut = "loop"         # a cloister walk back to an earlier hall
 bridges = 0
 winding = 0.1             # cut-stone passages run straight
 straightness = 0.85       # a processional axis
 passages = 0.15
-side_rooms = [1, 2]       # sealed burial cells to explore
 
 [[encounters]]
 recipe = "warden_screen"
@@ -53,3 +52,28 @@ recipe = "sealed_revenant"
 
 [[optional]]
 recipe = "crawler_rush"
+
+# 0.9: every branch says what it is for. The generator builds it to deliver
+# that and measures that it does (DUNGEON_REMIX_0_9.md), or tries again.
+
+# A servants' passage into a guarded hall: come in from the side or behind
+# the Warden's Screen, the Bone Archers or the Censer Procession, out of
+# their aggro, instead of walking into their front.
+[[routes]]
+purpose = "flank"
+
+# A detour through the crawlers' nest to a sealed offertory: a fight and a
+# coffer for a few more rooms of walking; it rejoins the nave further on.
+[[routes]]
+purpose = "detour"
+optional = 2
+cache = true
+
+# The Sealed Revenant waits in a burial cell off the nave.
+[[side]]
+purpose = "optional"
+optional = 1
+
+# The Chapel of the Mourner: a landmark, nothing to fight or take.
+[[side]]
+purpose = "vista"

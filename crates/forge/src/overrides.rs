@@ -24,6 +24,7 @@ pub fn apply(generated: &str, patch: &str, patch_name: &str) -> Result<String, S
     let mut base: Value = toml::from_str(generated).map_err(|e| format!("generated file: {e}"))?;
     let patch: Value = toml::from_str(patch).map_err(|e| format!("{patch_name}: {e}"))?;
     merge(&mut base, &patch, "")?;
+    prune_branch_rewards(&mut base);
     let header: String = generated
         .lines()
         .take_while(|l| l.starts_with('#') || l.trim().is_empty())
@@ -34,6 +35,37 @@ pub fn apply(generated: &str, patch: &str, patch_name: &str) -> Result<String, S
     Ok(format!(
         "{header}# Designer overrides applied from {patch_name}.\n\n{body}"
     ))
+}
+
+/// Branch records (0.9) list the encounters and caches a branch holds; they
+/// are derived presentation data, so a removed encounter just drops out.
+fn prune_branch_rewards(base: &mut Value) {
+    let ids = |v: &Value, key: &str| -> Vec<String> {
+        v.get(key)
+            .and_then(|a| a.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|e| e.get("id").and_then(|i| i.as_str()).map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let mut known = ids(base, "encounters");
+    if let Some(d) = base.get("dungeon") {
+        known.extend(ids(d, "caches"));
+    }
+    let Some(branches) = base
+        .get_mut("dungeon")
+        .and_then(|d| d.get_mut("branches"))
+        .and_then(|b| b.as_array_mut())
+    else {
+        return;
+    };
+    for b in branches {
+        if let Some(Value::Array(r)) = b.get_mut("rewards") {
+            r.retain(|v| v.as_str().is_some_and(|s| known.iter().any(|k| k == s)));
+        }
+    }
 }
 
 fn merge(base: &mut Value, patch: &Value, path: &str) -> Result<(), String> {

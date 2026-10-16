@@ -3,7 +3,9 @@
 //! The composer knows where decoration *could* go without covering floor:
 //! * pillar holes and their four faces;
 //! * the walls of each room (at mount height, above heads);
-//! * both sides of every doorway;
+//! * both sides of every doorway (`branch_door` instead of `door_side` where a
+//!   main-route room opens into a branch, so kits can mark the way to a
+//!   detour, a flank, a cache or a landmark; 0.9);
 //! * cut corners;
 //! * the outside of room corners.
 //!
@@ -49,6 +51,8 @@ pub struct Anchor {
     /// A footprint of radius r is placed at `pos + push * r`.
     pub push: V2,
     pub used: String,
+    /// `branch_door`: the purpose of the branch the doorway leads into.
+    pub branch: Option<&'static str>,
 }
 
 fn r2(v: V2) -> V2 {
@@ -61,18 +65,21 @@ fn yaw_toward(dir: V2) -> f32 {
     (d * 10.0).round() / 10.0
 }
 
-/// Corridor mouths on room `r`: (point on the wall line, side, half width).
-fn mouths(plan: &Plan, r: usize) -> Vec<(V2, Dir, f32)> {
+/// Corridor mouths on room `r`: (point on the wall line, side, half width,
+/// corridor index).
+fn mouths(plan: &Plan, r: usize) -> Vec<(V2, Dir, f32, usize)> {
     let room = &plan.rooms[r];
     plan.corridors
         .iter()
-        .filter_map(|c| {
+        .enumerate()
+        .filter_map(|(k, c)| {
             let v = c.dir.lateral();
             if c.a == r {
                 Some((
                     room.center() + c.dir.unit() * room.ext(c.dir) + v * c.off_a,
                     c.dir,
                     c.width / 2.0,
+                    k,
                 ))
             } else if c.b == r {
                 let d = c.dir.opposite();
@@ -80,12 +87,25 @@ fn mouths(plan: &Plan, r: usize) -> Vec<(V2, Dir, f32)> {
                     room.center() + d.unit() * room.ext(d) + v * c.off_b,
                     d,
                     c.width / 2.0,
+                    k,
                 ))
             } else {
                 None
             }
         })
         .collect()
+}
+
+/// The purpose of the branch corridor `k` belongs to, when it opens off a
+/// main-route room (the doorway a player sees from the main route).
+fn branch_of(plan: &Plan, room: usize, k: usize) -> Option<&'static str> {
+    if !plan.main.contains(&room) {
+        return None;
+    }
+    plan.branches
+        .iter()
+        .find(|b| b.corridors.contains(&k))
+        .map(|b| b.kind.label())
 }
 
 /// All anchors of the plan, rooms in order.
@@ -99,6 +119,21 @@ pub fn anchors(plan: &Plan, pillars: &[Vec<Rect>]) -> Vec<Anchor> {
         for h in &pillars[i] {
             let hc = (h.min + h.max) * 0.5;
             let half = (h.max.x - h.min.x) * 0.5;
+            // A landmark room's hole is a plinth for its landmark (0.9).
+            if r.kind == RoomKind::Vista {
+                out.push(Anchor {
+                    kind: "plinth",
+                    pos: r2(hc),
+                    y: r.y,
+                    yaw: 0.0,
+                    room: i,
+                    clearance: half,
+                    push: V2::ZERO,
+                    used: String::new(),
+                    branch: None,
+                });
+                continue;
+            }
             out.push(Anchor {
                 kind: "pillar",
                 pos: r2(hc),
@@ -108,6 +143,7 @@ pub fn anchors(plan: &Plan, pillars: &[Vec<Rect>]) -> Vec<Anchor> {
                 clearance: half,
                 push: V2::ZERO,
                 used: String::new(),
+                branch: None,
             });
             for nrm in [
                 V2::new(1.0, 0.0),
@@ -124,10 +160,14 @@ pub fn anchors(plan: &Plan, pillars: &[Vec<Rect>]) -> Vec<Anchor> {
                     clearance: 0.6,
                     push: V2::ZERO,
                     used: String::new(),
+                    branch: None,
                 });
             }
         }
-        if r.kind == RoomKind::Bend {
+        // Passage bends get no wall or door decoration, except the markers
+        // on a doorway into a branch (0.9).
+        let bend = r.kind == RoomKind::Bend;
+        if bend && !plan.branches.iter().any(|b| b.from == i || b.to == Some(i)) {
             continue;
         }
         let ms = mouths(plan, i);
@@ -162,12 +202,12 @@ pub fn anchors(plan: &Plan, pillars: &[Vec<Rect>]) -> Vec<Anchor> {
             let along = (b - a) * (1.0 / len);
             let into = side.unit() * -1.0;
             let count = (len / WALL_SPACING).floor().max(1.0) as usize;
-            for k in 0..count {
+            for k in 0..if bend { 0 } else { count } {
                 let p = a + along * (len * (k as f32 + 0.5) / count as f32);
                 // Not at a doorway, not in a corner.
                 let near_door = ms
                     .iter()
-                    .any(|(m, d, hw)| *d == side && m.dist(p) < hw + 1.6);
+                    .any(|(m, d, hw, _)| *d == side && m.dist(p) < hw + 1.6);
                 let t = a.dist(p).min(b.dist(p));
                 if near_door || t < 1.5 {
                     continue;
@@ -181,11 +221,16 @@ pub fn anchors(plan: &Plan, pillars: &[Vec<Rect>]) -> Vec<Anchor> {
                     clearance: 0.6,
                     push: V2::ZERO,
                     used: String::new(),
+                    branch: None,
                 });
             }
             // Both sides of every doorway on this side.
-            for (m, d, hw) in &ms {
+            for (m, d, hw, k) in &ms {
                 if *d != side {
+                    continue;
+                }
+                let branch = branch_of(plan, i, *k);
+                if bend && branch.is_none() {
                     continue;
                 }
                 for sgn in [-1.0f32, 1.0] {
@@ -195,7 +240,11 @@ pub fn anchors(plan: &Plan, pillars: &[Vec<Rect>]) -> Vec<Anchor> {
                         continue;
                     }
                     out.push(Anchor {
-                        kind: "door_side",
+                        kind: if branch.is_some() {
+                            "branch_door"
+                        } else {
+                            "door_side"
+                        },
                         pos: r2(p),
                         y: r.y + MOUNT,
                         yaw: yaw_toward(into),
@@ -203,9 +252,13 @@ pub fn anchors(plan: &Plan, pillars: &[Vec<Rect>]) -> Vec<Anchor> {
                         clearance: 0.6,
                         push: V2::ZERO,
                         used: String::new(),
+                        branch,
                     });
                 }
             }
+        }
+        if bend {
+            continue;
         }
         // Corners: cut corners (inside the room's box, outside its floor)
         // and the outside of every corner (behind the walls).
@@ -232,6 +285,7 @@ pub fn anchors(plan: &Plan, pillars: &[Vec<Rect>]) -> Vec<Anchor> {
                     clearance: cut / 6.0,
                     push: V2::ZERO,
                     used: String::new(),
+                    branch: None,
                 });
             }
             out.push(Anchor {
@@ -243,6 +297,7 @@ pub fn anchors(plan: &Plan, pillars: &[Vec<Rect>]) -> Vec<Anchor> {
                 clearance: 3.0,
                 push: V2::new(sx, sz),
                 used: String::new(),
+                branch: None,
             });
         }
     }
@@ -255,6 +310,7 @@ pub fn legacy_rules(kit: &Kit) -> Vec<DecorateRule> {
     let rule = |anchor: &str| DecorateRule {
         anchor: anchor.into(),
         rooms: Vec::new(),
+        branches: Vec::new(),
         every: 1,
         offset: 0,
         chance: 1.0,
@@ -311,6 +367,8 @@ fn role(kind: RoomKind) -> &'static str {
         RoomKind::Side => "side",
         RoomKind::Overlook => "overlook",
         RoomKind::Bend => "passage",
+        RoomKind::Vault => "vault",
+        RoomKind::Vista => "vista",
     }
 }
 
@@ -389,6 +447,10 @@ pub fn decorate(plan: &Plan, kit: &Kit, out: &mut Composed) -> Vec<AnchorConfig>
             count[a.room] += 1;
             if !a.used.is_empty()
                 || (!rule.rooms.is_empty() && !rule.rooms.iter().any(|r| r == role(room.kind)))
+                || (!rule.branches.is_empty()
+                    && !a
+                        .branch
+                        .is_some_and(|b| rule.branches.iter().any(|x| x == b)))
                 || !(j + rule.offset).is_multiple_of(rule.every)
                 || hash(plan.seed, ri as u64, a.room as u64, j as u64) >= rule.chance
             {

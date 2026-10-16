@@ -99,6 +99,9 @@ pub struct HubUi {
     pub companions_dirty: bool,
     /// Open the selected dungeon in the viewer (set by a button).
     pub open_viewer: bool,
+    /// The seed being typed for "Seed" (0.9), and whether typing goes there.
+    pub seed_input: String,
+    pub seed_focus: bool,
 }
 
 impl Default for HubUi {
@@ -113,6 +116,8 @@ impl Default for HubUi {
             dirty: true,
             companions_dirty: true,
             open_viewer: false,
+            seed_input: String::new(),
+            seed_focus: false,
         }
     }
 }
@@ -143,6 +148,11 @@ pub enum HubAction {
     Reload,
     /// Inspect the selected dungeon in the viewer.
     OpenViewer,
+    /// 0.9 layouts: the shipped file, a new random seed, or the typed seed.
+    LayoutClassic,
+    LayoutRemix,
+    LayoutSeedFocus,
+    LayoutSeedGo,
     /// Change a sandbox knob by a factor (or reset with `Knob::Reset`).
     Sandbox(Knob, f32),
 }
@@ -615,6 +625,22 @@ pub fn hub_tooltip(action: &HubAction, data: &GameData, ui: &HubUi) -> Option<Ti
             "Dungeon viewer",
             "Fly through the selected dungeon without fighting: rooms, navigation, encounters and modular art. Backspace returns here.",
         ),
+        HubAction::LayoutClassic => Tip::new(
+            "Classic layout",
+            "The dungeon as shipped: the same rooms every run.",
+        ),
+        HubAction::LayoutRemix => Tip::new(
+            "Remix",
+            "A new random seed: the same encounters and bosses in different rooms, with different side branches, detours and approaches. The seed is shown, so you can replay it.",
+        ),
+        HubAction::LayoutSeedFocus => Tip::new(
+            "Seed",
+            "Click, then type a seed number (Backspace deletes, Enter uses it, Esc stops typing). The same seed always builds the same layout.",
+        ),
+        HubAction::LayoutSeedGo => Tip::new(
+            "Use this seed",
+            "Build the typed seed's layout for the next run. If that seed cannot be built, the classic layout stays selected and the reason is shown.",
+        ),
     })
 }
 
@@ -780,6 +806,32 @@ pub fn apply_action(action: HubAction, data: &mut GameData, ui: &mut HubUi) {
             ui.open_viewer = true;
             save = false;
         }
+        HubAction::LayoutClassic => {
+            let id = data.profile.selected_dungeon.clone();
+            data.layout = Some(crate::remix::LayoutChoice::classic(&id));
+            ui.seed_focus = false;
+            data.flash("Classic layout: the dungeon as shipped");
+            save = false;
+        }
+        HubAction::LayoutRemix => {
+            let seed = crate::remix::random_seed();
+            choose_layout(data, crate::remix::LayoutMode::Remix, seed);
+            ui.seed_input = seed.to_string();
+            ui.seed_focus = false;
+            save = false;
+        }
+        HubAction::LayoutSeedFocus => {
+            ui.seed_focus = !ui.seed_focus;
+            save = false;
+        }
+        HubAction::LayoutSeedGo => {
+            ui.seed_focus = false;
+            match ui.seed_input.trim().parse::<u64>() {
+                Ok(seed) if seed > 0 => choose_layout(data, crate::remix::LayoutMode::Seed, seed),
+                _ => data.flash("Type a seed number first (1 or more)"),
+            }
+            save = false;
+        }
         HubAction::Reload => {
             if data.reload_content() {
                 data.flash("Content reloaded OK");
@@ -792,6 +844,32 @@ pub fn apply_action(action: HubAction, data: &mut GameData, ui: &mut HubUi) {
     if save {
         data.save();
     }
+}
+
+/// Generate `seed` of the selected dungeon's blueprint and choose it for the
+/// next run; on failure keep the classic layout and say why.
+fn choose_layout(data: &mut GameData, mode: crate::remix::LayoutMode, seed: u64) {
+    let id = data.profile.selected_dungeon.clone();
+    let Some(bp) = data.selected_content().and_then(crate::remix::remixable) else {
+        data.flash("This dungeon has no blueprint to remix");
+        return;
+    };
+    let dir = crate::remix::generated_dir(&data.save_path);
+    let mut choice = crate::remix::LayoutChoice::classic(&id);
+    match crate::remix::generate(&bp, seed, &dir, &id) {
+        Ok((content, file)) => {
+            choice.mode = mode;
+            choice.seed = Some(seed);
+            choice.content = Some(content);
+            choice.file = Some(file);
+            data.flash(format!("Next run: {}", choice.label()));
+        }
+        Err(e) => {
+            choice.error = Some(e.clone());
+            data.flash(format!("{e} - the classic layout stays selected"));
+        }
+    }
+    data.layout = Some(choice);
 }
 
 // --------------------------------------------------------------- panel --
@@ -824,7 +902,7 @@ fn rebuild_panel(
         match ui.tab {
             Tab::Party => party_tab(p, &data),
             Tab::Character => character_tab(p, &data, ui),
-            Tab::Dungeons => dungeons_tab(p, &data),
+            Tab::Dungeons => dungeons_tab(p, &data, ui),
             Tab::Classes => classes_tab(p),
             Tab::History => history_tab(p, &data),
             Tab::Sandbox => sandbox_tab(p, &data),
@@ -1085,7 +1163,77 @@ fn character_tab(p: &mut ChildSpawnerCommands, data: &GameData, ui: &HubUi) {
     }
 }
 
-fn dungeons_tab(p: &mut ChildSpawnerCommands, data: &GameData) {
+/// Layout choice for forge-made dungeons (0.9): classic, remix, or a seed.
+fn layout_row(p: &mut ChildSpawnerCommands, data: &GameData, ui: &HubUi) {
+    let Some(c) = data.selected_content() else {
+        return;
+    };
+    if crate::remix::remixable(c).is_none() {
+        return;
+    }
+    let chosen = data.selected_layout();
+    let mode = chosen
+        .filter(|l| l.content.is_some())
+        .map(|l| l.mode)
+        .unwrap_or(crate::remix::LayoutMode::Classic);
+    row(p, |r| {
+        label(r, "Layout:", 13.0, Color::WHITE);
+        button(
+            r,
+            "Classic",
+            HubAction::LayoutClassic,
+            mode == crate::remix::LayoutMode::Classic,
+        );
+        button(
+            r,
+            "Remix (new seed)",
+            HubAction::LayoutRemix,
+            mode == crate::remix::LayoutMode::Remix,
+        );
+        button(
+            r,
+            if ui.seed_focus {
+                format!("Seed: {}_", ui.seed_input)
+            } else if ui.seed_input.is_empty() {
+                "Seed: (click, type)".to_string()
+            } else {
+                format!("Seed: {}", ui.seed_input)
+            },
+            HubAction::LayoutSeedFocus,
+            ui.seed_focus,
+        );
+        button(
+            r,
+            "Use seed (Enter)",
+            HubAction::LayoutSeedGo,
+            mode == crate::remix::LayoutMode::Seed,
+        );
+    });
+    let (text, color) = match chosen {
+        Some(l) if l.error.is_some() => (
+            format!(
+                "{} - the classic layout stays selected",
+                l.error.as_deref().unwrap_or("")
+            ),
+            Color::srgb(1.0, 0.45, 0.35),
+        ),
+        Some(l) if l.content.is_some() => (
+            format!(
+                "Next run: {} - same encounters and bosses, different rooms and routes. Type this seed again to replay the layout.",
+                l.label()
+            ),
+            Color::srgb(0.6, 0.95, 0.75),
+        ),
+        _ => (
+            "Next run: classic layout (the dungeon as shipped). Remix or a seed builds a new layout of the same dungeon."
+                .to_string(),
+            Color::srgb(0.75, 0.75, 0.75),
+        ),
+    };
+    label(p, text, 12.0, color);
+}
+
+fn dungeons_tab(p: &mut ChildSpawnerCommands, data: &GameData, ui: &HubUi) {
     let pr = &data.profile;
     row(p, |r| {
         label(
@@ -1097,6 +1245,7 @@ fn dungeons_tab(p: &mut ChildSpawnerCommands, data: &GameData) {
         button(r, "Reload files (F5)", HubAction::Reload, false);
         button(r, "Inspect in viewer (V)", HubAction::OpenViewer, false);
     });
+    layout_row(p, data, ui);
     for d in &data.library.dungeons {
         let selected = d.dungeon.id == pr.selected_dungeon;
         row(p, |r| {
@@ -1605,10 +1754,49 @@ fn hub_keys(
     mut req: ResMut<crate::viewer::ViewerRequest>,
     mut next: ResMut<NextState<AppState>>,
 ) {
+    // Typing a seed (0.9): digits, Backspace, Enter; nothing else reacts.
+    if ui.seed_focus {
+        let digits = [
+            KeyCode::Digit0,
+            KeyCode::Digit1,
+            KeyCode::Digit2,
+            KeyCode::Digit3,
+            KeyCode::Digit4,
+            KeyCode::Digit5,
+            KeyCode::Digit6,
+            KeyCode::Digit7,
+            KeyCode::Digit8,
+            KeyCode::Digit9,
+        ];
+        for (d, key) in digits.into_iter().enumerate() {
+            if keys.just_pressed(key) && ui.seed_input.len() < 12 {
+                ui.seed_input.push(char::from(b'0' + d as u8));
+                ui.dirty = true;
+            }
+        }
+        if keys.just_pressed(KeyCode::Backspace) {
+            ui.seed_input.pop();
+            ui.dirty = true;
+        }
+        if keys.just_pressed(KeyCode::Escape) {
+            ui.seed_focus = false;
+            ui.dirty = true;
+        }
+        if keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::NumpadEnter) {
+            apply_action(HubAction::LayoutSeedGo, &mut data, &mut ui);
+        }
+        return;
+    }
     if keys.just_pressed(KeyCode::KeyV) || ui.open_viewer {
         ui.open_viewer = false;
-        // The viewer reads the dungeon selected here; nothing is saved.
-        req.target = Some(data.profile.selected_dungeon.clone());
+        // The viewer reads the dungeon selected here (or its chosen layout's
+        // generated file); nothing is saved.
+        req.target = Some(
+            data.selected_layout()
+                .and_then(|l| l.file.as_ref())
+                .map(|f| f.display().to_string())
+                .unwrap_or_else(|| data.profile.selected_dungeon.clone()),
+        );
         req.blueprint = None;
         req.room = None;
         next.set(AppState::Viewer);

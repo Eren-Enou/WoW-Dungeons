@@ -7,6 +7,7 @@
 //! the game's loader → `check` (structure, encounter space) → `simtest`
 //! (simulated party clears) and `report` (where parties die or get stuck). See DUNGEON_FORGE_PLAN.md.
 
+pub mod audit;
 pub mod blueprint;
 pub mod build;
 pub mod check;
@@ -19,7 +20,9 @@ pub mod map;
 pub mod overrides;
 pub mod placement;
 pub mod populate;
+pub mod purpose;
 pub mod report;
+pub mod routes;
 pub mod simtest;
 
 #[cfg(test)]

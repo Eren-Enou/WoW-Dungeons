@@ -28,4 +28,6 @@ pub use events::{CastError, Event, EventKind, Label};
 pub use math::V2;
 pub use metrics::RunSummary;
 pub use profile::Profile;
-pub use sim::{ActorId, DT, EnemyMode, PartyMemberSpec, RunOptions, RunOutcome, Sim, Team};
+pub use sim::{
+    ActorId, DT, EnemyMode, PartyMemberSpec, RouteStep, RunOptions, RunOutcome, Sim, Team,
+};

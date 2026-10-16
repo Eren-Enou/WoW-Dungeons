@@ -448,6 +448,143 @@ def forge_lantern():
     return [("iron", iron, FORGE_IRON), ("ember", ember, pbr((0.9, 0.35, 0.08), emissive=(1.0, 0.45, 0.1), strength=8.0))]
 
 
+# ---- 0.9: treasure caches, landmarks and branch-door markers --------------
+# Caches stand on the floor (they are run objects, not scenery props) with
+# the front toward -z; landmarks fill a 2.4 m landmark plinth; markers hang
+# from the wall face like the sconces.
+
+CRYPT_TEAL = pbr((0.1, 0.35, 0.33), emissive=(0.35, 1.0, 0.85), strength=5.0)
+BRONZE = pbr((0.42, 0.3, 0.14), metallic=0.85, rough=0.45)
+GOLD = pbr((0.8, 0.62, 0.2), metallic=0.9, rough=0.35, emissive=(1.0, 0.75, 0.3), strength=1.5)
+
+
+def crypt_coffer(opened=False):
+    """A stone reliquary coffer with bronze bands; a teal glyph glows on the
+    front while it is sealed. Opened: the lid leans against the back."""
+    stone, dark, bronze, glyph, gold = Mesh(), Mesh(), Mesh(), Mesh(), Mesh()
+    box(dark, -0.75, 0.0, -0.45, 0.75, 0.12, 0.45)              # plinth
+    box(stone, -0.68, 0.12, -0.4, 0.68, 0.72, 0.4)               # body
+    for x in (-0.45, 0.45):
+        box(bronze, x - 0.05, 0.12, -0.43, x + 0.05, 0.74, 0.43)
+    if opened:
+        box(stone, -0.72, 0.72, 0.42, 0.72, 1.62, 0.6)           # lid, leaning back
+        box(gold, -0.55, 0.62, -0.3, 0.55, 0.7, 0.3)             # glint inside
+    else:
+        box(stone, -0.74, 0.72, -0.46, 0.74, 0.92, 0.46)         # lid
+        box(dark, -0.6, 0.92, -0.32, 0.6, 0.98, 0.32)            # lid ridge
+        box(glyph, -0.16, 0.3, -0.43, 0.16, 0.56, -0.4)          # sealed glyph
+    parts = [("stone", stone, CRYPT_STONE), ("trim", dark, CRYPT_STONE_DARK), ("bronze", bronze, BRONZE)]
+    parts.append(("gold", gold, GOLD) if opened else ("glyph", glyph, CRYPT_TEAL))
+    return parts
+
+
+def forge_strongbox(opened=False):
+    """An iron-bound forge strongbox; an ember seam glows round the lid while
+    it is shut. Opened: the lid stands up behind and the inside glints."""
+    iron, band, ember, gold = Mesh(), Mesh(), Mesh(), Mesh()
+    box(iron, -0.62, 0.0, -0.42, 0.62, 0.66, 0.42)               # body
+    for x in (-0.5, 0.0, 0.5):
+        box(band, x - 0.06, 0.0, -0.45, x + 0.06, 0.68, 0.45)
+    if opened:
+        box(iron, -0.64, 0.66, 0.38, 0.64, 1.5, 0.5)             # lid, upright
+        box(gold, -0.5, 0.56, -0.3, 0.5, 0.64, 0.3)
+    else:
+        box(ember, -0.64, 0.6, -0.44, 0.64, 0.66, 0.44)          # glowing seam
+        box(iron, -0.66, 0.66, -0.46, 0.66, 0.86, 0.46)          # lid
+        box(band, -0.12, 0.3, -0.47, 0.12, 0.52, -0.44)          # lock plate
+    parts = [("iron", iron, FORGE_IRON), ("band", band, pbr((0.2, 0.17, 0.15), metallic=0.7, rough=0.6))]
+    parts.append(("gold", gold, GOLD) if opened else ("ember", ember, EMBER))
+    return parts
+
+
+def crypt_effigy():
+    """A landmark for a 2.4 m plinth: stepped base, a hooded stone mourner
+    with folded hands, and four teal grave-candles at the corners."""
+    stone, dark, wax, flame = Mesh(), Mesh(), Mesh(), Mesh()
+    box(dark, -1.15, 0.0, -1.15, 1.15, 0.35, 1.15)
+    box(stone, -0.9, 0.35, -0.9, 0.9, 0.75, 0.9)
+    stone.frustum(0.55, 0.75, 0.38, 2.4, cap_top=False, n=8)      # robe
+    stone.frustum(0.38, 2.4, 0.3, 2.75, cap_top=False, n=8)       # shoulders
+    dark.frustum(0.3, 2.75, 0.22, 3.15, cap_top=False, n=8)       # hood
+    dark.cone(0.22, 3.15, 3.45, n=8)
+    box(stone, -0.18, 1.7, -0.5, 0.18, 1.95, -0.3)               # folded hands
+    for (dx, dz) in [(-0.95, -0.95), (0.95, -0.95), (-0.95, 0.95), (0.95, 0.95)]:
+        merge(wax, shifted(lambda m: m.frustum(0.07, 0.35, 0.06, 0.75, cap_top=True, n=6), dx, dz))
+        merge(flame, shifted(lambda m: m.cone(0.06, 0.75, 0.95, n=5), dx, dz))
+    return [
+        ("stone", stone, CRYPT_STONE),
+        ("trim", dark, CRYPT_STONE_DARK),
+        ("wax", wax, pbr((0.75, 0.8, 0.76), rough=0.6)),
+        ("flame", flame, CRYPT_TEAL),
+    ]
+
+
+def forge_anvil_shrine():
+    """A landmark for a 2.4 m plinth: a basalt dais, a great anvil, and a
+    half-forged blade cooling on it with glowing seams."""
+    stone, iron, ember = Mesh(), Mesh(), Mesh()
+    box(stone, -1.15, 0.0, -1.15, 1.15, 0.4, 1.15)
+    box(stone, -0.85, 0.4, -0.85, 0.85, 0.7, 0.85)
+    box(iron, -0.3, 0.7, -0.25, 0.3, 1.3, 0.25)                  # waist
+    box(iron, -0.75, 1.3, -0.35, 0.75, 1.65, 0.35)               # face
+    box(iron, 0.75, 1.42, -0.18, 1.1, 1.62, 0.18)                # horn
+    box(ember, -0.6, 1.65, -0.08, 0.55, 1.71, 0.08)              # cooling blade
+    box(ember, -0.86, 0.68, -0.87, 0.86, 0.72, -0.85)            # seam in the dais
+    box(ember, -0.86, 0.68, 0.85, 0.86, 0.72, 0.87)
+    return [("stone", stone, BASALT_LIGHT), ("iron", iron, FORGE_IRON), ("ember", ember, EMBER)]
+
+
+def crypt_plaque():
+    """A carved tablet hung beside a doorway that leads somewhere off the
+    main route: a teal glyph and two grave-candles on a ledge."""
+    stone, glyph, wax, flame = Mesh(), Mesh(), Mesh(), Mesh()
+    box(stone, -0.32, -0.45, -0.08, 0.32, 0.4, 0.0)              # tablet
+    box(stone, -0.36, -0.52, -0.22, 0.36, -0.45, 0.0)            # ledge
+    box(glyph, -0.14, -0.2, -0.1, 0.14, 0.2, -0.08)
+    for dx in (-0.24, 0.24):
+        merge(wax, shifted(lambda m: m.frustum(0.035, -0.45, 0.03, -0.27, cap_top=True, n=6), dx, -0.14))
+        merge(flame, shifted(lambda m: m.cone(0.03, -0.27, -0.17, n=5), dx, -0.14))
+    return [
+        ("stone", stone, CRYPT_STONE_DARK),
+        ("glyph", glyph, CRYPT_TEAL),
+        ("wax", wax, pbr((0.75, 0.8, 0.76), rough=0.6)),
+        ("flame", flame, CRYPT_TEAL),
+    ]
+
+
+def forge_gate_lamp():
+    """A big caged lamp with a white-hot core on a chain, hung beside a
+    doorway that leads somewhere off the main route."""
+    iron, core = Mesh(), Mesh()
+    box(iron, -0.14, -0.25, -0.06, 0.14, 0.3, 0.0)               # plate
+    box(iron, -0.04, 0.22, -0.6, 0.04, 0.3, -0.06)               # arm
+    for k in range(4):                                           # chain
+        box(iron, -0.025, 0.15 - k * 0.09, -0.62, 0.025, 0.21 - k * 0.09, -0.58)
+    for (dx, dz) in [(-0.2, -0.4), (0.2, -0.4), (-0.2, -0.8), (0.2, -0.8)]:
+        box(iron, dx - 0.025, -0.75, dz - 0.025, dx + 0.025, -0.15, dz + 0.025)
+    box(iron, -0.24, -0.18, -0.84, 0.24, -0.12, -0.36)           # cage top
+    box(iron, -0.24, -0.8, -0.84, 0.24, -0.74, -0.36)            # cage bottom
+    core.frustum(0.15, -0.74, 0.09, -0.2, cap_top=True, n=6)
+    core.pos = [(x, y, z - 0.6) for (x, y, z) in core.pos]
+    return [("iron", iron, FORGE_IRON), ("core", core, pbr((1.0, 0.85, 0.5), emissive=(1.0, 0.82, 0.45), strength=10.0))]
+
+
+def write_remix():
+    os.makedirs(OUT, exist_ok=True)
+    for name, parts in [
+        ("crypt_coffer", crypt_coffer()),
+        ("crypt_coffer_open", crypt_coffer(opened=True)),
+        ("forge_strongbox", forge_strongbox()),
+        ("forge_strongbox_open", forge_strongbox(opened=True)),
+        ("crypt_effigy", crypt_effigy()),
+        ("forge_anvil_shrine", forge_anvil_shrine()),
+    ]:
+        write_glb(os.path.join(OUT, name + ".glb"), parts)
+    os.makedirs(OUT_KIT, exist_ok=True)
+    for name, parts in [("crypt_plaque", crypt_plaque()), ("forge_gate_lamp", forge_gate_lamp())]:
+        write_glb(os.path.join(OUT_KIT, name + ".glb"), parts)
+
+
 def write_kit():
     os.makedirs(OUT_KIT, exist_ok=True)
     for name, parts in [
@@ -470,3 +607,4 @@ if __name__ == "__main__":
     write_glb(os.path.join(OUT, "forge_brazier.glb"), brazier())
     write_glb(os.path.join(OUT, "crypt_candelabrum.glb"), candelabrum())
     write_kit()
+    write_remix()

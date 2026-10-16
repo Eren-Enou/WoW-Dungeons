@@ -23,15 +23,13 @@ summary = "Exploration through hot, winding caverns: a choice of routes, a ledge
 challenges = ["area_control", "patrol", "frontal", "interrupts", "summons"]
 
 [layout]
-extra_rooms = [1, 2]      # empty caverns on the main route
+extra_rooms = [2, 3]      # empty caverns on the main route (room for a drop that skips no fight)
 descents = 2              # two ramps down along the main route
-alternate_route = true    # a second way between two main-route rooms
 shortcut = "drop"         # a ledge that drops (one way) into a later room
 bridges = 1               # one crossing over lava
 winding = 0.4             # share of flat corridors that wind or angle
 straightness = 0.25       # caverns turn often
 passages = 0.25           # some approaches run through extra passage bends
-side_rooms = [0, 1]       # sometimes an empty cavern off the route to explore
 
 # Main route, in order. The last encounter is the final boss.
 [[encounters]]
@@ -52,6 +50,29 @@ recipe = "frontal_pack"
 [[encounters]]
 recipe = "final_cindermaw"
 
-# Side chambers off the main route.
 [[optional]]
 recipe = "optional_elite"
+
+# 0.9: every branch says what it is for (DUNGEON_REMIX_0_9.md).
+
+# A smoke-filled crawl into a guarded hall: reach the pack from the side
+# or behind instead of walking into its front. (Placed first: it is the
+# hardest to fit.)
+[[routes]]
+purpose = "flank"
+
+# The short way crosses pulsing magma vents; a longer tunnel goes round.
+[[routes]]
+purpose = "safe"
+
+# The Obsidian Sentinel guards a strongbox in a side tunnel that rejoins
+# the main cavern further on.
+[[routes]]
+purpose = "detour"
+optional = 1
+cache = true
+
+
+# The Anvil Shrine: a landmark cavern off the route.
+[[side]]
+purpose = "vista"

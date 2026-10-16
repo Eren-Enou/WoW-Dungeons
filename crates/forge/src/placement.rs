@@ -52,6 +52,8 @@ pub struct RoomView<'a> {
     pub other_mouths: Vec<V2>,
     /// Where the party waits before the pull (in the entry corridor).
     pub staging: V2,
+    /// Other spots a party may wait at before the pull (flank doors, 0.9).
+    pub extra_staging: Vec<V2>,
 }
 
 /// A pack already placed (for spacing).
@@ -229,7 +231,11 @@ pub fn place(
             (o.y - room.y).abs() >= 3.0 || p.dist(o.pos) >= o.aggro.max(max_aggro) + PACK_GAP
         })
     };
-    let staged = |p: V2, template: &str| p.dist(view.staging) - aggro(template) >= STAGING_MARGIN;
+    let staged = |p: V2, template: &str| {
+        std::iter::once(view.staging)
+            .chain(view.extra_staging.iter().copied())
+            .all(|s| p.dist(s) - aggro(template) >= STAGING_MARGIN)
+    };
     let off_hazards = |p: V2| hazards_at.iter().all(|(h, r)| p.dist(*h) > r + 1.0);
     // Free floor round a point (room to move), counted on the lattice.
     let roominess = |p: V2| lat.iter().filter(|q| q.dist(p) <= 7.0).count() as f32;

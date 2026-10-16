@@ -18,6 +18,7 @@ mod map2d;
 mod modules;
 mod navdebug;
 mod overlay;
+mod remix;
 mod results;
 mod structure;
 mod tooltip;
@@ -120,7 +121,8 @@ fn main() {
         demo::DemoPlugin(demo::parse_args()),
         viewer::ViewerPlugin(viewer_request),
     ))
-    .add_plugins(viewer::viewer_test_plugin);
+    .add_plugins(viewer::viewer_test_plugin)
+    .add_plugins(remix::remix_test_plugin);
     if let Some(secs) = smoke_seconds {
         app.insert_resource(common::SmokeTest {
             remaining: secs,

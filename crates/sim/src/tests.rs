@@ -1559,6 +1559,7 @@ fn victories_build_companion_familiarity() {
         rarity_bonus: 0,
         outcome: RunOutcome::Victory,
         cleared: vec![],
+        opened: vec![],
         kills: vec![],
         duration: 1.0,
         deaths: 0,
@@ -2774,4 +2775,75 @@ mobs = [{ template = "seer", pos = [10.0, 10.0] }]"#,
         .unwrap_err()
         .to_string();
     assert!(err.contains("los_blockable only applies"), "{err}");
+}
+
+// ---- 0.9: treasure caches.
+
+fn with_cache(at: V2) -> Content {
+    let mut c = Content::builtin();
+    c.dungeon.caches.push(crate::content::CacheConfig {
+        id: "c1_cache".into(),
+        name: "Test Coffer".into(),
+        pos: at,
+        y: None,
+        radius: 2.5,
+        model: None,
+        yaw: 0.0,
+    });
+    let mut l = c.loot[0].clone();
+    l.id = "coffer_ring".into();
+    l.source = Some("c1_cache".into());
+    c.loot.push(l);
+    c.validate("cache test").expect("valid");
+    c
+}
+
+#[test]
+fn caches_open_when_the_party_walks_up_and_roll_their_loot() {
+    // A cache at the entrance opens on the first tick.
+    let c = with_cache(Content::builtin().dungeon.entrance);
+    let party = default_party(ClassId::Striker);
+    let mut sim = Sim::new(&c, &party, 3);
+    sim.step();
+    assert!(sim.caches[0].opened_at.is_some());
+    assert!(
+        sim.events
+            .iter()
+            .any(|e| matches!(e.kind, EventKind::CacheOpened { cache: 0, .. }))
+    );
+    let report = crate::profile::RunReport::from_sim(&sim);
+    assert_eq!(report.opened, vec!["c1_cache".to_string()]);
+    // Its loot rolls like a cleared encounter's (no encounter cleared here).
+    let mut p = crate::profile::Profile::new_default();
+    let r = p.grant_rewards(&c, &report);
+    assert_eq!(r.items.len(), 1);
+    assert_eq!(r.items[0].base_id, "coffer_ring");
+    // Opening a cache never decides the run.
+    assert_eq!(sim.outcome, RunOutcome::InProgress);
+}
+
+#[test]
+fn caches_out_of_reach_stay_shut_and_change_nothing_else() {
+    // Far from the entrance: not opened at the start; the rest of the run is
+    // the same as without the cache until someone walks up to it.
+    let base = Content::builtin();
+    let far = base.encounters.last().unwrap().mobs[0].pos;
+    let c = with_cache(far);
+    let party = default_party(ClassId::Striker);
+    let mut a = Sim::new(&base, &party, 9);
+    let mut b = Sim::new(&c, &party, 9);
+    for _ in 0..200 {
+        a.step();
+        b.step();
+    }
+    assert!(b.caches[0].opened_at.is_none());
+    assert_eq!(a.events, b.events);
+}
+
+#[test]
+fn loot_may_name_a_cache_but_not_an_unknown_source() {
+    let mut c = Content::builtin();
+    c.loot[0].source = Some("c9_nowhere".into());
+    let e = c.validate("bad source").unwrap_err().to_string();
+    assert!(e.contains("not an encounter or cache id"), "{e}");
 }

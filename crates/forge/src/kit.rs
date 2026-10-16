@@ -36,6 +36,55 @@ pub struct Kit {
     /// equivalent to the 0.6/0.7 palette fields are used.
     #[serde(default)]
     pub decorate: Vec<DecorateRule>,
+    /// What 0.9 route and side-chamber purposes use (route hazards, caches).
+    #[serde(default)]
+    pub remix: Remix,
+}
+
+/// Content for purposeful branches (0.9).
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Remix {
+    /// The pulsing hazard on the short way of a `safe` route. Kits without
+    /// one cannot build safe routes.
+    pub route_hazard: Option<RouteHazard>,
+    /// What a treasure cache is called and looks like. Kits without one
+    /// cannot place caches.
+    pub cache: Option<CacheSpec>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RouteHazard {
+    pub name: String,
+    pub radius: f32,
+    pub damage: f32,
+    #[serde(default)]
+    pub school: Option<School>,
+    pub on: f32,
+    pub off: f32,
+    /// Distance between vents along the crossing.
+    #[serde(default = "vent_spacing")]
+    pub spacing: f32,
+}
+
+fn vent_spacing() -> f32 {
+    5.0
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CacheSpec {
+    pub name: String,
+    /// The cache's model (scenery; the trigger radius is separate).
+    pub prop: PropSpec,
+    /// How close a party member must come to open it.
+    #[serde(default = "cache_radius")]
+    pub radius: f32,
+}
+
+fn cache_radius() -> f32 {
+    2.5
 }
 
 /// Anchor kinds the composer computes.
@@ -46,6 +95,8 @@ pub const ANCHOR_KINDS: &[&str] = &[
     "door_side",
     "cut_corner",
     "outer_corner",
+    "branch_door",
+    "plinth",
 ];
 
 /// Put something at anchors of one kind.
@@ -57,6 +108,10 @@ pub struct DecorateRule {
     /// Room roles where the rule applies (empty = everywhere).
     #[serde(default)]
     pub rooms: Vec<String>,
+    /// For `branch_door` anchors: the branch purposes it marks (`detour`,
+    /// `flank`, `safe`, `optional`, `cache`, `vista`, `quiet`; empty = all).
+    #[serde(default)]
+    pub branches: Vec<String>,
     /// Use every n-th anchor of this kind in a room ...
     #[serde(default = "one_u")]
     pub every: u32,
@@ -173,6 +228,20 @@ pub struct RoomNames {
     pub overlook: Vec<String>,
     #[serde(default = "bend_names")]
     pub bend: Vec<String>,
+    /// Treasure-cache rooms (0.9).
+    #[serde(default = "vault_names")]
+    pub vault: Vec<String>,
+    /// Landmark rooms (0.9).
+    #[serde(default = "vista_names")]
+    pub vista: Vec<String>,
+}
+
+fn vault_names() -> Vec<String> {
+    vec!["Treasury".into()]
+}
+
+fn vista_names() -> Vec<String> {
+    vec!["Shrine".into()]
 }
 
 fn bend_names() -> Vec<String> {
@@ -283,6 +352,11 @@ pub struct RoomSpecs {
     pub overlook: RoomSpec,
     /// Passage bends: small elbows that lengthen winding routes.
     pub bend: RoomSpec,
+    /// Treasure-cache rooms (0.9; default: like side rooms).
+    pub vault: Option<RoomSpec>,
+    /// Landmark rooms (0.9; default: like chambers). A `pillars` shape with
+    /// a wide spacing gives one central plinth for a landmark prop.
+    pub vista: Option<RoomSpec>,
 }
 
 impl Default for RoomSpecs {
@@ -299,6 +373,8 @@ impl Default for RoomSpecs {
             side: RoomSpec::plain(7.0, 8.5, [0.0, 0.0]),
             overlook: RoomSpec::plain(5.0, 5.0, [0.0, 0.0]),
             bend: RoomSpec::plain(4.0, 4.0, [0.0, 0.0]),
+            vault: None,
+            vista: None,
         }
     }
 }
@@ -540,6 +616,8 @@ impl Kit {
             K::Side => &r.side,
             K::Overlook => &r.overlook,
             K::Bend => &r.bend,
+            K::Vault => r.vault.as_ref().unwrap_or(&r.side),
+            K::Vista => r.vista.as_ref().unwrap_or(&r.chamber),
         }
     }
 
@@ -572,6 +650,42 @@ impl Kit {
                 e.push(format!(
                     "{p}: light intensity in 0..=20, range in 1..=200, every at least 1"
                 ));
+            }
+            if !r.branches.is_empty() && r.anchor != "branch_door" {
+                e.push(format!(
+                    "{p}: branches = [...] applies to branch_door anchors only"
+                ));
+            }
+            for b in &r.branches {
+                if !crate::layout::BRANCH_LABELS.contains(&b.as_str()) {
+                    e.push(format!(
+                        "{p}: branches: '{b}' is not one of {}",
+                        crate::layout::BRANCH_LABELS.join(", ")
+                    ));
+                }
+            }
+        }
+        if let Some(h) = &self.remix.route_hazard
+            && !(h.radius > 0.5 && h.damage > 0.0 && h.on > 0.0 && h.off > 0.0 && h.spacing >= 2.0)
+        {
+            e.push(
+                "remix.route_hazard: radius > 0.5, damage > 0, on > 0, off > 0, spacing >= 2"
+                    .into(),
+            );
+        }
+        if let Some(c) = &self.remix.cache {
+            if let Some(problem) = model_path_problem(&c.prop.model) {
+                e.push(format!("remix.cache.prop: {problem}"));
+            }
+            if !(1.0..=5.0).contains(&c.radius) {
+                e.push(format!("remix.cache.radius = {}: use 1..=5 m", c.radius));
+            }
+            if !self
+                .loot
+                .iter()
+                .any(|l| l.source.as_deref() == Some("cache"))
+            {
+                e.push("remix.cache: no [[loot]] entry has source = \"cache\"; a cache must have something to give".into());
             }
         }
         if let Some(m) = &self.modules {
@@ -743,9 +857,9 @@ impl Kit {
         }
         for (i, l) in self.loot.iter().enumerate() {
             match l.source.as_deref() {
-                Some("final_boss" | "boss" | "optional" | "pack") | None => {}
+                Some("final_boss" | "boss" | "optional" | "pack" | "cache") | None => {}
                 Some(other) => e.push(format!(
-                    "loot[{i}] ('{}').source = '{other}': in a kit use final_boss, boss, optional or pack",
+                    "loot[{i}] ('{}').source = '{other}': in a kit use final_boss, boss, optional, pack or cache",
                     l.id
                 )),
             }

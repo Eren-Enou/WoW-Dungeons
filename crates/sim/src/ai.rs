@@ -895,11 +895,55 @@ fn follow_point(sim: &Sim, id: ActorId) -> Option<V3> {
     let ring = (index / FORMATION.len()) as f32 * 3.0;
     let fwd = sim.leader_heading;
     let right = V2::new(fwd.z, -fwd.x);
-    Some(ground(
-        sim,
-        leader.pos + right * ox + fwd * (oz - ring),
-        leader.y,
-    ))
+    let slot = ground(sim, leader.pos + right * ox + fwd * (oz - ring), leader.y);
+    if sim.options.slot_follow_only {
+        return Some(slot);
+    }
+    // 0.9: take the leader's way. A slot the leader can't see (it snapped
+    // behind a wall, into a parallel corridor or onto another level), or one
+    // inside an idle pack's aggro the leader kept out of, would send this
+    // follower round by another way; walk the leader's trail instead.
+    let chest = 1.2;
+    let hidden = (slot.y - leader.y).abs() > 1.5
+        || !sim.nav.line_of_sight(
+            V3::at(leader.pos, leader.y + chest),
+            V3::at(slot.xz(), slot.y + chest),
+        );
+    let into_aggro = sim.enemies.iter().any(|&e| {
+        let a = sim.actor(e);
+        let Some(es) = a.enemy.as_ref() else {
+            return false;
+        };
+        a.alive
+            && a.mode() == Some(EnemyMode::Idle)
+            && (a.y - slot.y).abs() <= 3.0
+            && a.pos.dist(slot.xz()) <= es.aggro_radius + 1.5
+            && a.pos.dist(leader.pos) > es.aggro_radius + 0.5
+    });
+    if !(hidden || into_aggro) {
+        return Some(slot);
+    }
+    trail_point(sim, 2.5 + 1.5 * index as f32).or(Some(slot))
+}
+
+/// The point `back` metres behind the leader along its recent trail.
+fn trail_point(sim: &Sim, back: f32) -> Option<V3> {
+    let leader = sim.actor(sim.leader);
+    let mut prev = leader.loc();
+    let mut left = back;
+    for &p in sim.leader_trail.iter().rev() {
+        let d = prev.dist(p);
+        if d >= left {
+            let t = left / d.max(1e-4);
+            return Some(V3::at(
+                prev.xz() + (p.xz() - prev.xz()) * t,
+                prev.y + (p.y - prev.y) * t,
+            ));
+        }
+        left -= d;
+        prev = p;
+    }
+    sim.leader_trail.first().copied()
 }
 
 fn out_of_combat(sim: &Sim, id: ActorId) -> Decision {
@@ -956,12 +1000,16 @@ fn autopilot(sim: &Sim, id: ActorId) -> Decision {
         target: Some(None),
         ..Default::default()
     };
-    let Some(next) = sim
-        .encounters
-        .iter()
-        .position(|e| !e.cleared && !(e.optional && sim.options.skip_optional))
-    else {
-        return d;
+    // A scripted route (0.9) comes first: walk its waypoints, pull its
+    // encounters; then the usual next uncleared encounter.
+    let step = sim.options.route.get(sim.route_step).copied();
+    let next = match step {
+        Some(crate::sim::RouteStep::Clear(e)) => Some(e),
+        Some(crate::sim::RouteStep::Goto(_)) => None,
+        None => sim
+            .encounters
+            .iter()
+            .position(|e| !e.cleared && !(e.optional && sim.options.skip_optional)),
     };
     let ready = sim.alive_party().all(|q| {
         let a = sim.actor(q);
@@ -970,6 +1018,16 @@ fn autopilot(sim: &Sim, id: ActorId) -> Decision {
     let gathered = sim
         .alive_party()
         .all(|q| sim.actor(q).loc().dist(me.loc()) <= 12.0 + 0.6 * sim.party.len() as f32);
+    if let Some(crate::sim::RouteStep::Goto(at)) = step {
+        // Regroup before each leg, as before a pull.
+        if gathered {
+            d.move_goal = Some(safe_spot(sim, id, at));
+        }
+        return d;
+    }
+    let Some(next) = next else {
+        return d;
+    };
     if !ready || !gathered {
         return d;
     }
