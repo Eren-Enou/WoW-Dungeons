@@ -6,6 +6,7 @@
 
 mod camera;
 mod cave;
+mod combat_feed;
 mod common;
 mod controls;
 mod demo;

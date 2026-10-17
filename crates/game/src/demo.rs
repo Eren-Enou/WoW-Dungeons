@@ -264,6 +264,7 @@ fn scripted_input(
         KeyCode::Digit1,
         KeyCode::Digit2,
         KeyCode::Digit3,
+        KeyCode::KeyK,
     ] {
         if keys.pressed(key) {
             keys.release(key);
@@ -292,6 +293,10 @@ fn scripted_input(
         if crossed(*at) {
             keys.press([KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3][i % 3]);
         }
+    }
+    // K hides this fight's numbers (0.9.2).
+    if crossed(21.0) {
+        keys.press(KeyCode::KeyK);
     }
     if crossed(22.0) {
         let a = &run.sim.actors[p];
@@ -327,6 +332,16 @@ fn scripted_input(
             failures.join("\n"),
             format!("engaged enemies: {engaged}"),
             format!(
+                "fight numbers shown after K: {} (expected false)",
+                run.show_fight
+            ),
+            format!("recent actions: {}", run.feed.len()),
+            run.feed
+                .iter()
+                .map(|(l, _)| format!("  {}", l.text))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            format!(
                 "facing {:.2} rad, camera yaw {:.2} rad, follow gap {:.2} rad",
                 pc.state.facing,
                 orbit.yaw,
@@ -337,7 +352,11 @@ fn scripted_input(
         info!("{report}");
         let _ = std::fs::create_dir_all("logs");
         let _ = std::fs::write("logs/input_test.txt", report);
-        exit.write(AppExit::Success);
+        exit.write(if run.show_fight {
+            AppExit::error()
+        } else {
+            AppExit::Success
+        });
     }
 }
 

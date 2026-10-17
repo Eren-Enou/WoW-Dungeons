@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.9.2 - Combat clarity
+
+Plan and results: COMBAT_CLARITY_0_9_2.md. Playtest script:
+PLAYTEST_COMBAT_0_9_2.md. Presentation only: the simulation is unchanged
+(identical event-log hashes to 0.9.1 over 320 runs).
+
+- **Your recent actions** above the action bar: up to four lines built
+  from the simulation's events. They name the ability, the target and
+  the outcome:
+  - damage with crits, dodges, misses and absorbs; an AoE is one line;
+  - healing with overheal;
+  - shields, defensives (from the ability's own numbers), taunts, crowd
+    control applied and broken (and by whom), dispels, threat drops;
+  - interrupts with the spell stopped, or "nothing to interrupt";
+  - companions' interrupts, dimmer.
+- **Floating text is ranked:**
+  - yours is larger and lasts longer, crits larger still;
+  - your ticks are smaller than your direct hits;
+  - partial absorbs show "(N abs)";
+  - interrupts float the spell stopped;
+  - your shields, defensives and crowd control float their name;
+  - companions' numbers are small and pale; in a 10-player raid their
+    ordinary hits and heals are not floated.
+- **This fight's numbers** (bottom right, K hides them), your role's
+  first:
+  - damage and per second;
+  - healing with overheal %, and shields absorbed;
+  - damage taken and avoidable damage taken;
+  - interrupts.
+- **Owner's playtest notes** recorded in PLAYTEST_REMIX_0_9.md.
+
 ## 0.9.1 - Dungeon Remix polish
 
 Details and measurements: DUNGEON_POLISH_0_9_1.md.

@@ -134,34 +134,43 @@ Human observations go here, with the date and build. Keep them separate
 from automated results, which are in DUNGEON_REMIX_0_9.md and
 DUNGEON_POLISH_0_9_1.md.
 
-Status 2026-10-16: no human observations of 0.9 or 0.9.1 have been recorded.
-The last recorded feedback is the owner's 0.8 notes (PLAYTEST_NOTES_0_8.md).
-The headings below are where they go.
+**Owner's playtest, reported 2026-10-17** (given with the 0.9.2 brief). The
+exact build (0.9.0 or 0.9.1) and the dungeon seeds played have not been
+identified. The observations are recorded as given; nothing is added.
 
 ### Positive impressions
-Pending.
+- Character movement and ability controls feel responsive.
+- Playing the character is enjoyable.
+- Autonomous companions perform exceptionally well, including damage,
+  interrupts and avoiding damage.
 
 ### Problems observed
-Pending (dungeon, seed, what happened, how to reproduce).
+- Combat lacks visual and numerical clarity.
+- It is difficult to recognise individual ability outcomes.
+- Combat needs further development before it becomes truly satisfying.
+
+(No dungeon, seed or reproduction steps given.)
 
 ### Confusing features or interactions
-Pending.
+- Ability outcomes (see above).
 
 ### Companion behaviour
-Pending.
+- Performs exceptionally well (see above).
 
 ### Camera and controls
-Pending.
+- Camera behaviour is good, with no bugs observed.
+- Controls feel responsive.
 
 ### Exploration and navigation
-Pending.
+- Procedural side passages have improved but remain inconsistent.
 
 ### Optional rewards and encounter pacing
-Pending.
+- Equipment progression is functional but not especially interesting yet.
 
 ### Procedural variation and replayability
-Pending. From the 0.8 notes: side exploration was interesting at first but
-felt unnecessary after about five runs.
+- See exploration above. From the 0.8 notes: side exploration was
+  interesting at first but felt unnecessary after about five runs.
 
 ### Suggestions
-Pending.
+- None beyond the above. 0.9.2 responds to the combat-clarity observations
+  (COMBAT_CLARITY_0_9_2.md).

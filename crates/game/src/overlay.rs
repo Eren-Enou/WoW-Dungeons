@@ -2,10 +2,12 @@
 //! (name, health bar, cast bar) and floating combat text.
 
 use crate::camera::MainCamera;
+use crate::combat_feed::own_effect;
 use crate::common::{AppState, text_font, to_vec3};
 use crate::dungeon::ActiveRun;
 use bevy::picking::Pickable;
 use bevy::prelude::*;
+use dungeon_sim::class::Effect;
 use dungeon_sim::sim::{PersonalThreat, TankThreat};
 use dungeon_sim::stats::HitOutcome;
 use dungeon_sim::{ActorId, EnemyMode, EventKind, Sim};
@@ -254,24 +256,48 @@ fn update_nameplates(
     }
 }
 
+/// Floating text, ranked (0.9.2): your own outcomes are largest and live
+/// longest; interrupts name the spell stopped; companions' hits and ticks are
+/// small and pale, and in a 10-player raid their ordinary auto-attacks and
+/// heals are not floated at all (they stay in the log and metrics).
 fn spawn_floating_text(mut commands: Commands, run: Res<ActiveRun>) {
     let sim = &run.sim;
     let player = sim.player;
+    let raid = sim.party.len() > 5;
+    let mine = |src: ActorId| Some(src) == player;
+    // Your over-time ticks are smaller than your direct hits.
+    let my_tick = |src: ActorId, what: &str| {
+        mine(src)
+            && player.is_some_and(|p| {
+                matches!(
+                    own_effect(sim, p, what),
+                    Some(Effect::Dot { .. } | Effect::Hot { .. })
+                )
+            })
+    };
+    let abs = |absorbed: f32| {
+        if absorbed > 0.0 {
+            format!(" ({absorbed:.0} abs)")
+        } else {
+            String::new()
+        }
+    };
     for (i, e) in run.fresh.iter().enumerate() {
         let jitter = ((sim.tick as usize + i) % 7) as f32 * 0.25 - 0.75;
-        let (who, text, color, size) = match &e.kind {
+        let (who, text, color, size, life) = match &e.kind {
             EventKind::Damage {
                 src,
                 dst,
+                what,
                 amount,
                 outcome,
                 absorbed,
                 ..
             } => {
-                let crit = &(*outcome == HitOutcome::Crit);
+                let crit = *outcome == HitOutcome::Crit;
+                let involves_player = mine(*src) || Some(*dst) == player;
                 if outcome.avoided() || *outcome == HitOutcome::Absorb {
-                    let involves_player = Some(*src) == player || Some(*dst) == player;
-                    if !involves_player && !sim.actors[*dst].is_enemy() {
+                    if !involves_player && (raid || !sim.actors[*dst].is_enemy()) {
                         continue;
                     }
                     let word = match outcome {
@@ -284,74 +310,144 @@ fn spawn_floating_text(mut commands: Commands, run: Res<ActiveRun>) {
                                 .unwrap_or_default()
                         }
                     };
-                    (*dst, word, Color::srgb(0.75, 0.75, 1.0), 13.0)
-                } else {
-                    let involves_player = Some(*src) == player || Some(*dst) == player;
-                    let color = if sim.actors[*dst].is_enemy() {
-                        if Some(*src) == player {
-                            Color::srgb(1.0, 0.95, 0.4)
-                        } else {
-                            Color::srgb(0.85, 0.85, 0.85)
-                        }
+                    let size = if involves_player { 15.0 } else { 11.0 };
+                    (*dst, word, Color::srgb(0.75, 0.75, 1.0), size, 1.1)
+                } else if mine(*src) {
+                    // Tier 1: your damage.
+                    let (color, size) = if crit {
+                        (Color::srgb(1.0, 0.7, 0.15), 24.0)
+                    } else if my_tick(*src, what) {
+                        (Color::srgb(0.95, 0.85, 0.45), 13.0)
                     } else {
-                        Color::srgb(1.0, 0.3, 0.25)
+                        (Color::srgb(1.0, 0.95, 0.4), 17.0)
                     };
-                    let size = if *crit {
-                        22.0
-                    } else if involves_player {
-                        16.0
-                    } else {
-                        12.0
-                    };
-                    let s = if *crit {
+                    let bang = if crit { "!" } else { "" };
+                    let s = format!("{amount:.0}{bang}{}", abs(*absorbed));
+                    (*dst, s, color, size, 1.3)
+                } else if Some(*dst) == player {
+                    // Damage you take.
+                    let size = if crit { 20.0 } else { 16.0 };
+                    let s = format!("-{amount:.0}{}", abs(*absorbed));
+                    (*dst, s, Color::srgb(1.0, 0.3, 0.25), size, 1.2)
+                } else if sim.actors[*dst].is_enemy() {
+                    // Tier 4: companions' hits and ticks.
+                    if raid && !crit {
+                        continue;
+                    }
+                    let s = if crit {
                         format!("{amount:.0}!")
                     } else {
                         format!("{amount:.0}")
                     };
-                    (*dst, s, color, size)
+                    let size = if crit { 14.0 } else { 11.0 };
+                    (*dst, s, Color::srgba(0.8, 0.8, 0.8, 0.8), size, 0.9)
+                } else {
+                    // Companions hurt.
+                    let size = if crit { 14.0 } else { 12.0 };
+                    let s = format!("{amount:.0}");
+                    (*dst, s, Color::srgb(1.0, 0.3, 0.25), size, 1.0)
                 }
             }
-            EventKind::Interrupt { dst, .. } => (
-                *dst,
-                "Interrupted!".to_string(),
-                Color::srgb(0.5, 0.85, 1.0),
-                16.0,
-            ),
-            EventKind::Dispel { dst, what, .. } => {
-                (*dst, format!("-{what}"), Color::srgb(0.9, 0.9, 0.5), 13.0)
+            // What was stopped: large for yours (tier 1), pale for companions'.
+            EventKind::Interrupt { src, dst, what } => {
+                let s = format!("Interrupted: {what}");
+                if mine(*src) {
+                    (*dst, s, Color::srgb(0.45, 0.85, 1.0), 20.0, 1.6)
+                } else {
+                    (*dst, s, Color::srgb(0.6, 0.75, 0.9), 14.0, 1.3)
+                }
             }
-            EventKind::CcBroken { dst, .. } => (
+            EventKind::Dispel { dst, what, .. } => (
                 *dst,
-                "CC broken".to_string(),
-                Color::srgb(1.0, 0.6, 0.2),
+                format!("-{what}"),
+                Color::srgb(0.9, 0.9, 0.5),
                 13.0,
+                1.1,
             ),
-            EventKind::Heal { dst, amount, .. } if *amount >= 1.0 => (
+            EventKind::CcBroken { dst, what } => (
                 *dst,
-                format!("+{amount:.0}"),
-                Color::srgb(0.3, 1.0, 0.4),
-                if Some(*dst) == player { 15.0 } else { 12.0 },
+                format!("{what} broken"),
+                Color::srgb(1.0, 0.6, 0.2),
+                14.0,
+                1.2,
             ),
+            EventKind::Heal {
+                src,
+                dst,
+                what,
+                amount,
+                crit,
+                ..
+            } if *amount >= 1.0 => {
+                let bang = if *crit { "!" } else { "" };
+                let s = format!("+{amount:.0}{bang}");
+                if mine(*src) {
+                    let size = if *crit {
+                        20.0
+                    } else if my_tick(*src, what) {
+                        13.0
+                    } else {
+                        16.0
+                    };
+                    (*dst, s, Color::srgb(0.35, 1.0, 0.45), size, 1.3)
+                } else if Some(*dst) == player {
+                    (*dst, s, Color::srgb(0.3, 1.0, 0.4), 15.0, 1.1)
+                } else {
+                    if raid && !*crit {
+                        continue;
+                    }
+                    (*dst, s, Color::srgba(0.3, 0.85, 0.4, 0.8), 11.0, 0.9)
+                }
+            }
+            // Your shields, defensives and crowd control, where they land.
+            EventKind::AuraApplied { src, dst, what, .. }
+                if mine(*src)
+                    && player.is_some_and(|p| {
+                        matches!(
+                            own_effect(sim, p, what),
+                            Some(
+                                Effect::Absorb { .. }
+                                    | Effect::DamageReduction { .. }
+                                    | Effect::Incapacitate { .. }
+                            )
+                        )
+                    }) =>
+            {
+                (
+                    *dst,
+                    what.to_string(),
+                    Color::srgb(0.75, 0.85, 1.0),
+                    15.0,
+                    1.3,
+                )
+            }
             EventKind::Interrupted { src, .. } => (
                 *src,
                 "Interrupted".to_string(),
                 Color::srgb(0.6, 0.8, 1.0),
                 14.0,
+                1.1,
             ),
-            EventKind::Taunt { dst, .. } => (
+            EventKind::Taunt { src, dst } => (
                 *dst,
                 "Taunted".to_string(),
                 Color::srgb(1.0, 0.5, 0.2),
-                13.0,
+                if mine(*src) { 16.0 } else { 13.0 },
+                1.1,
             ),
-            EventKind::Death { actor } => {
-                (*actor, "Dies".to_string(), Color::srgb(0.7, 0.7, 0.7), 14.0)
-            }
+            EventKind::Death { actor } => (
+                *actor,
+                "Dies".to_string(),
+                Color::srgb(0.7, 0.7, 0.7),
+                14.0,
+                1.1,
+            ),
             EventKind::Revive { actor } => (
                 *actor,
                 "Rallies!".to_string(),
                 Color::srgb(0.6, 1.0, 0.9),
                 14.0,
+                1.1,
             ),
             _ => continue,
         };
@@ -370,7 +466,7 @@ fn spawn_floating_text(mut commands: Commands, run: Res<ActiveRun>) {
             FloatingText {
                 world: to_vec3(a.pos, a.y + height),
                 age: 0.0,
-                life: 1.1,
+                life,
                 rise: 1.6,
                 drift: jitter,
             },

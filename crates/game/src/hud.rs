@@ -7,9 +7,10 @@
 //! The HUD also owns the *mouseover* target used by friendly spells.
 
 use crate::camera::MainCamera;
+use crate::combat_feed::Tone;
 use crate::common::{AppState, text_font};
 use crate::controls::{BlocksWorld, ControlSet, PlayerControl};
-use crate::dungeon::{ActiveRun, pick_actor, player_input};
+use crate::dungeon::{ActiveRun, FEED_LINES, FEED_SECS, pick_actor, player_input};
 use crate::tooltip::Tooltip;
 use bevy::picking::Pickable;
 use bevy::picking::hover::Hovered;
@@ -37,6 +38,7 @@ impl Plugin for HudPlugin {
                 Update,
                 (
                     update_texts,
+                    feed_backing.after(update_texts),
                     update_bars,
                     update_action_bar,
                     style_frames,
@@ -80,6 +82,10 @@ enum HudText {
     Banner,
     Alert,
     Error,
+    /// One of your recent actions above the action bar (0.9.2), oldest first.
+    Feed(usize),
+    /// Your numbers for the current or last fight (0.9.2).
+    Fight,
 }
 
 #[derive(Component, Clone, Copy)]
@@ -120,6 +126,7 @@ enum HudPanel {
     Tot,
     Boss,
     Cast,
+    Fight,
 }
 
 const GOLD: Color = Color::srgb(1.0, 0.82, 0.3);
@@ -388,6 +395,42 @@ pub fn spawn_hud(mut commands: Commands, run: Res<ActiveRun>) {
         ],
     ));
 
+    // Your recent actions (0.9.2), above the right half of the action bar,
+    // clear of your own character (the camera keeps it at the centre). A node
+    // of its own, so the lines don't move when the cast bar appears.
+    commands
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                left: percent(50),
+                margin: UiRect::left(px(60)),
+                bottom: px(162),
+                width: px(480),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::FlexStart,
+                row_gap: px(2),
+                ..default()
+            },
+            Pickable::IGNORE,
+            scoped.clone(),
+        ))
+        .with_children(|p| {
+            for i in 0..FEED_LINES {
+                p.spawn((
+                    Text::new(""),
+                    text_font(15.0),
+                    TextShadow::default(),
+                    Node {
+                        padding: UiRect::axes(px(6), px(1)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::NONE),
+                    HudText::Feed(i),
+                    Pickable::IGNORE,
+                ));
+            }
+        });
+
     // Cast bar, resource readout and action bar (bottom-centre).
     commands
         .spawn((
@@ -542,6 +585,29 @@ pub fn spawn_hud(mut commands: Commands, run: Res<ActiveRun>) {
         )],
     ));
 
+    // This fight's numbers (bottom-right, 0.9.2); K hides them.
+    commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            right: px(10),
+            bottom: px(10),
+            width: px(230),
+            padding: UiRect::all(px(6)),
+            ..default()
+        },
+        panel_bg,
+        HudPanel::Fight,
+        Pickable::IGNORE,
+        scoped.clone(),
+        children![(
+            Text::new(""),
+            text_font(12.0),
+            TextColor(Color::srgb(0.9, 0.9, 0.85)),
+            HudText::Fight,
+            Pickable::IGNORE,
+        )],
+    ));
+
     // Run info (top-right).
     commands.spawn((
         Node {
@@ -557,6 +623,38 @@ pub fn spawn_hud(mut commands: Commands, run: Res<ActiveRun>) {
         scoped,
         children![(Text::new(""), text_font(11.0), HudText::Info)],
     ));
+}
+
+/// A dark backing behind each feed line that has text, fading with it, so the
+/// lines stay readable over nameplates and bright floors.
+fn feed_backing(mut q: Query<(&Text, &TextColor, &HudText, &mut BackgroundColor)>) {
+    for (text, color, kind, mut bg) in &mut q {
+        if !matches!(kind, HudText::Feed(_)) {
+            continue;
+        }
+        let a = if text.0.is_empty() {
+            0.0
+        } else {
+            0.4 * color.0.alpha()
+        };
+        let want = Color::srgba(0.0, 0.0, 0.0, a);
+        if bg.0 != want {
+            bg.0 = want;
+        }
+    }
+}
+
+/// Feed colours: your interrupts and crits stand out, companions are dim.
+fn feed_color(t: Tone) -> Color {
+    match t {
+        Tone::Interrupt => Color::srgb(0.45, 0.85, 1.0),
+        Tone::Crit => Color::srgb(1.0, 0.82, 0.2),
+        Tone::Hit => Color::srgb(1.0, 0.96, 0.8),
+        Tone::Heal => Color::srgb(0.45, 1.0, 0.5),
+        Tone::Utility => Color::srgb(0.75, 0.85, 1.0),
+        Tone::Failed => Color::srgb(0.8, 0.6, 0.55),
+        Tone::Companion => Color::srgb(0.6, 0.68, 0.78),
+    }
 }
 
 fn class_tag(a: &Actor) -> String {
@@ -1033,7 +1131,8 @@ fn update_texts(run: Res<ActiveRun>, mut q: Query<(&mut Text, &mut TextColor, &H
                      Click/Tab target, T assist, G kill target\n\
                      1-5 abilities - heals use mouseover\n\
                      F attack, F1-F5 party, Esc clear\n\
-                     L verbose log, Backspace leave",
+                     L verbose log, K fight numbers\n\
+                     Backspace leave",
                 );
                 s
             }
@@ -1056,6 +1155,19 @@ fn update_texts(run: Res<ActiveRun>, mut q: Query<(&mut Text, &mut TextColor, &H
                 .as_ref()
                 .map(|(e, _)| e.clone())
                 .unwrap_or_default(),
+            HudText::Feed(i) => {
+                // Newest at the bottom; each line fades in its last second.
+                let skip = FEED_LINES.saturating_sub(run.feed.len());
+                match i.checked_sub(skip).and_then(|k| run.feed.get(k)) {
+                    Some((line, age)) => {
+                        let fade = (FEED_SECS - age).clamp(0.0, 1.0);
+                        color.0 = feed_color(line.tone).with_alpha(fade);
+                        line.text.clone()
+                    }
+                    None => String::new(),
+                }
+            }
+            HudText::Fight => run.fight.lines(sim).join("\n"),
         };
         if text.0 != s {
             text.0 = s;
@@ -1137,6 +1249,7 @@ fn update_bars(
             HudPanel::Cast => player
                 .and_then(|a| a.cast.as_ref())
                 .is_some_and(|c| matches!(c.kind, CastKind::Ability(_))),
+            HudPanel::Fight => run.show_fight && run.fight.current.is_some(),
         };
         let d = if show { Display::Flex } else { Display::None };
         if node.display != d {

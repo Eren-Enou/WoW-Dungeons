@@ -52,6 +52,7 @@ CONTROLS
   F                  auto-attack
   Esc                clear target
   L                  detailed combat log
+  K                  your numbers for this fight on/off
   N / Shift+N        navigation overlay (debug)
   Backspace          leave the dungeon (counts as a failed run)
   E                  (hub) enter the selected dungeon at the portal
@@ -66,6 +67,11 @@ CLASSES
 
 READING THE FIGHT
 -----------------
+- Above the action bar, on the right: what your last abilities did
+  ("Shield Slam > Ghoul: 82 CRIT", "Kick > interrupted ...",
+  "Mend > Brannoc: +120 (300 overheal)").
+- Your floating numbers are the large ones; companions' are small and
+  pale.
 - Enemy nameplate colours show threat: red means it is attacking you.
 - Orange/red rings on the ground are telegraphs: step out before they fill.
 - Cast bars on enemies can often be interrupted.

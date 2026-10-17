@@ -2,6 +2,7 @@
 //! timestep, and renders actors, walls, hazards and telegraphs.
 
 use crate::camera::{CameraBlockers, CameraFocus, MainCamera, OrbitCamera};
+use crate::combat_feed::{CombatFeed, FeedLine, FightTracker};
 use crate::common::{AppState, GameData, LastResult, rgb, to_vec3};
 use crate::controls::{ControlSet, PlayerControl};
 use crate::demo::DemoConfig;
@@ -68,6 +69,9 @@ const END_DELAY: f32 = 3.0;
 const LOG_LINES: usize = 11;
 /// How long a failed-action message stays on screen.
 const ERROR_SECS: f32 = 1.5;
+/// Lines kept above the action bar, and how long each stays (0.9.2).
+pub const FEED_LINES: usize = 4;
+pub const FEED_SECS: f32 = 4.0;
 
 #[derive(Resource)]
 pub struct ActiveRun {
@@ -93,6 +97,14 @@ pub struct ActiveRun {
     /// Number of actors that already have visuals (summons appear later).
     pub visuals_spawned: usize,
     pub wall_color: Color,
+    /// Your recent actions above the action bar, with their age (0.9.2).
+    pub feed: VecDeque<(FeedLine, f32)>,
+    pub feed_state: CombatFeed,
+    /// Your interrupts used, as counted so far (the feed needs the new ones).
+    pub interrupts_seen: u32,
+    /// Your numbers for the current or last fight, and whether they show (K).
+    pub fight: FightTracker,
+    pub show_fight: bool,
 }
 
 impl ActiveRun {
@@ -242,6 +254,11 @@ fn start_run(
         visuals_spawned: 0,
         wall_color: rgb(content.dungeon.theme.wall),
         layout,
+        feed: VecDeque::new(),
+        feed_state: CombatFeed::default(),
+        interrupts_seen: 0,
+        fight: FightTracker::default(),
+        show_fight: true,
     };
     let optional = content.encounters.len() - required;
     let extra = if optional > 0 {
@@ -461,6 +478,9 @@ pub fn player_input(
     if keys.just_pressed(KeyCode::KeyL) {
         run.verbose_log = !run.verbose_log;
     }
+    if keys.just_pressed(KeyCode::KeyK) {
+        run.show_fight = !run.show_fight;
+    }
     if keys.just_pressed(KeyCode::Backspace) && run.end_timer.is_none() {
         run.sim.abandon(RunOutcome::Abandoned);
     }
@@ -610,6 +630,12 @@ fn step_sim(time: Res<Time>, mut run: ResMut<ActiveRun>, demo: Option<Res<DemoCo
         }
     }
     run.alert_cooldown = (run.alert_cooldown - dt).max(0.0);
+    for (_, age) in run.feed.iter_mut() {
+        *age += dt;
+    }
+    while run.feed.front().is_some_and(|(_, age)| *age >= FEED_SECS) {
+        run.feed.pop_front();
+    }
 }
 
 /// Turn new sim events into log lines, banners and error messages.
@@ -617,6 +643,28 @@ pub fn process_events(mut run: ResMut<ActiveRun>) {
     let start = run.events_seen;
     let end = run.sim.events.len();
     run.fresh.clear();
+    let run = &mut *run;
+    run.fight.update(&run.sim);
+    // Your recent actions (0.9.2). An interrupt with nothing to stop may leave
+    // no event, so the attempts come from the metrics.
+    let attempts = run
+        .sim
+        .player
+        .map(|p| run.sim.metrics.actors[p].interrupts_attempted)
+        .unwrap_or(0);
+    let new_attempts = attempts.saturating_sub(run.interrupts_seen);
+    run.interrupts_seen = attempts;
+    if start < end || new_attempts > 0 {
+        let lines = run
+            .feed_state
+            .lines(&run.sim, &run.sim.events[start..end], new_attempts);
+        for l in lines {
+            run.feed.push_back((l, 0.0));
+        }
+        while run.feed.len() > FEED_LINES {
+            run.feed.pop_front();
+        }
+    }
     if start == end {
         return;
     }

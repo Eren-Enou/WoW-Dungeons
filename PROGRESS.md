@@ -1,7 +1,8 @@
 # Progress
 
-Status: **0.9.1 (Dungeon Remix polish) implemented and verified with
-automated checks; see the 0.9.1 section.** 0.9 (Dungeon Remix) below.
+Status: **0.9.2 (combat clarity) implemented and verified with automated
+checks; see the 0.9.2 section.** 0.9.1 (Dungeon Remix polish) and 0.9
+(Dungeon Remix) below.
 
 Previous: **0.8.1 (viewer polish, map navigation and exploration design)
 implemented and verified**. It adds a speed bar and presets, a 2D map,
@@ -29,6 +30,37 @@ covered by a recorded playtest".)
 
 Environment: Windows 11 Pro, Rust 1.99.0, Bevy 0.20.0 (pinned `=0.20.0`,
 Cargo.lock committed), NVIDIA RTX 2070 SUPER (Vulkan).
+
+## 0.9.2 - Combat clarity
+
+Plan and results: COMBAT_CLARITY_0_9_2.md. Playtest script:
+PLAYTEST_COMBAT_0_9_2.md.
+
+**Human feedback:** the owner reported a playtest with the 0.9.2 brief
+(recorded in PLAYTEST_REMIX_0_9.md "Notes"; build and seeds not
+identified):
+- combat lacks visual and numerical clarity;
+- ability outcomes are hard to recognise;
+- controls, camera and companions were good.
+
+0.9.2 itself is not covered by a recorded human playtest.
+
+**Changes (presentation only):**
+- recent-action lines above the action bar, built from your own events;
+- ranked floating text: yours first, interrupts name the spell, companions
+  pale, none for companions' ordinary hits in raids;
+- per-fight numbers at the bottom right (K).
+
+**Verified** (details in COMBAT_CLARITY_0_9_2.md "Results"):
+- the simulation is untouched (no sim, forge or asset change), and 320
+  headless runs are hash-identical to 0.9.1;
+- fmt, check, clippy clean; tests forge 28, game 34, sim 164;
+- `--demo` screenshots for all four classes and a 10-player raid, looked
+  at;
+- `--input-test` (now presses K) for four classes;
+- `--frame-test`, `--tooltip-test`, `--click-test`, `--hub-tour`,
+  `--remix-test`, and `--viewer <id> --viewer-test` on three dungeons:
+  all pass.
 
 ## 0.9.1 - Dungeon Remix polish
 

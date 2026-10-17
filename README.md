@@ -56,6 +56,7 @@ profile) also works; dependencies are optimised even in debug.
 | Dungeon | 1-5 | class abilities; friendly spells go to the ally under the mouse (frame or character), else your selected ally, else you |
 | Dungeon | F / Esc | start auto-attack / clear target |
 | Dungeon | L | toggle verbose combat log |
+| Dungeon | K | show/hide your numbers for this fight (bottom right) |
 | Dungeon | Backspace | leave the dungeon (counts as a failed run) |
 | Dungeon | N / Shift+N | navigation debug overlay / plus walls and walk areas |
 | Results | Enter | back to the hub |

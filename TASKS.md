@@ -3,8 +3,16 @@
 Prioritized, actionable work. Completed milestones are summarized at the bottom;
 details and evidence live in PROGRESS.md.
 
-## Next up (after 0.9.1)
+## Next up (after 0.9.2)
 
+0. **Recorded before/after playtest of 0.9.2 combat clarity**:
+   PLAYTEST_COMBAT_0_9_2.md. Open questions:
+   - whether the recent-action lines get read during a fight;
+   - whether their right-of-centre spot covers companions too often;
+   - whether the fight numbers are useful.
+
+   Only then expand (e.g. Ward's shield size, a "lifesaving heal" cue,
+   which needs pre-heal health in the event).
 1. **Recorded human playtest of 0.9/0.9.1**: PLAYTEST_REMIX_0_9.md (three
    Hollow Reliquary layouts, one Emberforge layout, the new loot and treasure
    lines). No human observations of 0.9 exist yet; whether routes feel like
@@ -71,6 +79,11 @@ details and evidence live in PROGRESS.md.
 
 ## Done
 
+- 0.9.2: combat clarity (COMBAT_CLARITY_0_9_2.md):
+  - recent-action lines from your own events;
+  - ranked floating text;
+  - per-fight numbers (K);
+  - presentation only; the simulation is hash-identical to 0.9.1.
 - 0.9.1: polish: measured flank ratings steer flank targets (no flank
   into a pack it only makes harder); loot names its source and the results
   and HUD show treasure opened or missed.
