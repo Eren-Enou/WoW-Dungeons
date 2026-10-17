@@ -289,6 +289,21 @@ pub fn measure(
                 ));
                 m.facts
                     .push(format!("flank staging is {margin:.1} m outside aggro"));
+                // The kit's measured rating of flanking this recipe (0.9.1).
+                if let Some(r) = enc
+                    .id
+                    .split_once('_')
+                    .and_then(|(_, k)| kit.recipes.get(k))
+                    .and_then(|r| r.flank)
+                {
+                    m.facts
+                        .push(format!("the kit rates flanking this pack {}", r.label()));
+                    if r == crate::kit::FlankRating::Poor {
+                        m.warnings.push(
+                            "the kit rates flanking this pack poor; the blueprint named it".into(),
+                        );
+                    }
+                }
                 if angle < FLANK_MIN_ANGLE {
                     rep.errors.push(format!(
                         "{label}: enters only {angle:.0}° off the pack's front (need {FLANK_MIN_ANGLE:.0}°): not a different approach"

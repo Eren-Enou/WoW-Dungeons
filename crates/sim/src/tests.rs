@@ -2818,6 +2818,13 @@ fn caches_open_when_the_party_walks_up_and_roll_their_loot() {
     let r = p.grant_rewards(&c, &report);
     assert_eq!(r.items.len(), 1);
     assert_eq!(r.items[0].base_id, "coffer_ring");
+    // 0.9.1: each item says where it came from.
+    assert_eq!(r.sources, vec!["c1_cache".to_string()]);
+    assert_eq!(c.source_name("c1_cache"), "Test Coffer");
+    assert_eq!(
+        c.source_name(&c.encounters[0].id),
+        c.encounters[0].display_name()
+    );
     // Opening a cache never decides the run.
     assert_eq!(sim.outcome, RunOutcome::InProgress);
 }

@@ -778,3 +778,43 @@ fn optional_encounters_without_a_home_still_get_a_side_room() {
     assert!(g.content.encounters.iter().any(|e| e.id.starts_with("o1_")));
     assert!(g.measured.iter().all(|m| m.delivered));
 }
+
+// ---- 0.9.1: measured flank ratings steer flank targets.
+
+#[test]
+fn flanks_avoid_packs_rated_poor_unless_named() {
+    use crate::kit::FlankRating;
+    for (b, k) in [(bp(), kit()), (reliquary(), crypt())] {
+        for seed in 1..=8u64 {
+            let g = build::generate(&b, &k, seed).expect("generates");
+            for br in &g.plan.branches {
+                if br.kind != crate::layout::BranchKind::Flank {
+                    continue;
+                }
+                let t = br.target.unwrap();
+                let Some(crate::layout::EncounterRef::Main(e)) = g.plan.rooms[t].encounter else {
+                    panic!("flank target holds no main encounter");
+                };
+                let rating = k.recipes[&b.encounters[e].recipe].flank;
+                assert_ne!(rating, Some(FlankRating::Poor), "seed {seed}");
+            }
+        }
+    }
+    // Named explicitly, a poor-rated pack is allowed, with a warning.
+    let mut b = reliquary();
+    b.routes[0].target = Some("bone_archers".into());
+    let g = (1..=10u64)
+        .find_map(|s| build::generate(&b, &crypt(), s).ok())
+        .expect("some seed flanks the archers");
+    let flank = g
+        .content
+        .dungeon
+        .branches
+        .iter()
+        .find(|x| x.purpose == "flank")
+        .unwrap();
+    assert!(
+        flank.warnings.iter().any(|w| w.contains("poor")),
+        "{flank:?}"
+    );
+}

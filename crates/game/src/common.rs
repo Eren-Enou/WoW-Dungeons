@@ -152,6 +152,10 @@ pub struct LastResult {
     pub difficulty_name: String,
     pub highlights: Vec<String>,
     pub log_path: Option<String>,
+    /// Where each item came from, parallel to `rewards.items` (0.9.1).
+    pub item_sources: Vec<String>,
+    /// Every treasure cache of the layout: (name, opened).
+    pub treasure: Vec<(String, bool)>,
 }
 
 #[derive(Resource)]

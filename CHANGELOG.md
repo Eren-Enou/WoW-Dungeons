@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.9.1 - Dungeon Remix polish
+
+Details and measurements: DUNGEON_POLISH_0_9_1.md.
+
+- **Flanks lead where they matter.** Kit recipes carry a measured
+  `flank = "favoured" | "different" | "poor"` rating, and flank targets
+  prefer favoured packs and never take poor ones unless named (generator
+  v5).
+  - Over 40 measured flanks, 19 ease the fight and 20 change who is engaged
+    first; 8 only cost (0.9: about 11 of 30).
+  - Emberforge now builds 100/100 of seeds 1–100.
+- **Treasure is visible:**
+  - every loot line says where it came from;
+  - the results screen lists each chest as opened or not;
+  - the HUD checklist shows chests.
+- **`dungeon-headless --slot-follow`** compares companion trail following
+  with the 0.8.1 formation following. Trail following does not add
+  overpulls (28 vs 30 over 960 runs).
+- **Playtest script:** new seeds (Hollow Reliquary 1, 17 and 15; Emberforge
+  5) and feedback sections.
+
 ## 0.9 - Dungeon Remix
 
 Design, schema and measurements: DUNGEON_REMIX_0_9.md. Playtest script:

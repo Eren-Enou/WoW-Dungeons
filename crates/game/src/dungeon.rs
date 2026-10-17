@@ -1078,6 +1078,11 @@ fn finish_run(
         "Run finished: {:?} in {:.1}s",
         summary.outcome, summary.duration
     );
+    let rewards_sources: Vec<String> = rewards
+        .sources
+        .iter()
+        .map(|id| content.source_name(id))
+        .collect();
     commands.insert_resource(LastResult {
         summary,
         rewards,
@@ -1089,6 +1094,12 @@ fn finish_run(
         difficulty_name: sim.difficulty.name.clone(),
         highlights,
         log_path,
+        item_sources: rewards_sources,
+        treasure: sim
+            .caches
+            .iter()
+            .map(|c| (c.name.to_string(), c.opened_at.is_some()))
+            .collect(),
     });
     run.end_timer = None;
     next.set(AppState::Results);

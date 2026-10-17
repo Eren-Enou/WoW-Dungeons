@@ -90,6 +90,7 @@ pillars = { size = 2.4, spacing = 30.0 }
 # ------------------------------------------------------------------ recipes --
 
 [recipes.warden_screen]
+flank = "poor"   # 0.9.1 routes, two batches (17 layouts): damage +13%, opener changed in only 7/17
 name = "Warden's Screen"
 tests = "a shield wall guarding two healer-acolytes: get past the frontal to interrupt the heals"
 room = "hall"
@@ -103,6 +104,7 @@ mobs = [
 ]
 
 [recipes.bone_archers]
+flank = "poor"   # 0.9.1 routes: same opener, damage +12% in 5/5 layouts
 name = "Bone Archers"
 tests = "archers shooting from range across a pillared nave: pull them round a pillar (line of sight) so they come to you"
 room = "hall"
@@ -127,6 +129,7 @@ mobs = [
 ]
 
 [recipes.censer_procession]
+flank = "different"   # 0.9.1 routes: opener changes in 8/9 layouts; damage -3%
 name = "Censer Procession"
 tests = "incense clouds land under the party while acolytes chant: keep moving, interrupt"
 room = "hall"

@@ -97,6 +97,7 @@ vista = ["Anvil Shrine", "Hall of the First Blade", "Cooling Hall"]
 # ------------------------------------------------------------------ recipes --
 
 [recipes.melee_pack]
+flank = "favoured"   # 0.9.1 routes: damage taken -16% (2/2)
 name = "Emberkin Raiders"
 tests = "a straightforward pack: hold threat on several targets, interrupt one caster"
 room = "hall"
@@ -109,6 +110,7 @@ mobs = [
 ]
 
 [recipes.guarded_caster]
+flank = "favoured"   # 0.9.1 routes: damage taken -23% (5/6 layouts easier)
 name = "Pyrecaller's Guard"
 tests = "melee screen a healer-caster: reach it, interrupt or crowd-control its heals"
 room = "hall"
@@ -123,6 +125,7 @@ mobs = [
 ]
 
 [recipes.frontal_pack]
+flank = "poor"   # 0.9.1 routes: same opener, damage +4% (2/2)
 name = "Ash Hound Pack"
 tests = "frontal cleaves: the tank turns them away, everyone else stays behind"
 room = "hall"

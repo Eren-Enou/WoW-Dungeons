@@ -579,6 +579,33 @@ pub struct Recipe {
     /// Required when `placement = "patrol"`.
     #[serde(default)]
     pub patrol: Option<PatrolSpec>,
+    /// What coming in by a flank does to this fight, as measured with
+    /// `dungeon-forge routes` (0.9.1). Steers which pack a flank leads to.
+    #[serde(default)]
+    pub flank: Option<FlankRating>,
+}
+
+/// A recipe's measured response to a flank approach (0.9.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FlankRating {
+    /// The fight is measurably easier from the flank: preferred.
+    Favoured,
+    /// The flank changes who is engaged first, not how hard it is.
+    Different,
+    /// The flank changes nothing and costs: never chosen unless a
+    /// blueprint names this recipe as its flank target.
+    Poor,
+}
+
+impl FlankRating {
+    pub fn label(self) -> &'static str {
+        match self {
+            FlankRating::Favoured => "favoured (measured easier by the flank)",
+            FlankRating::Different => "different (changes who is engaged first)",
+            FlankRating::Poor => "poor (no change, costs; only when named)",
+        }
+    }
 }
 
 impl Kit {

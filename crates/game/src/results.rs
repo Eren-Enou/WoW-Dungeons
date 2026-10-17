@@ -95,8 +95,19 @@ fn format_results(r: &LastResult) -> String {
             "  No loot (bosses and elites drop items when their encounter is cleared)".into(),
         );
     }
-    for item in &r.rewards.items {
-        lines.push(format!("  Loot: {}", item.describe()));
+    for (k, item) in r.rewards.items.iter().enumerate() {
+        match r.item_sources.get(k) {
+            Some(src) => lines.push(format!("  Loot: {} - from {src}", item.describe())),
+            None => lines.push(format!("  Loot: {}", item.describe())),
+        }
+    }
+    // Treasure caches (0.9.1): which were opened, and which were missed.
+    for (name, opened) in &r.treasure {
+        lines.push(if *opened {
+            format!("  Treasure: {name} opened")
+        } else {
+            format!("  Treasure: {name} not opened this run (walk up to a chest to open it)")
+        });
     }
     lines.push("  Progress saved. Equip new items in the hub (Character tab).".into());
     lines.push(String::new());
@@ -138,5 +149,61 @@ fn format_results(r: &LastResult) -> String {
 fn results_input(keys: Res<ButtonInput<KeyCode>>, mut next: ResMut<NextState<AppState>>) {
     if keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::Space) {
         next.set(AppState::Hub);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dungeon_sim::content::{CacheConfig, Content};
+
+    #[test]
+    fn results_name_where_loot_came_from_and_which_caches_were_missed() {
+        // A cache at the entrance (opened on the first tick) and one far
+        // away (missed); the cache's loot pool is its own.
+        let mut c = Content::builtin();
+        let far = c.encounters.last().unwrap().mobs[0].pos;
+        for (id, name, at) in [
+            ("c1_cache", "Near Coffer", c.dungeon.entrance),
+            ("c2_cache", "Far Coffer", far),
+        ] {
+            c.dungeon.caches.push(CacheConfig {
+                id: id.into(),
+                name: name.into(),
+                pos: at,
+                y: None,
+                radius: 2.5,
+                model: None,
+                yaw: 0.0,
+            });
+        }
+        let mut l = c.loot[0].clone();
+        l.id = "coffer_ring".into();
+        l.source = Some("c1_cache".into());
+        c.loot.push(l);
+        c.validate("results test").unwrap();
+        let party = dungeon_sim::runner::default_party(dungeon_sim::class::ClassId::Striker);
+        let mut sim = dungeon_sim::Sim::new(&c, &party, 3);
+        sim.step();
+        let report = dungeon_sim::profile::RunReport::from_sim(&sim);
+        let rewards = dungeon_sim::profile::Profile::new_default().grant_rewards(&c, &report);
+        let r = LastResult {
+            summary: dungeon_sim::RunSummary::from_sim(&sim),
+            item_sources: rewards.sources.iter().map(|s| c.source_name(s)).collect(),
+            rewards,
+            dungeon_name: c.dungeon.name.clone(),
+            difficulty_name: "Normal".into(),
+            highlights: Vec::new(),
+            log_path: None,
+            treasure: sim
+                .caches
+                .iter()
+                .map(|x| (x.name.to_string(), x.opened_at.is_some()))
+                .collect(),
+        };
+        let text = format_results(&r);
+        assert!(text.contains("- from Near Coffer"), "{text}");
+        assert!(text.contains("Treasure: Near Coffer opened"), "{text}");
+        assert!(text.contains("Treasure: Far Coffer not opened"), "{text}");
     }
 }

@@ -11,7 +11,7 @@ use dungeon_sim::ai::AiProfile;
 use dungeon_sim::content::{Content, ContentLibrary};
 use dungeon_sim::metrics::RunSummary;
 use dungeon_sim::runner::{
-    DEFAULT_MAX_SECONDS, batch_stats, party_at_level, raid_party, run_with, with_familiarity,
+    DEFAULT_MAX_SECONDS, batch_stats, party_at_level, raid_party, with_familiarity,
 };
 use dungeon_sim::sim::PartyMemberSpec;
 use std::collections::BTreeMap;
@@ -21,7 +21,8 @@ use std::time::Instant;
 const USAGE: &str = "usage: dungeon-headless [--seed N] [--runs N] [--dungeon ID] [--content PATH] \
 [--difficulty ID] [--class warden|mender|striker|arcanist] [--level N] \
 [--profile conservative|balanced|aggressive|support|mechanic] [--party-size N] \
-[--compare-profiles] [--bench] [--breakdown] [--familiarity 0..1] [--max-seconds S] [--log FILE] [--json] [--quiet]";
+[--compare-profiles] [--bench] [--breakdown] [--familiarity 0..1] [--max-seconds S] [--log FILE] [--json] [--quiet] \
+[--slot-follow (companions follow formation slots only, as before 0.9; for comparisons)]";
 
 struct Args {
     seed: u64,
@@ -41,6 +42,7 @@ struct Args {
     quiet: bool,
     breakdown: bool,
     familiarity: f32,
+    slot_follow: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -62,6 +64,7 @@ fn parse_args() -> Result<Args, String> {
         quiet: false,
         breakdown: false,
         familiarity: 0.0,
+        slot_follow: false,
     };
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
@@ -113,6 +116,7 @@ fn parse_args() -> Result<Args, String> {
                     .map_err(|e| format!("--familiarity: {e}"))?
             }
             "--compare-profiles" => args.compare_profiles = true,
+            "--slot-follow" => args.slot_follow = true,
             "--bench" => args.bench = true,
             "-h" | "--help" => return Err(USAGE.into()),
             other => return Err(format!("unknown argument '{other}'\n{USAGE}")),
@@ -198,6 +202,26 @@ impl Breakdown {
     }
 }
 
+fn run_args(
+    args: &Args,
+    content: &Content,
+    party: &[PartyMemberSpec],
+    seed: u64,
+) -> (dungeon_sim::Sim, RunSummary) {
+    dungeon_sim::runner::run_with_options(
+        content,
+        party,
+        seed,
+        args.max_seconds,
+        dungeon_sim::RunOptions {
+            difficulty: args.difficulty.clone(),
+            autopilot: true,
+            slot_follow_only: args.slot_follow,
+            ..Default::default()
+        },
+    )
+}
+
 fn run_batch(
     args: &Args,
     content: &Content,
@@ -210,7 +234,7 @@ fn run_batch(
     let mut ticks = 0u64;
     for i in 0..args.runs {
         let seed = args.seed + i as u64;
-        let (sim, summary) = run_with(content, party, seed, args.max_seconds, &args.difficulty);
+        let (sim, summary) = run_args(args, content, party, seed);
         ticks += sim.tick;
         if args.breakdown {
             breakdown.add(&sim);
@@ -300,13 +324,7 @@ fn main() -> ExitCode {
         );
         let (summaries, secs, ticks) = run_batch(&args, &content, &party, !args.compare_profiles);
         // Determinism self-check: replay the first seed and compare the log hash.
-        let (_, replay) = run_with(
-            &content,
-            &party,
-            args.seed,
-            args.max_seconds,
-            &args.difficulty,
-        );
+        let (_, replay) = run_args(&args, &content, &party, args.seed);
         let same = replay.log_hash == summaries[0].log_hash;
         deterministic &= same;
         let s = batch_stats(&summaries);

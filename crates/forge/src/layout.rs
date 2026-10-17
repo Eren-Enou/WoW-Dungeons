@@ -5,7 +5,7 @@
 //! rooms they join. `compose` turns the resulting `Plan` into walkable areas.
 
 use crate::blueprint::{Blueprint, OptionalHome, RoutePurpose, Shortcut, SidePurpose};
-use crate::kit::{Kit, Preference, RoomPref, ShapeSpec};
+use crate::kit::{FlankRating, Kit, Preference, RoomPref, ShapeSpec};
 use dungeon_sim::math::V2;
 use dungeon_sim::rng::Rng;
 use serde::Serialize;
@@ -852,6 +852,8 @@ fn try_plan(bp: &Blueprint, kit: &Kit, rng: &mut Rng) -> Result<Plan, &'static s
                         Some(t) if t != recipe => continue,
                         // Patrols walk across the room; flank them only on request.
                         None if kit.recipes[recipe].placement == Preference::Patrol => continue,
+                        // A flank that measurably only costs, likewise (0.9.1).
+                        None if kit.recipes[recipe].flank == Some(FlankRating::Poor) => continue,
                         _ => {}
                     }
                     for gap in 1..=3 {
@@ -883,6 +885,19 @@ fn try_plan(bp: &Blueprint, kit: &Kit, rng: &mut Rng) -> Result<Plan, &'static s
             cands.retain(|&(i, j)| (i..=j).all(|x| x <= di || x >= dj));
         }
         shuffle(rng, &mut cands);
+        if spec.purpose == RoutePurpose::Flank {
+            // Packs a flank measurably helps first, then packs it changes;
+            // the order among equals stays seeded (0.9.1).
+            let tier = |j: usize| match kinds[j].1 {
+                Some(EncounterRef::Main(e)) => match kit.recipes[&bp.encounters[e].recipe].flank {
+                    Some(FlankRating::Favoured) => 0,
+                    Some(FlankRating::Different) | None => 1,
+                    Some(FlankRating::Poor) => 2,
+                },
+                _ => 2,
+            };
+            cands.sort_by_key(|&(_, j)| tier(j));
+        }
         let max_len = if spec.purpose == RoutePurpose::Flank {
             4
         } else {

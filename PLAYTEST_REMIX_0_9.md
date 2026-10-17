@@ -33,23 +33,28 @@ A run takes 8–12 minutes. Play normally: you lead, your companions follow.
 
 ## The three Hollow Reliquary runs
 
-**Run A: seed 19 (direct progression)**
+Seeds updated for 0.9.1 (generator v5). The 0.9.0 seeds 19, 4 and 16 now
+build different layouts.
+
+**Run A: seed 1 (direct progression)**
 - The fights come in the familiar order.
-- There is a side passage into the Bone Archers' hall, a detour late in the
-  dungeon to a nest and a coffer, an optional tomb, and a landmark chapel.
-- In the simulation, going straight is the most efficient run.
+- A side passage leads into the Censer Procession's hall. Here it measured
+  +16% damage taken with the same opening, so it is not worth it.
+- A detour to a crawler nest and a coffer costs about +47 s, the most of 20
+  measured layouts.
+- In the simulation, going straight is the sensible run.
 
-**Run B: seed 4 (rewarding exploration)**
-- Right at the start, beside the entrance hall's door, there is a doorway with
-  a glowing tablet.
-- Through it are a nest of crawlers and the Reliquary Coffer. The route
-  rejoins at the first hall.
+**Run B: seed 17 (rewarding exploration)**
+- A doorway with a glowing tablet leads through the Crawler Nest to the
+  Reliquary Coffer, and rejoins the main route further on.
+- In the simulation it cost about 1 s of run time. The coffer was opened and
+  the nest cleared in 16/16 runs, with no deaths there.
 
-**Run C: seed 16 (tactical alternative)**
-- Early on, a narrow side passage with a single dim candle leads into the
-  Warden's Screen hall from the side.
-- Coming in that way puts you nearer the healers behind the shield-bearer.
-- The direct door faces the shield-bearer.
+**Run C: seed 15 (tactical alternative)**
+- A narrow side passage with a single dim candle enters the Censer
+  Procession's hall from the side.
+- By that way the first enemy engaged is a crawler, not the Censer Bearer.
+  The fight measured 15% less damage taken.
 
 Don't read the run descriptions above before each run if you want to test
 whether the clues work on their own. Each one names its seed first, so you
@@ -57,13 +62,28 @@ can cover the rest.
 
 ## The Emberforge run (optional, 10 minutes)
 
-**Emberforge Vaults, seed 2:**
-- A corridor near the start pulses with magma vents; a longer tunnel goes
-  round it.
-- A crawlway leads into the Pyrecaller's hall from the side.
-- A detour holds the Obsidian Sentinel and a strongbox.
-- A ledge from the Anvil Court drops you past three empty caverns.
-- The detour is late, off the Pouring Floor.
+**Emberforge Vaults, seed 5:**
+- A corridor pulses with magma vents: about 56 vent damage per run for AI
+  parties. A longer tunnel goes round it at about the same time.
+- A crawlway leads into the Pyrecaller's hall from the side: 42% less damage
+  taken there in the simulation.
+- A detour holds the Obsidian Sentinel and a strongbox (about +23 s).
+- A ledge drops you past empty caverns.
+
+## New in 0.9.1: check these too
+
+- **Treasure:**
+  - The HUD's checklist (top right) now lists the chest as "(treasure)" and
+    ticks it when opened.
+  - The results screen says "Treasure: Reliquary Coffer opened", or "not
+    opened this run".
+  - Each loot line now says where it came from ("- from Reliquary Coffer").
+  - Was it clear what the chest gave you?
+- **Flanks** now lead only into packs where the measured approach either
+  eases the fight or changes who you meet first:
+  - in the crypt that is only the Censer Procession;
+  - in the volcanic kit, the Pyrecaller's Guard or the Emberkin Raiders.
+  - Did the side passage feel like a real alternative?
 
 ## Questions after each run
 
@@ -92,7 +112,7 @@ And once, at the end:
    "a side passage"?
 10. **Remix and seeds.** Did Classic / Remix / Seed in the hub make sense?
     Was the seed easy to note and reuse?
-11. **The flank.** In Run C, did the flank change how the Warden's Screen
+11. **The flank.** In Run C, did the flank change how the Censer Procession
     fight went for you?
 12. **Vents (Emberforge).** Did timing the vents feel like a real choice
     against the long way round?
@@ -110,5 +130,38 @@ And once, at the end:
 
 ## Notes
 
-(Human observations go here, with the date and build. Keep them separate
-from automated results; DUNGEON_REMIX_0_9.md has those.)
+Human observations go here, with the date and build. Keep them separate
+from automated results, which are in DUNGEON_REMIX_0_9.md and
+DUNGEON_POLISH_0_9_1.md.
+
+Status 2026-10-16: no human observations of 0.9 or 0.9.1 have been recorded.
+The last recorded feedback is the owner's 0.8 notes (PLAYTEST_NOTES_0_8.md).
+The headings below are where they go.
+
+### Positive impressions
+Pending.
+
+### Problems observed
+Pending (dungeon, seed, what happened, how to reproduce).
+
+### Confusing features or interactions
+Pending.
+
+### Companion behaviour
+Pending.
+
+### Camera and controls
+Pending.
+
+### Exploration and navigation
+Pending.
+
+### Optional rewards and encounter pacing
+Pending.
+
+### Procedural variation and replayability
+Pending. From the 0.8 notes: side exploration was interesting at first but
+felt unnecessary after about five runs.
+
+### Suggestions
+Pending.

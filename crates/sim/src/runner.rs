@@ -98,11 +98,28 @@ pub fn run_with(
     max_seconds: f32,
     difficulty: &str,
 ) -> (Sim, RunSummary) {
-    let options = RunOptions {
-        difficulty: difficulty.to_string(),
-        autopilot: true,
-        ..Default::default()
-    };
+    run_with_options(
+        content,
+        party,
+        seed,
+        max_seconds,
+        RunOptions {
+            difficulty: difficulty.to_string(),
+            autopilot: true,
+            ..Default::default()
+        },
+    )
+}
+
+/// `run_with`, with every option given (comparisons such as
+/// `slot_follow_only`).
+pub fn run_with_options(
+    content: &Content,
+    party: &[PartyMemberSpec],
+    seed: u64,
+    max_seconds: f32,
+    options: RunOptions,
+) -> (Sim, RunSummary) {
     let mut sim = Sim::with_options(content, party, seed, options);
     sim.run_to_end(max_seconds);
     let summary = RunSummary::from_sim(&sim);

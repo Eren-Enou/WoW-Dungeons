@@ -2035,6 +2035,18 @@ impl Content {
         }
     }
 
+    /// A display name for a loot source: an encounter's name or a cache's
+    /// (0.9.1), else the id itself.
+    pub fn source_name(&self, id: &str) -> String {
+        if let Some(e) = self.encounters.iter().find(|e| e.id == id) {
+            return e.display_name().to_string();
+        }
+        if let Some(c) = self.dungeon.caches.iter().find(|c| c.id == id) {
+            return c.name.clone();
+        }
+        id.to_string()
+    }
+
     fn template_keys(&self) -> String {
         self.templates
             .keys()

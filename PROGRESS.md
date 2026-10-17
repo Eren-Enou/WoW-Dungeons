@@ -1,7 +1,7 @@
 # Progress
 
-Status: **0.9 (Dungeon Remix) implemented and verified; see the 0.9
-section.**
+Status: **0.9.1 (Dungeon Remix polish) implemented and verified with
+automated checks; see the 0.9.1 section.** 0.9 (Dungeon Remix) below.
 
 Previous: **0.8.1 (viewer polish, map navigation and exploration design)
 implemented and verified**. It adds a speed bar and presets, a 2D map,
@@ -29,6 +29,30 @@ covered by a recorded playtest".)
 
 Environment: Windows 11 Pro, Rust 1.99.0, Bevy 0.20.0 (pinned `=0.20.0`,
 Cargo.lock committed), NVIDIA RTX 2070 SUPER (Vulkan).
+
+## 0.9.1 - Dungeon Remix polish
+
+Plan, evidence and results: DUNGEON_POLISH_0_9_1.md. Not covered by a
+recorded human playtest. No human observations of 0.9 exist locally; the
+playtest script (PLAYTEST_REMIX_0_9.md) has new seeds and pending sections.
+
+Changes:
+- **Measured flank ratings** in the kits steer flank targets (generator v5).
+  No flank leads to the Bone Archers, the Warden's Screen or the Ash Hounds,
+  which flanking only made harder. Flanks that only cost: about 11/30 →
+  8/40.
+- **Loot names its source;** the results screen and HUD show treasure
+  opened or missed.
+- **Headless `--slot-follow`** for comparisons. It showed trail following
+  does not add overpulls (30 vs 28).
+
+Verified: see DUNGEON_POLISH_0_9_1.md "Results":
+- fmt, check, clippy and tests (forge 28, game 27, sim 164) green;
+- audits 100/100 for both blueprints (Emberforge 385/400 over seeds
+  101–500);
+- handwritten dungeons hash-identical to 0.9.0;
+- graphical self-tests pass;
+- a full demo cycle was seen on screen.
 
 ## 0.9 - Dungeon Remix
 

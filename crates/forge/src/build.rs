@@ -11,7 +11,7 @@ use crate::populate;
 use dungeon_sim::content::{Content, Difficulty, DungeonConfig, NavConfig, RewardConfig};
 
 /// Bumped whenever the same blueprint + seed would produce different output.
-pub const GENERATOR_VERSION: u32 = 4;
+pub const GENERATOR_VERSION: u32 = 5;
 
 pub struct Generated {
     pub plan: Plan,

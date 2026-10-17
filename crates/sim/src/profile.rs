@@ -311,6 +311,9 @@ pub struct RunRewards {
     pub marks: u32,
     pub xp: u32,
     pub items: Vec<Item>,
+    /// Where each item came from: an encounter or cache id, parallel to
+    /// `items` (0.9.1; see `Content::source_name`).
+    pub sources: Vec<String>,
     /// (name, new level) for everyone who levelled up.
     pub level_ups: Vec<(String, u32)>,
 }
@@ -704,10 +707,12 @@ impl Profile {
         }
         let mut rng = Rng::new(report.seed ^ 0x10_07);
         let mut items = Vec::new();
+        let mut sources = Vec::new();
         for id in report.cleared.iter().chain(&report.opened) {
             if let Some(item) = self.roll_item(content, id, report.rarity_bonus, &mut rng) {
                 self.stash.push(item.clone());
                 items.push(item);
+                sources.push(id.clone());
             }
         }
         let party_ids = self.party.clone();
@@ -758,6 +763,7 @@ impl Profile {
             marks,
             xp: player_xp,
             items,
+            sources,
             level_ups,
         }
     }

@@ -1021,6 +1021,11 @@ fn update_texts(run: Res<ActiveRun>, mut q: Query<(&mut Text, &mut TextColor, &H
                     };
                     s.push_str(&format!("{mark} {}\n", e.id));
                 }
+                // Treasure caches (0.9.1): opened or not yet.
+                for c in &sim.caches {
+                    let mark = if c.opened_at.is_some() { "[x]" } else { "[ ]" };
+                    s.push_str(&format!("{mark} {} (treasure)\n", c.name));
+                }
                 s.push_str(
                     "\nW/S move, A/D turn, Q/E strafe\n\
                      RMB steer, LMB look, both = run\n\

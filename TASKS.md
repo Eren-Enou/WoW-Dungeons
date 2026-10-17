@@ -3,22 +3,20 @@
 Prioritized, actionable work. Completed milestones are summarized at the bottom;
 details and evidence live in PROGRESS.md.
 
-## Next up (after 0.9)
+## Next up (after 0.9.1)
 
-1. **Recorded human playtest of 0.9**: PLAYTEST_REMIX_0_9.md (three Hollow
-   Reliquary layouts, one Emberforge layout). Whether the routes feel like
-   choices, the clues are noticed, and replays stay interesting is not
-   validated by the simulation.
-2. **Branch follow-ups from the 0.9 measurements** (DUNGEON_REMIX_0_9.md,
-   "Results"):
-   - flanks help against screened casters and hurt against frontal packs:
-     let blueprints prefer flank targets by formation, or tell players which
-     packs reward a flank;
-   - against AI parties the safe way is about as fast as timing the vents:
-     tune vent timing so the short way is clearly shorter for a party that
-     times it, and keep measuring dithers at the vents;
-   - Emberforge generates 90/100 seeds (drop geometry and flank angles are
-     the usual causes); a smarter drop placement would raise it;
+1. **Recorded human playtest of 0.9/0.9.1**: PLAYTEST_REMIX_0_9.md (three
+   Hollow Reliquary layouts, one Emberforge layout, the new loot and treasure
+   lines). No human observations of 0.9 exist yet; whether routes feel like
+   choices, clues are noticed and replays stay interesting is not validated.
+2. **Branch follow-ups** (DUNGEON_REMIX_0_9.md, DUNGEON_POLISH_0_9_1.md):
+   - flank ratings rest on 12-16 AI runs per layout; re-measure with more
+     runs, and only promote a pack to "favoured" with consistent evidence;
+     in the crypt only the Censer Procession is a flank target now;
+   - against AI parties the safe way is about as fast as timing the vents;
+     tune only with player evidence;
+   - Ashen Spire (handwritten) overpulls in about 1 run in 6, with or
+     without 0.9 trail following: a layout matter, not the AI;
    - side branches two rooms deep exist (`depth = 2`) but no shipped
      blueprint uses them yet.
 
@@ -73,6 +71,9 @@ details and evidence live in PROGRESS.md.
 
 ## Done
 
+- 0.9.1: polish: measured flank ratings steer flank targets (no flank
+  into a pack it only makes harder); loot names its source and the results
+  and HUD show treasure opened or missed.
 - 0.9: Dungeon Remix (DUNGEON_REMIX_0_9.md): purposeful routes and side
   chambers, measured branch validation, `audit` and `routes`, treasure
   caches, companion trail following, Classic/Remix/Seed entry in the hub.
