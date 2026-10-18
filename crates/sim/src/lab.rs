@@ -48,6 +48,205 @@ pub fn lab_sim(
     sim
 }
 
+/// `lab_sim` with a reaction delay for noticing openings (B).
+pub fn lab_sim_reacting(
+    content: &Content,
+    party: &[PartyMemberSpec],
+    seed: u64,
+    style: StrikerStyle,
+    plan: LabPlan,
+    reaction: f32,
+) -> Sim {
+    let mut sim = lab_sim(content, party, seed, style, plan, "normal");
+    sim.options.lab_reaction = reaction;
+    sim
+}
+
+/// What playing a style is like from moment to moment (a proxy for feel,
+/// not a measure of fun).
+#[derive(Debug, Clone, Default)]
+pub struct Feel {
+    pub won: bool,
+    pub player_damage: f32,
+    /// Seconds the player was in combat.
+    pub combat: f32,
+    /// In combat, off the GCD, not casting, and no attack could be used.
+    pub waiting: f32,
+    /// In combat, off the GCD and not casting (pressing nothing, by choice
+    /// or not).
+    pub idle: f32,
+    /// Casts that were not the filler (slot 1), and the combat-time gaps
+    /// between them.
+    pub non_filler: u32,
+    pub non_filler_gaps: Vec<f32>,
+    /// Casts, and casts where two or more attacks were usable.
+    pub casts: u32,
+    pub choice_casts: u32,
+    /// The slots pressed, in order (0-based).
+    pub sequence: Vec<u8>,
+    /// Lab A: Edge held at each spend (index = Edge, 0..=5).
+    pub edge_at_spend: [u32; 6],
+    pub builders: u32,
+    pub builders_behind: u32,
+    /// Lab B: age of each opening when it was Exploited; openings that ran
+    /// out unused.
+    pub exploit_ages: Vec<f32>,
+    pub openings_missed: u32,
+    pub openings: u32,
+}
+
+/// Would pressing slot `s` now be a sensible attack? Not Evade (the threat
+/// dump), not Kick with nothing to interrupt, not an area attack with fewer
+/// than two enemies in reach.
+fn sensible(sim: &Sim, p: usize, s: usize) -> bool {
+    use crate::class::Effect;
+    let a = &sim.actors[p];
+    match a.abilities[s].def().effect {
+        Effect::ThreatDrop { .. } => false,
+        Effect::Interrupt { .. } => a
+            .target
+            .and_then(|t| sim.actors[t].cast.as_ref())
+            .is_some_and(|c| c.interruptible),
+        Effect::AoeDamage { radius, .. } | Effect::EdgeWhirl { radius, .. } => {
+            sim.engaged_enemies()
+                .iter()
+                .filter(|&&e| sim.actors[e].pos.dist(a.pos) <= radius + sim.actors[e].radius)
+                .count()
+                >= 2
+        }
+        _ => true,
+    }
+}
+
+/// Play one run step by step, sampling what the player could do.
+pub fn run_feel(
+    content: &Content,
+    level: u32,
+    seed: u64,
+    style: StrikerStyle,
+    plan: LabPlan,
+    reaction: f32,
+    max_seconds: f32,
+) -> Feel {
+    use crate::sim::{AuraKind, DT};
+    let party = lab_party(level);
+    let mut sim = lab_sim_reacting(content, &party, seed, style, plan, reaction);
+    let p = sim.player.expect("player");
+    let mut f = Feel::default();
+    let mut uses = sim.metrics.actors[p].ability_uses;
+    let mut last_non_filler = 0.0;
+    while sim.outcome == RunOutcome::InProgress && sim.time < max_seconds {
+        let a = &sim.actors[p];
+        let fighting = a.alive && sim.in_combat(p);
+        // What could be pressed now (with the current target).
+        let target = a.target;
+        let usable: Vec<usize> = (0..a.abilities.len())
+            .filter(|&s| sensible(&sim, p, s))
+            .filter(|&s| sim.ability_state(p, s, target).result.is_ok())
+            .collect();
+        let free = a.gcd <= 0.0 && a.cast.is_none();
+        let edge_before = sim.edge(p);
+        // Openings from the player, with their age and time left.
+        let opens: Vec<(usize, f32, f32)> = sim
+            .enemies
+            .iter()
+            .flat_map(|&e| {
+                sim.actors[e]
+                    .auras
+                    .iter()
+                    .filter(|x| x.kind == AuraKind::Opening && x.source == p)
+                    .map(move |x| (e, x.duration - x.remaining, x.remaining))
+            })
+            .collect();
+        let exploits_before = sim.metrics.actors[p].exploits;
+        sim.step();
+        if fighting {
+            f.combat += DT;
+            if free {
+                f.idle += DT;
+                if usable.is_empty() {
+                    f.waiting += DT;
+                }
+            }
+        }
+        let now = sim.metrics.actors[p].ability_uses;
+        for s in 0..5 {
+            for _ in uses[s]..now[s] {
+                f.casts += 1;
+                if usable.len() >= 2 {
+                    f.choice_casts += 1;
+                }
+                f.sequence.push(s as u8);
+                if s != 0 {
+                    f.non_filler += 1;
+                    f.non_filler_gaps.push(f.combat - last_non_filler);
+                    last_non_filler = f.combat;
+                }
+                let effect = sim.actors[p].abilities[s].def().effect;
+                if matches!(
+                    effect,
+                    crate::class::Effect::EdgeBleed { .. } | crate::class::Effect::EdgeWhirl { .. }
+                ) {
+                    f.edge_at_spend[edge_before.min(5) as usize] += 1;
+                }
+            }
+        }
+        uses = now;
+        // Openings that are gone: Exploited (the oldest on that enemy) or
+        // run out.
+        let after: Vec<(usize, f32)> = sim
+            .enemies
+            .iter()
+            .flat_map(|&e| {
+                sim.actors[e]
+                    .auras
+                    .iter()
+                    .filter(|x| x.kind == AuraKind::Opening && x.source == p)
+                    .map(move |x| (e, x.duration - x.remaining))
+            })
+            .collect();
+        let exploited = sim.metrics.actors[p].exploits > exploits_before;
+        let mut used_one = false;
+        for &(e, age, left) in &opens {
+            let still = after
+                .iter()
+                .any(|&(e2, a2)| e2 == e && (a2 - age - DT).abs() < 1e-3);
+            if still {
+                continue;
+            }
+            if exploited && !used_one && left > DT * 1.5 {
+                f.exploit_ages.push(age);
+                used_one = true;
+            } else if left <= DT * 1.5 && sim.actors[e].alive {
+                f.openings_missed += 1;
+            }
+        }
+    }
+    let m = &sim.metrics.actors[p];
+    f.won = sim.outcome == RunOutcome::Victory;
+    f.player_damage = m.damage_done;
+    f.builders = m.builders;
+    f.builders_behind = m.builders_behind;
+    f.openings = m.openings;
+    f
+}
+
+/// How repetitive a press sequence is: (distinct 4-press patterns per 100
+/// patterns, share of the single most common pattern).
+pub fn repetition(seq: &[u8]) -> (f32, f32) {
+    use std::collections::HashMap;
+    if seq.len() < 4 {
+        return (0.0, 0.0);
+    }
+    let mut counts: HashMap<&[u8], u32> = HashMap::new();
+    for w in seq.windows(4) {
+        *counts.entry(w).or_default() += 1;
+    }
+    let n = (seq.len() - 3) as f32;
+    let top = counts.values().copied().max().unwrap_or(0) as f32;
+    (100.0 * counts.len() as f32 / n, top / n)
+}
+
 /// Which kind of fight an encounter is (its strongest enemy).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FightKind {
@@ -350,6 +549,54 @@ mod tests {
                 AbilityId::Lacerate
             ]
         );
+    }
+
+    #[test]
+    fn repetition_counts_distinct_patterns() {
+        // One pattern over and over: 1 distinct per 9 windows, top share 1.
+        let same = [0u8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let (d, t) = repetition(&same);
+        assert!((d - 100.0 / 9.0).abs() < 1e-3 && (t - 1.0).abs() < 1e-6);
+        let varied = [0u8, 1, 2, 3, 4, 0, 2, 1, 3, 4, 1, 0];
+        let (d2, t2) = repetition(&varied);
+        assert!(d2 > d && t2 < t);
+        assert_eq!(repetition(&[0, 1]), (0.0, 0.0));
+    }
+
+    #[test]
+    fn feel_sampling_is_consistent_and_reaction_delays_exploits() {
+        let c = Content::builtin();
+        let quick = run_feel(
+            &c,
+            3,
+            1,
+            StrikerStyle::Reactive,
+            LabPlan::Expert,
+            0.0,
+            900.0,
+        );
+        assert!(quick.combat > 0.0 && quick.idle <= quick.combat + 1e-3);
+        assert!(quick.waiting <= quick.idle + 1e-3);
+        assert_eq!(quick.casts as usize, quick.sequence.len());
+        assert!(!quick.exploit_ages.is_empty());
+        // A slow player never Exploits an opening younger than its reaction.
+        let slow = run_feel(
+            &c,
+            3,
+            1,
+            StrikerStyle::Reactive,
+            LabPlan::Expert,
+            1.0,
+            900.0,
+        );
+        assert!(
+            slow.exploit_ages.iter().all(|&a| a >= 1.0 - 1e-3),
+            "{:?}",
+            slow.exploit_ages
+        );
+        let a = run_feel(&c, 3, 1, StrikerStyle::Planned, LabPlan::Expert, 0.0, 900.0);
+        assert!(a.builders > 0 && a.builders_behind <= a.builders);
+        assert!(a.edge_at_spend.iter().sum::<u32>() > 0);
     }
 
     #[test]

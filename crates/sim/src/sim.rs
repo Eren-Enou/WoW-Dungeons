@@ -212,6 +212,9 @@ pub struct RunOptions {
     /// Class Design Lab (0.10): how the AI plays the player's slot (headless
     /// measurements and demos).
     pub lab_plan: LabPlan,
+    /// Class Design Lab: seconds before the scripted player notices a new
+    /// opening (a stand-in for human reaction time; 0 = instant).
+    pub lab_reaction: f32,
 }
 
 /// Class Design Lab (0.10): scripted play for the player's slot when the AI
@@ -280,6 +283,7 @@ impl Default for RunOptions {
             slot_follow_only: false,
             player_style: StrikerStyle::Classic,
             lab_plan: LabPlan::Normal,
+            lab_reaction: 0.0,
         }
     }
 }
@@ -2082,6 +2086,11 @@ impl Sim {
                 );
                 let spec = DamageSpec::new(amount, def.school, HitKind::Melee, what);
                 if self.deal(caster, target, spec) > 0.0 {
+                    let m = &mut self.metrics.actors[caster];
+                    m.builders += 1;
+                    if behind {
+                        m.builders_behind += 1;
+                    }
                     self.gain_edge(caster, if behind { behind_edge } else { edge });
                 }
             }

@@ -33,6 +33,15 @@ Cargo.lock committed), NVIDIA RTX 2070 SUPER (Vulkan).
 
 ## 0.10 - Class Design Lab
 
+**Agent playtest (2026-10-18):** `--lab-feel` proxies over 5 dungeons; see
+CLASS_DESIGN_LAB_0_10.md, "Agent playtest". This is not a human playtest.
+- **Main finding:** 15–23 presses per minute in every style, and a third
+  to two thirds of combat with nothing sensible to press.
+- **B** gives a meaningful press every 2–4 s and stays effective at 0.5–1 s
+  simulated reaction times.
+- **Recommendation:** a faster cadence, plus B's openings with a short Edge
+  build (a possible Experiment C), to be confirmed by the human playtest.
+
 Design, measurements and results: CLASS_DESIGN_LAB_0_10.md. Playtest:
 PLAYTEST_CLASS_LAB_0_10.md. The owner's feedback for 0.10 is recorded in
 CLASS_DESIGN_LAB_0_10.md and in PLAYTEST_COMBAT_0_9_2.md's notes.

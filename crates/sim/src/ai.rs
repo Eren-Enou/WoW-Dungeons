@@ -1769,6 +1769,15 @@ fn lab_cast(
         if casters && ready { 25.0 } else { 0.0 }
     };
     let long_lived = t.max_hp > 1500.0 && t.hp_frac() > 0.35;
+    // An opening the scripted player has had time to notice
+    // (`RunOptions::lab_reaction`).
+    let seen = |e: ActorId| {
+        sim.actor(e).auras.iter().any(|a| {
+            a.kind == AuraKind::Opening
+                && a.source == id
+                && a.duration - a.remaining >= sim.options.lab_reaction - 1e-4
+        })
+    };
     match (me.style, plan) {
         (StrikerStyle::Classic, _) => {
             // Simple: keep Lacerate up, otherwise Rend.
@@ -1848,18 +1857,21 @@ fn lab_cast(
             }
             None
         }
-        (StrikerStyle::Reactive, LabPlan::Simple) => {
-            pick(AbilityId::Exploit, target).or_else(|| pick(AbilityId::RendStrike, target))
-        }
+        (StrikerStyle::Reactive, LabPlan::Simple) => seen(target)
+            .then(|| pick(AbilityId::Exploit, target))
+            .flatten()
+            .or_else(|| pick(AbilityId::RendStrike, target)),
         (StrikerStyle::Reactive, _) => {
-            if let Some(c) = pick(AbilityId::Exploit, target) {
+            if seen(target)
+                && let Some(c) = pick(AbilityId::Exploit, target)
+            {
                 return Some(c);
             }
             // An opening on an enemy within reach: switch for one Exploit.
             let open = sim.board.engaged.iter().copied().find(|&e| {
                 e != target
                     && !sim.actor(e).is_incapacitated()
-                    && sim.has_opening(e, id)
+                    && seen(e)
                     && can_hit(sim, id, e, 1.6)
             });
             if let Some(e) = open

@@ -23,7 +23,8 @@ const USAGE: &str = "usage: dungeon-headless [--seed N] [--runs N] [--dungeon ID
 [--profile conservative|balanced|aggressive|support|mechanic] [--party-size N] \
 [--compare-profiles] [--bench] [--breakdown] [--familiarity 0..1] [--max-seconds S] [--log FILE] [--json] [--quiet] \
 [--slot-follow (companions follow formation slots only, as before 0.9; for comparisons)] \
-[--lab (Class Design Lab 0.10: compare Striker styles x player plans) [--levels 3,6]]";
+[--lab (Class Design Lab 0.10: compare Striker styles x player plans) [--levels 3,6]] \
+[--lab-feel (moment-to-moment proxies: waiting, choices, repetition, reaction windows)]";
 
 struct Args {
     seed: u64,
@@ -45,6 +46,7 @@ struct Args {
     familiarity: f32,
     slot_follow: bool,
     lab: bool,
+    lab_feel: bool,
     levels: Vec<u32>,
 }
 
@@ -69,6 +71,7 @@ fn parse_args() -> Result<Args, String> {
         familiarity: 0.0,
         slot_follow: false,
         lab: false,
+        lab_feel: false,
         levels: Vec::new(),
     };
     let mut it = std::env::args().skip(1);
@@ -123,6 +126,7 @@ fn parse_args() -> Result<Args, String> {
             "--compare-profiles" => args.compare_profiles = true,
             "--slot-follow" => args.slot_follow = true,
             "--lab" => args.lab = true,
+            "--lab-feel" => args.lab_feel = true,
             "--levels" => {
                 args.levels = val("--levels")?
                     .split(',')
@@ -387,6 +391,122 @@ fn run_lab_matrix(args: &Args, content: &Content) {
     }
 }
 
+/// `--lab-feel`: what playing each style is like moment to moment (0.10).
+/// Proxies for feel, not measures of fun.
+fn run_lab_feel(args: &Args, content: &Content) {
+    use dungeon_sim::class::StrikerStyle;
+    use dungeon_sim::lab::{repetition, run_feel};
+    use dungeon_sim::sim::LabPlan;
+    let level = args.levels.first().copied().unwrap_or(6);
+    println!(
+        "== {} | level {level} | seeds {}..{} | feel proxies ==",
+        content.dungeon.id,
+        args.seed,
+        args.seed + args.runs as u64 - 1
+    );
+    println!(
+        "{:<12} {:<7} {:>5} {:>5} {:>7} {:>6} {:>6} {:>7} {:>7} {:>8} | style detail",
+        "style", "plan", "react", "wins", "pDPS", "idle%", "wait%", "choice%", "nf gap", "patterns",
+    );
+    let mut conds: Vec<(StrikerStyle, LabPlan, f32)> = Vec::new();
+    for style in StrikerStyle::ALL {
+        for plan in [LabPlan::Simple, LabPlan::Expert] {
+            conds.push((style, plan, 0.0));
+        }
+    }
+    for r in [0.5, 1.0, 1.5] {
+        conds.push((StrikerStyle::Reactive, LabPlan::Expert, r));
+    }
+    for (style, plan, react) in conds {
+        let feels: Vec<_> = (0..args.runs)
+            .map(|i| {
+                run_feel(
+                    content,
+                    level,
+                    args.seed + i as u64,
+                    style,
+                    plan,
+                    react,
+                    args.max_seconds,
+                )
+            })
+            .collect();
+        let n = feels.len() as f32;
+        let combat: f32 = feels.iter().map(|f| f.combat).sum();
+        let dmg: f32 = feels.iter().map(|f| f.player_damage).sum();
+        let wait: f32 = feels.iter().map(|f| f.waiting).sum();
+        let casts: u32 = feels.iter().map(|f| f.casts).sum();
+        let idle: f32 = feels.iter().map(|f| f.idle).sum();
+        let mut gaps: Vec<f32> = feels
+            .iter()
+            .flat_map(|f| f.non_filler_gaps.iter().copied().skip(1))
+            .collect();
+        gaps.sort_by(f32::total_cmp);
+        let gap = gaps.get(gaps.len() / 2).copied().unwrap_or(0.0);
+        let choice: u32 = feels.iter().map(|f| f.choice_casts).sum();
+        let (mut distinct, mut top) = (0.0, 0.0);
+        for f in &feels {
+            let (d, t) = repetition(&f.sequence);
+            distinct += d / n;
+            top += t / n;
+        }
+        let per_min = 60.0 * casts as f32 / combat.max(1.0);
+        let detail0 = format!("{per_min:.1} presses/min (GCD allows 60)");
+        let detail = match style {
+            StrikerStyle::Planned => {
+                let mut at = [0u32; 6];
+                for f in &feels {
+                    for (sum, n) in at.iter_mut().zip(f.edge_at_spend) {
+                        *sum += n;
+                    }
+                }
+                let spends: u32 = at.iter().sum();
+                let b: u32 = feels.iter().map(|f| f.builders).sum();
+                let bb: u32 = feels.iter().map(|f| f.builders_behind).sum();
+                format!(
+                    "Edge at spend 0-5: {} | builders from behind {:.0}%",
+                    at.iter()
+                        .map(|c| format!("{:.0}%", 100.0 * *c as f32 / spends.max(1) as f32))
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                    100.0 * bb as f32 / b.max(1) as f32
+                )
+            }
+            StrikerStyle::Reactive => {
+                let mut ages: Vec<f32> =
+                    feels.iter().flat_map(|f| f.exploit_ages.clone()).collect();
+                ages.sort_by(f32::total_cmp);
+                let med = ages.get(ages.len() / 2).copied().unwrap_or(0.0);
+                let opens: u32 = feels.iter().map(|f| f.openings).sum();
+                let missed: u32 = feels.iter().map(|f| f.openings_missed).sum();
+                format!(
+                    "exploits/run {:.0}, opening age at Exploit median {:.2}s, openings run out unused {:.0}%",
+                    ages.len() as f32 / n,
+                    med,
+                    100.0 * missed as f32 / opens.max(1) as f32
+                )
+            }
+            StrikerStyle::Classic => String::new(),
+        };
+        println!(
+            "{:<12} {:<7} {:>5.1} {:>2}/{:<2} {:>7.1} {:>5.1}% {:>5.1}% {:>6.1}% {:>6.1}s {:>4.0}/{:<3.0}% | {detail0} | {detail}",
+            style.label(),
+            plan.label(),
+            react,
+            feels.iter().filter(|f| f.won).count(),
+            feels.len(),
+            dmg / combat.max(1.0),
+            100.0 * idle / combat.max(1.0),
+            100.0 * wait / combat.max(1.0),
+            100.0 * choice as f32 / casts.max(1) as f32,
+            gap,
+            distinct,
+            100.0 * top,
+        );
+    }
+    println!();
+}
+
 fn main() -> ExitCode {
     let args = match parse_args() {
         Ok(a) => a,
@@ -430,6 +550,10 @@ fn main() -> ExitCode {
 
     if args.lab {
         run_lab_matrix(&args, &content);
+        return ExitCode::SUCCESS;
+    }
+    if args.lab_feel {
+        run_lab_feel(&args, &content);
         return ExitCode::SUCCESS;
     }
     let profiles: Vec<AiProfile> = if args.compare_profiles {

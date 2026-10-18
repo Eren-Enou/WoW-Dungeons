@@ -476,14 +476,154 @@ No balance was changed for any other class.
 - **Rewards:** a lab run gives ordinary rewards (XP, loot, Marks). Only
   the style is never saved.
 
+## Agent playtest (2026-10-18): moment-to-moment proxies
+
+**This is not a human playtest.**
+- I (the agent) can't feel fun.
+- Instead, each style was played through the simulation step by step,
+  sampling what a player would live through:
+  - how often there is nothing useful to press;
+  - how often a choice comes up;
+  - how repetitive the presses are;
+  - how forgiving B's windows are at human reaction times;
+  - how much A leans on positioning.
+- The conclusions at the end are a designer's judgement from these
+  numbers, to be checked by PLAYTEST_CLASS_LAB_0_10.md.
+
+**Method:**
+```
+dungeon-headless --lab-feel --dungeon <id> --runs 10 --levels 6
+```
+5 dungeons, level 6, seeds 1–10. `lab::run_feel` samples every simulation
+step. Its measures:
+- **idle:** in combat, off the global cooldown and not casting;
+- **waiting:** idle with no sensible attack usable. Not sensible: Kick with
+  nothing to interrupt, an area attack with fewer than two enemies in
+  reach, Evade;
+- **presses per minute;**
+- **the gap between non-filler presses:** anything but slot 1;
+- **repetition:** distinct 4-press patterns per 100, and the share of the
+  most common one;
+- **for A:** Edge held at each spend, and builders landed from behind;
+- **for B:** opening age when Exploited, and openings that ran out unused.
+
+`RunOptions::lab_reaction` delays when the scripted B player notices an
+opening (0.5, 1.0 and 1.5 s), as a stand-in for human reaction.
+
+### What playing each style is like (level 6, all five dungeons)
+
+| | presses/min | idle | waiting (nothing to press) | gap between non-filler presses (median) | top 4-press pattern |
+|---|---|---|---|---|---|
+| Classic (expert) | 15–16 | 74–76% | 59–67% | 7.5–13 s | 15–21% |
+| A simple | 16–17 | 72–75% | 52–61% | 11–15 s | 16–20% |
+| A expert | 16–18 | 72–75% | 54–61% | 7–10 s | 9–14% |
+| B simple | 18–21 | 67–72% | 56–67% | 3–6 s | 8–19% |
+| B expert | 19–23 | 64–70% | 33–44% | 2–4 s | 12–25% |
+
+**For B, by reaction time** (expert; player DPS and Exploits per run):
+
+| Dungeon | instant | 0.5 s | 1.0 s | 1.5 s | B simple |
+|---|---|---|---|---|---|
+| Cinderdeep | 76 (94) | 73 (77) | 73 (74) | 70 (63) | 70 (64) |
+| Emberforge | 73 (65) | 70 (54) | 71 (49) | 65 (38) | 68 (45) |
+| Hollow Reliquary | 66 (66) | 63 (57) | 65 (52) | 64 (49) | 61 (45) |
+| Gloomroot | 70 (64) | 68 (57) | 66 (50) | 65 (45) | 67 (48) |
+| Sunken Vault | 65 (14) | 65 (13) | 61 (8) | 60 (6) | 62 (8) |
+
+**Openings that run out unused:**
+- 0–13% at 0–1 s reaction;
+- 21–23% in the Hollow Reliquary (29% with simple play).
+
+**A's numbers:**
+- **Edge at each spend (expert):** about a third at 2 (packs, dying
+  targets); 55–57% at 4 (a builder from behind would overflow); 6–9% at 5.
+  On the Sunken Vault: 33% / 10% / 38% / 19% at 2 / 3 / 4 / 5.
+- **Builders landed from behind:** 84–91%, and 55–64% on the Sunken
+  Vault. The AI walks behind on its own, so this is the positioning share
+  of a player who always does.
+
+### Findings
+
+1. **Pacing is the biggest problem, in every style.**
+   - The player presses something 15–23 times a minute; the 1 s global
+     cooldown allows 60.
+   - For two thirds to three quarters of combat they are pressing nothing,
+     and for a third to two thirds there is nothing sensible to press.
+   - With 10 energy a second and attacks costing 30–40, no rotation design
+     can feel dense: most of the fight is auto-attacking and waiting.
+   - This is probably as much behind "little feeling of a rotation" as
+     the abilities themselves.
+2. **B gives the most frequent meaningful moments.**
+   - A press that isn't the filler comes every 2–4 s, against 7–10 s for
+     A and 7.5–13 s for Classic.
+   - B also has the least waiting (33–44%), because Exploit refunds energy
+     and openings give something to spend it on.
+3. **B survives human reaction times.**
+   - At 0.5–1.0 s it keeps most of its edge over simple play (0–6% less
+     DPS than instant reactions).
+   - At 1.5 s it falls to about simple-play level.
+   - The windows look forgiving enough for a human who is watching the
+     cues.
+4. **B depends on the content.**
+   - On the Sunken Vault it gets 6–14 Exploits in a whole run.
+   - Its "pooling" (holding 30 energy) is idle time by choice; whether that
+     reads as readiness or as waiting is a question only a player can
+     answer.
+5. **A has real but infrequent decisions.**
+   - Its expert spends early about a third of the time, so the spend
+     decision is live.
+   - But payoffs come every 7–10 s, and its natural rhythm is "build to 4,
+     spend".
+   - A's simple plan is the most repetitive of all six (fewest distinct
+     patterns).
+6. **Positioning is A's untested skill.**
+   - The scripted player gets 84–91% of builders from behind for free.
+   - A human who doesn't reposition would build half as fast. That could
+     make positioning A's most engaging skill, or its most annoying chore.
+     Only a playtest can tell.
+
+### What I predict would be fun (to be checked by a human)
+
+- **A faster heartbeat.** About 30–40 presses a minute, most of them
+  meaningful. For example: energy at 15–20 a second with cheaper presses,
+  or presses that refund energy when used well, as Exploit does.
+  - This is the change most likely to make any style feel like a
+    rotation.
+  - It applies to the other classes too: they should be measured the same
+    way before being redesigned.
+- **Reacting to what enemies do, as the core moment (B).**
+  - It ties the class to the fight in front of you: casts, cleaves, adds,
+    low health.
+  - It produces the densest stream of decisions.
+  - It keeps Kick meaningful, because Kick both stops a cast and opens the
+    enemy.
+- **A short build-and-spend on top of B, rather than A on its own.**
+  - For example, an Exploit gives 1–2 Edge and a 3-Edge finisher.
+  - Then a good reaction also builds toward a planned payoff, and quiet
+    stretches without openings still have a plan.
+  - The aim is to borrow what A does well (a bigger moment you chose)
+    without its slow cadence.
+- **Positioning as a bonus, not a gate.** Behind-the-target worth a bit
+  more, as in A, but never required to function.
+
+**What to try next, if the human playtest agrees:** an "Experiment C" in
+the same harness. It would combine:
+- B's openings;
+- Edge gained from Exploits;
+- one finisher;
+- a faster energy rate.
+
+Measure it with `--lab` and `--lab-feel` against these numbers, aiming for
+30+ presses a minute and less than 30% waiting.
+
 ## What is not validated
 
 - **Fun, readability, flow and mastery** of any style: not covered by a
   recorded human playtest. PLAYTEST_CLASS_LAB_0_10.md is the guide.
 - **How human positioning affects A:** the AI always stands behind, so
   the +2 Edge from behind was never lost in measurement.
-- **Human reaction time for B's 3 s windows:** the scripted expert reacts
-  within a tick.
+- **Human reaction time for B's 3 s windows:** checked only by simulated
+  delays (0.5–1.5 s, "Agent playtest" above), not by people.
 - **Raids** (10 players) and **Heroic** difficulty were not measured.
 - **Talents and equipment:** concepts only.
 - **The tuning:** two passes, on 5 dungeons; the numbers are not final.

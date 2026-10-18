@@ -383,6 +383,15 @@ simple, expert) on the same seeds. It reports:
 - for A, Edge wasted; for B, openings and Exploits;
 - when each style gets its payoff.
 
+`--lab-feel` plays each style step by step and reports moment-to-moment
+proxies:
+- presses per minute, idle and waiting time;
+- gaps between non-filler presses;
+- repetition;
+- for A, Edge at each spend and builders from behind;
+- for B, opening age and openings missed, at several simulated reaction
+  times.
+
 Options: `--dungeon ID`, `--content PATH`, `--difficulty ID`, `--class`,
 `--level N` (default: the dungeon's recommended level), `--profile
 conservative|balanced|aggressive|support|mechanic`, `--compare-profiles`,

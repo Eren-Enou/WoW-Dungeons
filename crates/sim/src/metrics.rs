@@ -29,6 +29,9 @@ pub struct ActorMetrics {
     /// Lab B: openings that appeared for this actor, and Exploits used.
     pub openings: u32,
     pub exploits: u32,
+    /// Lab A: builders that landed, and how many from behind.
+    pub builders: u32,
+    pub builders_behind: u32,
 }
 
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
