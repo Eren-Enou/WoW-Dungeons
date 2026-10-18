@@ -215,6 +215,8 @@ fn start_run(
         skip_optional: false,
         route: Vec::new(),
         slot_follow_only: false,
+        player_style: data.lab_style,
+        lab_plan: dungeon_sim::sim::LabPlan::Normal,
     };
     let mut sim = Sim::with_options(&content, &party, seed, options);
     if autoplay && let Some(p) = sim.player {

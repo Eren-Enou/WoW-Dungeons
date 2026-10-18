@@ -7,10 +7,10 @@
 //! pure function of sim state, so AI behaviour is deterministic and testable.
 //! See RULES.md for the behaviours in prose.
 
-use crate::class::{AbilityId, Effect, Role};
+use crate::class::{AbilityId, Effect, Role, StrikerStyle};
 use crate::content::{AbilityKind, EnemyRank};
 use crate::math::{V2, V3};
-use crate::sim::{ActorId, AuraKind, CastKind, EFFECT_HEIGHT, EnemyMode, Sim};
+use crate::sim::{ActorId, AuraKind, CastKind, EFFECT_HEIGHT, EnemyMode, LabPlan, MAX_EDGE, Sim};
 use serde::{Deserialize, Serialize};
 
 /// How far behind the leader followers stand (local x = right, z = forward).
@@ -396,7 +396,10 @@ pub fn compute_blackboard(sim: &Sim) -> Blackboard {
         let mut best: Option<(f32, ActorId)> = None;
         for p in sim.alive_party() {
             let a = sim.actor(p);
-            if a.controller != crate::sim::Controller::Ai || used.contains(&p) {
+            if a.controller != crate::sim::Controller::Ai
+                || used.contains(&p)
+                || lab_plan(sim, p) == Some(LabPlan::Passive)
+            {
                 continue;
             }
             let Some(ab) = interrupt_ability(sim, p) else {
@@ -472,6 +475,8 @@ fn usable(sim: &Sim, id: ActorId, ability: AbilityId, target: ActorId) -> Option
         Effect::Absorb { .. } => !t.has_aura(|k| matches!(k, AuraKind::WeakenedSoul)),
         Effect::Dispel => t.has_dispellable_debuff(),
         Effect::Incapacitate { .. } => !t.enemy.as_ref().is_some_and(|e| e.cc_immune),
+        Effect::EdgeBleed { .. } => sim.edge(id) > 0,
+        Effect::ExploitOpening { .. } => sim.has_opening(target, id),
         _ => true,
     };
     valid.then_some((s, target))
@@ -1685,18 +1690,196 @@ fn dps_inner(sim: &Sim, id: ActorId) -> Decision {
                 near.iter()
                     .all(|&e| sim.threat(e, tank) > 2.0 * sim.threat(e, id) + 150.0)
             }) && !cc_nearby(6.0);
-            if near.len() >= 2 && aoe_safe {
-                d.cast = usable(sim, id, AbilityId::Whirl, id);
-            }
-            if d.cast.is_none() && !t.has_dot_from(id) && t.hp_frac() > 0.25 && t.max_hp > 1500.0 {
-                d.cast = usable(sim, id, AbilityId::Lacerate, target);
-            }
-            if d.cast.is_none() {
-                d.cast = usable(sim, id, AbilityId::RendStrike, target);
+            let lab = lab_plan(sim, id)
+                .filter(|pl| *pl != LabPlan::Normal || me.style != StrikerStyle::Classic)
+                .filter(|pl| !(*pl == LabPlan::Expert && me.style == StrikerStyle::Classic));
+            if let Some(plan) = lab {
+                if let Some(((s, t2), _)) = lab_cast(sim, id, target, plan, near.len(), aoe_safe) {
+                    d.cast = Some((s, t2));
+                    if t2 != id {
+                        d.target = Some(Some(t2));
+                    }
+                }
+            } else {
+                if near.len() >= 2 && aoe_safe {
+                    d.cast = usable(sim, id, AbilityId::Whirl, id);
+                }
+                if d.cast.is_none()
+                    && !t.has_dot_from(id)
+                    && t.hp_frac() > 0.25
+                    && t.max_hp > 1500.0
+                {
+                    d.cast = usable(sim, id, AbilityId::Lacerate, target);
+                }
+                if d.cast.is_none() {
+                    d.cast = usable(sim, id, AbilityId::RendStrike, target);
+                }
             }
         }
     }
+    if lab_plan(sim, id) == Some(LabPlan::Passive) {
+        // Follows and auto-attacks only.
+        d.cast = None;
+    }
     d
+}
+
+/// Class Design Lab (0.10): the scripted plan for the player's slot, when the
+/// AI plays it. `None` for everyone else.
+pub fn lab_plan(sim: &Sim, id: ActorId) -> Option<LabPlan> {
+    (Some(id) == sim.player && sim.actor(id).controller == crate::sim::Controller::Ai)
+        .then_some(sim.options.lab_plan)
+}
+
+/// Seconds left on `id`'s bleed called `name` on `target` (0 when none).
+fn bleed_left(sim: &Sim, id: ActorId, target: ActorId, name: &str) -> f32 {
+    sim.actor(target)
+        .auras
+        .iter()
+        .find(|a| a.source == id && &*a.name == name && matches!(a.kind, AuraKind::Dot { .. }))
+        .map_or(0.0, |a| a.remaining)
+}
+
+/// Lab rotations (0.10; CLASS_DESIGN_LAB_0_10.md). Returns the cast and the
+/// target it was chosen for. `Simple` is one repeatable priority; `Expert`
+/// (and `Normal` for the experimental styles) plays the decisions the style
+/// is built around.
+fn lab_cast(
+    sim: &Sim,
+    id: ActorId,
+    target: ActorId,
+    plan: LabPlan,
+    near: usize,
+    aoe_safe: bool,
+) -> Option<((usize, ActorId), ActorId)> {
+    let me = sim.actor(id);
+    let t = sim.actor(target);
+    let energy = me.resource;
+    let pick = |a: AbilityId, on: ActorId| usable(sim, id, a, on).map(|c| (c, on));
+    // Energy kept back for an interrupt when casters are about and Kick is
+    // (nearly) ready.
+    let kick_reserve = {
+        let casters = sim.board.engaged.iter().any(|&e| {
+            has_ability_kind(sim, e, AbilityKind::Bolt, true)
+                || has_ability_kind(sim, e, AbilityKind::HealAlly, true)
+        });
+        let ready = me
+            .ability_slot(AbilityId::Kick)
+            .is_some_and(|s| me.cooldowns[s] < 2.0);
+        if casters && ready { 25.0 } else { 0.0 }
+    };
+    let long_lived = t.max_hp > 1500.0 && t.hp_frac() > 0.35;
+    match (me.style, plan) {
+        (StrikerStyle::Classic, _) => {
+            // Simple: keep Lacerate up, otherwise Rend.
+            if !t.has_dot_from(id)
+                && let Some(c) = pick(AbilityId::Lacerate, target)
+            {
+                return Some(c);
+            }
+            pick(AbilityId::RendStrike, target)
+        }
+        (StrikerStyle::Planned, LabPlan::Simple) => {
+            if sim.edge(id) >= MAX_EDGE {
+                return pick(AbilityId::DeepLacerate, target);
+            }
+            pick(AbilityId::HonedStrike, target)
+        }
+        (StrikerStyle::Planned, _) => {
+            let edge = sim.edge(id);
+            // Packs: cash in on everyone.
+            if near >= 2
+                && aoe_safe
+                && edge >= 3
+                && let Some(c) = pick(AbilityId::ReapingWhirl, id)
+            {
+                return Some(c);
+            }
+            // Near the cap (a builder from behind would waste Edge): spend,
+            // on whichever is worth more now. A bleed is worth its full value
+            // only on a target that lives through it, minus what is left of
+            // the bleed it replaces; the whirl pays at once, per enemy hit.
+            if edge + 2 > MAX_EDGE {
+                let n = edge as f32;
+                let (per_edge, duration) = match AbilityId::DeepLacerate.def().effect {
+                    Effect::EdgeBleed { per_edge, duration } => (per_edge, duration),
+                    _ => (0.0, 1.0),
+                };
+                let (base, per_whirl) = match AbilityId::ReapingWhirl.def().effect {
+                    Effect::EdgeWhirl { base, per_edge, .. } => (base, per_edge),
+                    _ => (0.0, 0.0),
+                };
+                let left = bleed_left(sim, id, target, "Deep Lacerate");
+                let old_rate = if left > 0.0 {
+                    per_edge * MAX_EDGE as f32 / duration
+                } else {
+                    0.0
+                };
+                let lives = if long_lived { 1.0 } else { 0.4 };
+                let bleed = per_edge * n * lives - left * old_rate;
+                let whirl = (base + per_whirl * n) * near.max(1) as f32;
+                let order = if bleed >= whirl {
+                    [
+                        (AbilityId::DeepLacerate, target),
+                        (AbilityId::ReapingWhirl, id),
+                    ]
+                } else {
+                    [
+                        (AbilityId::ReapingWhirl, id),
+                        (AbilityId::DeepLacerate, target),
+                    ]
+                };
+                for (a, on) in order {
+                    if let Some(c) = pick(a, on) {
+                        return Some(c);
+                    }
+                }
+            }
+            // A target about to die: take the Edge out now.
+            if !long_lived
+                && edge >= 2
+                && t.hp_frac() < 0.25
+                && let Some(c) = pick(AbilityId::ReapingWhirl, id)
+            {
+                return Some(c);
+            }
+            if energy - 40.0 >= kick_reserve || energy >= 95.0 {
+                return pick(AbilityId::HonedStrike, target);
+            }
+            None
+        }
+        (StrikerStyle::Reactive, LabPlan::Simple) => {
+            pick(AbilityId::Exploit, target).or_else(|| pick(AbilityId::RendStrike, target))
+        }
+        (StrikerStyle::Reactive, _) => {
+            if let Some(c) = pick(AbilityId::Exploit, target) {
+                return Some(c);
+            }
+            // An opening on an enemy within reach: switch for one Exploit.
+            let open = sim.board.engaged.iter().copied().find(|&e| {
+                e != target
+                    && !sim.actor(e).is_incapacitated()
+                    && sim.has_opening(e, id)
+                    && can_hit(sim, id, e, 1.6)
+            });
+            if let Some(e) = open
+                && let Some(c) = pick(AbilityId::Exploit, e)
+            {
+                return Some(c);
+            }
+            if near >= 2
+                && aoe_safe
+                && let Some(c) = pick(AbilityId::Whirl, id)
+            {
+                return Some(c);
+            }
+            // Keep 30 energy for the next opening unless about to cap.
+            if energy - 40.0 >= 30.0 + kick_reserve || energy >= 90.0 {
+                return pick(AbilityId::RendStrike, target);
+            }
+            None
+        }
+    }
 }
 
 pub fn enemy_decision(sim: &Sim, id: ActorId) -> Decision {

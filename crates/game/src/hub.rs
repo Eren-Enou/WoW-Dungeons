@@ -155,6 +155,8 @@ pub enum HubAction {
     LayoutSeedGo,
     /// Change a sandbox knob by a factor (or reset with `Knob::Reset`).
     Sandbox(Knob, f32),
+    /// Class Design Lab (0.10): the Striker style for this session.
+    LabStyle(dungeon_sim::class::StrikerStyle),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -587,6 +589,13 @@ pub fn hub_tooltip(action: &HubAction, data: &GameData, ui: &HubUi) -> Option<Ti
                 }
             ),
         ),
+        HubAction::LabStyle(style) => Tip::new(
+            format!("Striker style: {}", style.label()),
+            format!(
+                "{}\n\nAn experiment (Class Design Lab, 0.10). Applies to your own Striker for this session only: your saved character, gear and level don't change, companion Strikers stay Classic, and restarting the game goes back to Classic.",
+                style.blurb()
+            ),
+        ),
         HubAction::EditStart => Tip::new(
             "Edit a copy",
             "Copy the selected dungeon into the editor. The original is never changed.",
@@ -804,6 +813,14 @@ pub fn apply_action(action: HubAction, data: &mut GameData, ui: &mut HubUi) {
         }
         HubAction::OpenViewer => {
             ui.open_viewer = true;
+            save = false;
+        }
+        HubAction::LabStyle(style) => {
+            data.lab_style = style;
+            data.flash(format!(
+                "Class Design Lab: Striker {} for this session (not saved)",
+                style.label()
+            ));
             save = false;
         }
         HubAction::LayoutClassic => {
@@ -1683,6 +1700,7 @@ fn sandbox_tab(p: &mut ChildSpawnerCommands, data: &GameData) {
         Knob::Telegraph,
         "longer = easier to dodge",
     );
+    lab_section(p, data);
     row(p, |r| {
         button(r, "Reset all", HubAction::Sandbox(Knob::Reset, 1.0), false);
         label(
@@ -1695,6 +1713,42 @@ fn sandbox_tab(p: &mut ChildSpawnerCommands, data: &GameData) {
             Color::srgb(0.8, 0.8, 0.6),
         );
     });
+}
+
+/// Class Design Lab (0.10): pick the Striker style for this session.
+fn lab_section(p: &mut ChildSpawnerCommands, data: &GameData) {
+    use dungeon_sim::class::{ClassId, StrikerStyle};
+    label(
+        p,
+        format!(
+            "Class Design Lab (experiment): Striker style - {}",
+            data.lab_style.label()
+        ),
+        15.0,
+        Color::srgb(1.0, 0.9, 0.6),
+    );
+    row(p, |r| {
+        for style in StrikerStyle::ALL {
+            button(
+                r,
+                style.label(),
+                HubAction::LabStyle(style),
+                data.lab_style == style,
+            );
+        }
+    });
+    label(
+        p,
+        data.lab_style.blurb().to_string(),
+        12.0,
+        Color::srgb(0.85, 0.85, 0.8),
+    );
+    let note = if data.profile.player_class == ClassId::Striker {
+        "This session only: never saved, your character is unchanged, companions stay Classic."
+    } else {
+        "You are not playing a Striker: switch class on the Classes tab to try these. This session only."
+    };
+    label(p, note.to_string(), 12.0, Color::srgb(0.65, 0.65, 0.7));
 }
 
 fn history_tab(p: &mut ChildSpawnerCommands, data: &GameData) {
@@ -1974,6 +2028,17 @@ fn update_hub_text(
                         o.ability_speed,
                         o.telegraph,
                         o.reward_factor()
+                    ));
+                }
+                if data.lab_style != dungeon_sim::class::StrikerStyle::Classic {
+                    let applies = if p.player_class == dungeon_sim::ClassId::Striker {
+                        ""
+                    } else {
+                        " (only when you play a Striker)"
+                    };
+                    s.push_str(&format!(
+                        "\n\nCLASS LAB ACTIVE: Striker {}{applies} - Sandbox tab",
+                        data.lab_style.label()
                     ));
                 }
                 if !data.content_errors.is_empty() {

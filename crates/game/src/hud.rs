@@ -16,7 +16,7 @@ use bevy::picking::Pickable;
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 use bevy::ui_widgets::{Activate, Button as UiButton};
-use dungeon_sim::class::ResourceKind;
+use dungeon_sim::class::{Effect, ResourceKind};
 use dungeon_sim::sim::{AbilityState, Actor, CastKind, PersonalThreat, TankThreat};
 use dungeon_sim::{ActorId, CastError, EnemyMode, Sim};
 
@@ -654,6 +654,7 @@ fn feed_color(t: Tone) -> Color {
         Tone::Utility => Color::srgb(0.75, 0.85, 1.0),
         Tone::Failed => Color::srgb(0.8, 0.6, 0.55),
         Tone::Companion => Color::srgb(0.6, 0.68, 0.78),
+        Tone::Opening => Color::srgb(1.0, 0.75, 0.1),
     }
 }
 
@@ -838,7 +839,17 @@ fn resource_line(sim: &Sim, p: ActorId) -> String {
         .next()
         .map(|c| c.to_uppercase().chain(chars).collect())
         .unwrap_or_default();
-    let head = format!("{label} {:.0}/{:.0}", a.resource, a.max_resource);
+    let mut head = format!("{label} {:.0}/{:.0}", a.resource, a.max_resource);
+    // Lab A (0.10): Edge as pips.
+    if a.style == dungeon_sim::class::StrikerStyle::Planned {
+        let e = sim.edge(p) as usize;
+        let max = dungeon_sim::sim::MAX_EDGE as usize;
+        head = format!(
+            "Edge [{}{}] {e}/{max}   {head}",
+            "#".repeat(e),
+            "-".repeat(max - e)
+        );
+    }
     match a.resource_kind {
         ResourceKind::Energy => {
             let to_full = (a.max_resource - a.resource).max(0.0);
@@ -1109,6 +1120,15 @@ fn update_texts(run: Res<ActiveRun>, mut q: Query<(&mut Text, &mut TextColor, &H
                     "{}\n{} | time {:.0}s | sim seed {}\n",
                     sim.content.dungeon.name, run.layout, sim.time, sim.seed
                 );
+                // Class Design Lab (0.10): say which Striker this is.
+                if let Some(pl) = player
+                    && sim.actors[pl].style != dungeon_sim::class::StrikerStyle::Classic
+                {
+                    s.push_str(&format!(
+                        "CLASS LAB: Striker {} (session only)\n",
+                        sim.actors[pl].style.label()
+                    ));
+                }
                 for e in &sim.encounters {
                     let mark = if e.cleared {
                         "[x]"
@@ -1293,6 +1313,8 @@ fn slot_status(st: &AbilityState, resource: &str) -> (String, Color) {
         Err(CastError::NothingToDispel) => Some("nothing to dispel"),
         Err(CastError::TargetWeakened) => Some("target weakened"),
         Err(CastError::Immune) => Some("immune"),
+        Err(CastError::NoEdge) => Some("no Edge"),
+        Err(CastError::NoOpening) => Some("no opening"),
         _ => None,
     };
     if let Some(b) = blocker {
@@ -1327,12 +1349,39 @@ fn update_action_bar(
     let caster = &sim.actors[p];
     let n = caster.abilities.len();
     let mut states: [Option<AbilityState>; 5] = [None; 5];
+    // Lab (0.10): Exploit needs an opening, Deep Lacerate needs Edge. The
+    // sim reports the global cooldown first, so check the need directly.
+    let mut need: [Option<bool>; 5] = [None; 5];
     for (slot, st) in states.iter_mut().enumerate().take(n.min(5)) {
         let target = sim.player_cast_target(slot, mouseover.0);
         *st = Some(sim.ability_state(p, slot, target));
+        need[slot] = match caster.abilities[slot].def().effect {
+            Effect::ExploitOpening { .. } => Some(target.is_some_and(|t| sim.has_opening(t, p))),
+            Effect::EdgeBleed { .. } => Some(sim.edge(p) > 0),
+            _ => None,
+        };
     }
     for (ActionSlot(slot), mut bg, mut border) in &mut slots {
         let (b, c) = match &states[*slot] {
+            Some(_) if need[*slot] == Some(false) => (
+                Color::srgba(0.1, 0.1, 0.15, 0.85),
+                Color::srgb(0.35, 0.33, 0.28),
+            ),
+            Some(st)
+                if need[*slot] == Some(true)
+                    && st.cooldown_left <= 0.0
+                    && st.in_range != Some(false)
+                    && matches!(
+                        caster.abilities[*slot].def().effect,
+                        Effect::ExploitOpening { .. }
+                    ) =>
+            {
+                // An opening: the slot lights up.
+                (
+                    Color::srgba(0.35, 0.25, 0.02, 0.9),
+                    Color::srgb(1.0, 0.85, 0.2),
+                )
+            }
             Some(st) if st.cooldown_left <= 0.0 && st.in_range == Some(false) => (
                 Color::srgba(0.42, 0.06, 0.06, 0.9),
                 Color::srgb(0.9, 0.25, 0.2),
@@ -1371,13 +1420,14 @@ fn update_action_bar(
                 } else {
                     String::new()
                 };
-                let usable = states[slot].is_some_and(|st| {
-                    !short_of_resource(&st) && st.result.is_ok()
-                        || matches!(
-                            st.result,
-                            Err(CastError::OnGlobalCooldown) | Err(CastError::Busy)
-                        )
-                });
+                let usable = need[slot] != Some(false)
+                    && states[slot].is_some_and(|st| {
+                        !short_of_resource(&st) && st.result.is_ok()
+                            || matches!(
+                                st.result,
+                                Err(CastError::OnGlobalCooldown) | Err(CastError::Busy)
+                            )
+                    });
                 color.0 = if usable { Color::WHITE } else { DIM };
                 if text.0 != s {
                     text.0 = s;
@@ -1387,9 +1437,37 @@ fn update_action_bar(
                 let (Some(mut text), Some(mut color)) = (text, color) else {
                     continue;
                 };
-                let (s, c) = match &states[slot] {
-                    Some(st) => slot_status(st, resource),
-                    None => (String::new(), DIM),
+                let (s, c) = match (&states[slot], need[slot]) {
+                    (Some(st), Some(false)) if st.cooldown_left <= 0.0 => {
+                        let what = match caster.abilities[slot].def().effect {
+                            Effect::EdgeBleed { .. } => "no Edge",
+                            _ => "no opening",
+                        };
+                        (what.to_string(), Color::srgb(1.0, 0.75, 0.4))
+                    }
+                    (Some(st), Some(true))
+                        if matches!(
+                            caster.abilities[slot].def().effect,
+                            Effect::ExploitOpening { .. }
+                        ) && st.cooldown_left <= 0.0
+                            && !short_of_resource(st) =>
+                    {
+                        ("OPENING!".to_string(), Color::srgb(1.0, 0.85, 0.2))
+                    }
+                    (Some(st), _) => {
+                        let (mut s, c) = slot_status(st, resource);
+                        // Edge spenders say what they would spend.
+                        if matches!(
+                            caster.abilities[slot].def().effect,
+                            Effect::EdgeBleed { .. } | Effect::EdgeWhirl { .. }
+                        ) && sim.edge(p) > 0
+                            && st.cooldown_left <= 0.0
+                        {
+                            s = format!("{s}, {} Edge", sim.edge(p));
+                        }
+                        (s, c)
+                    }
+                    (None, _) => (String::new(), DIM),
                 };
                 color.0 = c;
                 if text.0 != s {

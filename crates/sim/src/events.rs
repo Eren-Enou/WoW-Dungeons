@@ -27,6 +27,10 @@ pub enum CastError {
     Immune,
     NothingToDispel,
     TargetWeakened,
+    /// Lab A: a finisher with no Edge to spend.
+    NoEdge,
+    /// Lab B: Exploit on a target without an opening.
+    NoOpening,
 }
 
 impl fmt::Display for CastError {
@@ -48,6 +52,8 @@ impl fmt::Display for CastError {
             CastError::Immune => "Target is immune",
             CastError::NothingToDispel => "Nothing to dispel",
             CastError::TargetWeakened => "Target is Weakened and can't be warded",
+            CastError::NoEdge => "No Edge to spend",
+            CastError::NoOpening => "No opening on the target",
         })
     }
 }

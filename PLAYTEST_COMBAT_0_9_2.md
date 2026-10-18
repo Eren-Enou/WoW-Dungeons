@@ -116,3 +116,16 @@ If you play 0.9.3, please also answer:
 
 Human observations go here, with the date and build. Keep them separate from
 the automated results in COMBAT_CLARITY_0_9_2.md.
+
+**Owner's feedback, reported 2026-10-17 with the 0.10 brief.** The build
+played wasn't stated; it came after 0.9.2/0.9.3 were made available. The
+observations are recorded as given; nothing is added.
+- The recent combat clarity and visual-impact changes have made combat
+  easier to understand.
+- Ground telegraphs are reasonably clear.
+- More visual information alone does not make a shallow rotation
+  satisfying. Classes are extremely basic, most abilities feel like
+  filler, and there is little feeling of a rotation (followed up in
+  CLASS_DESIGN_LAB_0_10.md).
+
+The answers to the individual questions above were not given.

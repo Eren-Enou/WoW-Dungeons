@@ -8,6 +8,7 @@ pub mod content;
 pub mod describe;
 pub mod events;
 pub mod items;
+pub mod lab;
 pub mod math;
 pub mod metrics;
 pub mod nav;

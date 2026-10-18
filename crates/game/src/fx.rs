@@ -46,6 +46,7 @@ struct FxAssets {
     shield: Handle<StandardMaterial>,
     shell: Handle<StandardMaterial>,
     cc: Handle<StandardMaterial>,
+    opening: Handle<StandardMaterial>,
 }
 
 #[derive(Component)]
@@ -80,6 +81,8 @@ pub enum Impact {
         dst: ActorId,
         crit: bool,
         mine: bool,
+        /// Lab B (0.10): an Exploit, drawn as a heavy hit.
+        heavy: bool,
     },
     /// A ranged spell or wand shot.
     Bolt {
@@ -172,8 +175,10 @@ pub fn impacts(sim: &Sim, events: &[Event]) -> Vec<Impact> {
                 if matches!(effect, Some(Effect::Dot { .. })) {
                     continue;
                 }
+                let heavy = matches!(effect, Some(Effect::ExploitOpening { .. }));
                 let area = match effect {
-                    Some(Effect::AoeDamage { radius, .. }) => Some(radius),
+                    Some(Effect::AoeDamage { radius, .. })
+                    | Some(Effect::EdgeWhirl { radius, .. }) => Some(radius),
                     _ if is_enemy_area(what) => Some(6.0),
                     _ => None,
                 };
@@ -209,6 +214,7 @@ pub fn impacts(sim: &Sim, events: &[Event]) -> Vec<Impact> {
                                 dst: *dst,
                                 crit,
                                 mine: mine(*src),
+                                heavy,
                             });
                         }
                     }
@@ -216,7 +222,7 @@ pub fn impacts(sim: &Sim, events: &[Event]) -> Vec<Impact> {
                 if mine(*src) && !mine(*dst) && (*amount > 0.0 || *absorbed > 0.0) {
                     out.push(Impact::React {
                         dst: *dst,
-                        strength: if crit { 2.0 } else { 1.0 },
+                        strength: if crit || heavy { 2.0 } else { 1.0 },
                     });
                 }
                 if mine(*dst) && (crit || *amount >= 0.08 * sim.actors[*dst].max_hp) {
@@ -302,6 +308,7 @@ fn setup_fx_assets(
         shield: materials.add(fx_material(Color::srgba(0.45, 0.75, 1.0, 0.22), 0.6)),
         shell: materials.add(fx_material(Color::srgba(1.0, 0.8, 0.35, 0.14), 0.5)),
         cc: materials.add(fx_material(Color::srgba(0.75, 0.45, 1.0, 0.85), 1.5)),
+        opening: materials.add(fx_material(Color::srgba(1.0, 0.82, 0.15, 0.95), 2.0)),
     });
     commands.insert_resource(HitReact::default());
     commands.insert_resource(AuraFx::default());
@@ -383,12 +390,22 @@ fn spawn_fx(
         };
         match imp {
             Impact::Strike {
-                dst, crit, mine, ..
+                dst,
+                crit,
+                mine,
+                heavy,
+                ..
             } => {
                 let at = chest(dst);
                 if mine {
                     // A gold burst and a flash on the ground under the target.
-                    let size = if crit { 2.4 } else { 1.6 };
+                    let size = if heavy {
+                        3.0
+                    } else if crit {
+                        2.4
+                    } else {
+                        1.6
+                    };
                     one(
                         &assets.cube,
                         gold,
@@ -667,6 +684,8 @@ pub enum AuraLook {
     Shell,
     /// Incapacitated: a turning ring over the head.
     Controlled,
+    /// Lab B (0.10): an opening for the player's Exploit: a gold marker.
+    Opening,
 }
 
 /// The lasting states an actor shows now, from its auras.
@@ -684,6 +703,9 @@ pub fn aura_looks(sim: &Sim, id: ActorId) -> Vec<AuraLook> {
     }
     if a.is_incapacitated() {
         out.push(AuraLook::Controlled);
+    }
+    if sim.player.is_some_and(|p| sim.has_opening(id, p)) {
+        out.push(AuraLook::Opening);
     }
     out
 }
@@ -741,6 +763,7 @@ fn aura_visuals(
                 AuraLook::Shield => (assets.sphere.clone(), assets.shield.clone()),
                 AuraLook::Shell => (assets.sphere.clone(), assets.shell.clone()),
                 AuraLook::Controlled => (assets.ring.clone(), assets.cc.clone()),
+                AuraLook::Opening => (assets.cube.clone(), assets.opening.clone()),
             };
             let e = commands
                 .spawn((
@@ -766,6 +789,21 @@ fn aura_visuals(
             AuraLook::Shell => {
                 tr.translation = run.world(id, chest_h(sim, id));
                 tr.scale = Vec3::splat(shield_scale(sim, id) * 1.12);
+            }
+            AuraLook::Opening => {
+                // A spinning gold diamond over the head, pulsing.
+                let a = &sim.actors[id];
+                let h = if a.is_enemy() {
+                    a.radius * 3.2 + 0.6
+                } else {
+                    2.8
+                };
+                let pulse = 1.0 + (t * 8.0).sin() * 0.15;
+                tr.translation = run.world(id, h);
+                tr.rotation = Quat::from_rotation_y(t * 3.0)
+                    * Quat::from_rotation_x(std::f32::consts::FRAC_PI_4)
+                    * Quat::from_rotation_z(std::f32::consts::FRAC_PI_4);
+                tr.scale = Vec3::splat(0.9 * pulse);
             }
             AuraLook::Controlled => {
                 let a = &sim.actors[id];
@@ -955,6 +993,51 @@ mod tests {
             .filter(|i| matches!(i, Impact::Heal { mine: true, .. }))
             .count();
         assert!(mine > 0);
+    }
+
+    #[test]
+    fn lab_effects_reaping_whirl_ring_exploit_hits_and_openings() {
+        use dungeon_sim::class::StrikerStyle;
+        use dungeon_sim::sim::LabPlan;
+        let c = Content::builtin();
+        let party = dungeon_sim::lab::lab_party(3);
+        for style in [StrikerStyle::Planned, StrikerStyle::Reactive] {
+            let mut sim =
+                dungeon_sim::lab::lab_sim(&c, &party, 1, style, LabPlan::Expert, "normal");
+            let p = sim.player.unwrap();
+            let (mut seen, mut imp, mut looks) = (0, Vec::new(), Vec::new());
+            while sim.outcome == RunOutcome::InProgress && sim.time < 900.0 {
+                sim.step();
+                imp.extend(impacts(&sim, &sim.events[seen..]));
+                seen = sim.events.len();
+                for id in 0..sim.actors.len() {
+                    for l in aura_looks(&sim, id) {
+                        if !looks.contains(&l) {
+                            looks.push(l);
+                        }
+                    }
+                }
+            }
+            match style {
+                StrikerStyle::Planned => {
+                    // Reaping Whirl draws its own 6 m ring.
+                    assert!(imp.iter().any(|i| matches!(i,
+                        Impact::Area { src, radius, mine: true } if *src == p && *radius == 6.0)));
+                    assert!(!looks.contains(&AuraLook::Opening));
+                }
+                _ => {
+                    assert!(imp.iter().any(|i| matches!(
+                        i,
+                        Impact::Strike {
+                            mine: true,
+                            heavy: true,
+                            ..
+                        }
+                    )));
+                    assert!(looks.contains(&AuraLook::Opening), "{looks:?}");
+                }
+            }
+        }
     }
 
     #[test]

@@ -8,7 +8,7 @@
 use dungeon_sim::Role;
 use dungeon_sim::class::Effect;
 use dungeon_sim::metrics::ActorMetrics;
-use dungeon_sim::sim::ActorId;
+use dungeon_sim::sim::{ActorId, AuraKind};
 use dungeon_sim::stats::HitOutcome;
 use dungeon_sim::{Event, EventKind, Label, Sim};
 
@@ -26,6 +26,8 @@ pub enum Tone {
     Failed,
     /// A companion's interrupt.
     Companion,
+    /// Lab B (0.10): an opening appeared on your target.
+    Opening,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -118,6 +120,9 @@ impl CombatFeed {
         let mut misses = interrupt_attempts.saturating_sub(interrupted.len() as u32);
         let mut out: Vec<Pending> = Vec::new();
         let mut broken: Option<ActorId> = None;
+        // Lab A (0.10): Edge after the last gain in this batch, and the line
+        // that earned it.
+        let mut edge: Option<(usize, u32)> = None;
         for e in events {
             match &e.kind {
                 EventKind::Damage {
@@ -195,9 +200,53 @@ impl CombatFeed {
                     dst,
                     what,
                     stacks,
+                } if *src == p && *dst == p && &**what == "Edge" => {
+                    edge = Some((out.len().saturating_sub(1), *stacks));
+                }
+                EventKind::AuraApplied { src, dst, what, .. }
+                    if *src == p
+                        && sim.actors[*dst].is_enemy()
+                        && sim.actors[*dst].auras.iter().any(|a| {
+                            a.kind == AuraKind::Opening && a.source == p && a.name == *what
+                        }) =>
+                {
+                    // Openings: only on your target, to keep the feed calm.
+                    if sim.actors[p].target == Some(*dst) {
+                        out.push(Pending::Line(FeedLine {
+                            text: format!(
+                                "Opening: {} {} - Exploit!",
+                                sim.actors[*dst].name,
+                                opening_word(what)
+                            ),
+                            tone: Tone::Opening,
+                        }));
+                    }
+                }
+                EventKind::AuraApplied {
+                    src,
+                    dst,
+                    what,
+                    stacks,
                 } if *src == p => {
                     let target = name(sim, p, *dst);
                     let line = match own_effect(sim, p, what) {
+                        Some(Effect::EdgeBleed { duration, .. }) => {
+                            let total = sim.actors[*dst]
+                                .auras
+                                .iter()
+                                .find(|a| a.source == p && a.name == *what)
+                                .map_or(0.0, |a| match a.kind {
+                                    AuraKind::Dot { per_tick, .. } => per_tick * duration.max(1.0),
+                                    _ => 0.0,
+                                });
+                            Some((
+                                format!(
+                                    "{what} > {target}: bleeding {total:.0} over {}",
+                                    secs(duration)
+                                ),
+                                Tone::Hit,
+                            ))
+                        }
                         Some(Effect::Hot { .. }) => {
                             Some((format!("{what} > {target}: heal over time"), Tone::Heal))
                         }
@@ -317,6 +366,13 @@ impl CombatFeed {
                 Pending::Heal { what, hits, .. } => heal_line(sim, p, &what, &hits),
             })
             .collect();
+        // Lab A: the Edge you hold now, on the line that earned it.
+        if let Some((i, n)) = edge
+            && let Some(l) = lines.get_mut(i)
+        {
+            l.text
+                .push_str(&format!(" [Edge {n}/{}]", dungeon_sim::sim::MAX_EDGE));
+        }
         // Interrupts that dealt no damage and stopped nothing left no event.
         if let Some(what) = interrupt_label {
             for _ in 0..misses {
@@ -327,6 +383,17 @@ impl CombatFeed {
             }
         }
         lines
+    }
+}
+
+/// How an opening reads in a sentence.
+fn opening_word(what: &str) -> String {
+    match what {
+        "Distracted" => "is casting".into(),
+        "Recovering" => "is recovering".into(),
+        "Off Balance" => "is off balance".into(),
+        "Faltering" => "is faltering".into(),
+        other => format!("is {}", other.to_lowercase()),
     }
 }
 
@@ -676,6 +743,63 @@ mod tests {
         let l = CombatFeed::default().lines(&a, &[], 1);
         assert_eq!(l[0].text, "Silence Pulse: nothing to interrupt");
         assert_eq!(l[0].tone, Tone::Failed);
+    }
+
+    /// Feed lines over a lab run (0.10): the AI plays the player's Striker
+    /// in `style`.
+    fn lab_lines(style: dungeon_sim::class::StrikerStyle) -> Vec<FeedLine> {
+        let c = Content::builtin();
+        let party = dungeon_sim::lab::lab_party(3);
+        let mut sim = dungeon_sim::lab::lab_sim(
+            &c,
+            &party,
+            1,
+            style,
+            dungeon_sim::sim::LabPlan::Expert,
+            "normal",
+        );
+        let p = sim.player.unwrap();
+        let mut feed = CombatFeed::default();
+        let (mut seen, mut attempts) = (0, 0);
+        let mut lines = Vec::new();
+        while sim.outcome == RunOutcome::InProgress && sim.time < 900.0 {
+            sim.step();
+            let now = sim.metrics.actors[p].interrupts_attempted;
+            lines.extend(feed.lines(&sim, &sim.events[seen..], now - attempts));
+            seen = sim.events.len();
+            attempts = now;
+        }
+        lines
+    }
+
+    #[test]
+    fn lab_styles_explain_their_mechanics_in_the_feed() {
+        use dungeon_sim::class::StrikerStyle;
+        let a = lab_lines(StrikerStyle::Planned);
+        // Edge shows at the end of the line that earned it.
+        assert!(
+            a.iter()
+                .any(|l| l.text.starts_with("Honed Strike > ") && l.text.ends_with("/5]")),
+            "{a:#?}"
+        );
+        assert!(
+            a.iter()
+                .any(|l| l.text.starts_with("Deep Lacerate > ") && l.text.contains("bleeding")),
+            "{a:#?}"
+        );
+        let b = lab_lines(StrikerStyle::Reactive);
+        assert!(
+            b.iter()
+                .any(|l| l.tone == Tone::Opening && l.text.ends_with("- Exploit!")),
+            "{b:#?}"
+        );
+        assert!(b.iter().any(|l| l.text.starts_with("Exploit > ")), "{b:#?}");
+        // The classic Striker sees none of it.
+        let c = lab_lines(StrikerStyle::Classic);
+        assert!(
+            !c.iter()
+                .any(|l| l.text.contains("[Edge") || l.tone == Tone::Opening)
+        );
     }
 
     #[test]

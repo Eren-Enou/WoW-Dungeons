@@ -5,7 +5,9 @@
 //! `stats.rs` for the mitigation / hit-table formulas.
 
 use crate::ai::{self, AiProfile, Blackboard};
-use crate::class::{AbilityId, ClassId, Effect, GCD, ResourceKind, Role, TargetRule, level_power};
+use crate::class::{
+    AbilityId, ClassId, Effect, GCD, ResourceKind, Role, StrikerStyle, TargetRule, level_power,
+};
 use crate::content::{
     AbilityKind, Content, DebuffEffect, Difficulty, EnemyAbility, EnemyRank, HazardConfig,
     PhaseConfig, TargetSelector,
@@ -204,7 +206,59 @@ pub struct RunOptions {
     /// Followers always use their formation slot, as before 0.9 (no trail).
     /// For comparisons only.
     pub slot_follow_only: bool,
+    /// Class Design Lab (0.10): the player's Striker style. Never saved;
+    /// companions always play the classic Striker.
+    pub player_style: StrikerStyle,
+    /// Class Design Lab (0.10): how the AI plays the player's slot (headless
+    /// measurements and demos).
+    pub lab_plan: LabPlan,
 }
+
+/// Class Design Lab (0.10): scripted play for the player's slot when the AI
+/// drives it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LabPlan {
+    /// The usual AI (the companion rotation for the classic Striker, the
+    /// expert rotation for the experimental styles).
+    #[default]
+    Normal,
+    /// Follow and auto-attack only: no abilities, no interrupts.
+    Passive,
+    /// One simple repeatable priority per style.
+    Simple,
+    /// The intended play for the style.
+    Expert,
+}
+
+impl LabPlan {
+    pub fn parse(s: &str) -> Option<LabPlan> {
+        match s.to_ascii_lowercase().as_str() {
+            "normal" => Some(LabPlan::Normal),
+            "passive" => Some(LabPlan::Passive),
+            "simple" => Some(LabPlan::Simple),
+            "expert" => Some(LabPlan::Expert),
+            _ => None,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            LabPlan::Normal => "normal",
+            LabPlan::Passive => "passive",
+            LabPlan::Simple => "simple",
+            LabPlan::Expert => "expert",
+        }
+    }
+}
+
+/// Edge (lab A): most a Striker can hold, and how long it lasts unrefreshed.
+pub const MAX_EDGE: u32 = 5;
+pub const EDGE_SECS: f32 = 20.0;
+/// Lab B openings: how long "Recovering", "Off Balance" and "Faltering" last.
+pub const RECOVERING_SECS: f32 = 3.0;
+pub const OFF_BALANCE_SECS: f32 = 4.0;
+pub const FALTERING_SECS: f32 = 5.0;
+pub const FALTERING_AT: f32 = 0.3;
 
 /// One step of a scripted leader route (0.9).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -224,6 +278,8 @@ impl Default for RunOptions {
             skip_optional: false,
             route: Vec::new(),
             slot_follow_only: false,
+            player_style: StrikerStyle::Classic,
+            lab_plan: LabPlan::Normal,
         }
     }
 }
@@ -282,6 +338,10 @@ pub enum AuraKind {
     Incapacitated,
     /// Cannot cast spells or use special abilities.
     Silenced,
+    /// Lab A: Edge on its owner (stacks = Edge).
+    Edge,
+    /// Lab B: an opening on an enemy for the source's Exploit.
+    Opening,
     /// +pct damage taken per stack.
     DamageTaken {
         pct: f32,
@@ -407,6 +467,8 @@ pub struct Actor {
     pub name: String,
     pub team: Team,
     pub class: Option<ClassId>,
+    /// Class Design Lab style (0.10); classic for everyone but a lab player.
+    pub style: StrikerStyle,
     pub controller: Controller,
     pub profile: AiProfile,
     /// 0..1 dungeon familiarity (persistent learning).
@@ -944,7 +1006,15 @@ impl Sim {
             let mut st = cs.stats;
             spec.gear.apply(&mut st);
             let max_hp = (cs.max_hp + spec.gear.stamina * 10.0).round();
-            let abilities = spec.class.abilities().to_vec();
+            // Lab (0.10): only the player's own Striker gets an experimental style.
+            let style =
+                if spec.player_controlled && sim.player.is_none() && spec.class == ClassId::Striker
+                {
+                    sim.options.player_style
+                } else {
+                    StrikerStyle::Classic
+                };
+            let abilities = spec.class.abilities_for(style).to_vec();
             let labels = abilities
                 .iter()
                 .map(|a| Label::from(a.def().name))
@@ -960,6 +1030,7 @@ impl Sim {
                 name: spec.name.clone(),
                 team: Team::Party,
                 class: Some(spec.class),
+                style,
                 controller: if spec.player_controlled {
                     Controller::Player
                 } else {
@@ -1121,6 +1192,7 @@ impl Sim {
             name: t.name.clone(),
             team: Team::Enemy,
             class: None,
+            style: StrikerStyle::Classic,
             controller: Controller::Ai,
             profile: AiProfile::Balanced,
             familiarity: 0.0,
@@ -1736,6 +1808,12 @@ impl Sim {
             Effect::Absorb { .. } if t.has_aura(|k| matches!(k, AuraKind::WeakenedSoul)) => {
                 return Err(CastError::TargetWeakened);
             }
+            Effect::EdgeBleed { .. } if self.edge(caster) == 0 => {
+                return Err(CastError::NoEdge);
+            }
+            Effect::ExploitOpening { .. } if !self.has_opening(target, caster) => {
+                return Err(CastError::NoOpening);
+            }
             _ => {}
         }
         if def.target != TargetRule::SelfOnly && !self.reach(caster, target, def.range) {
@@ -1804,6 +1882,9 @@ impl Sim {
         self.spend(caster, def.cost);
         self.actors[caster].cooldowns[slot] = def.cooldown;
         self.metrics.actors[caster].casts += 1;
+        if let Some(u) = self.metrics.actors[caster].ability_uses.get_mut(slot) {
+            *u += 1;
+        }
         match def.effect {
             Effect::Damage {
                 amount,
@@ -1957,6 +2038,18 @@ impl Sim {
                             true,
                         ),
                     );
+                    // Lab (0.10): the cast is gone, so is its opening; a
+                    // landed Kick pays Edge (A) or opens the target (B).
+                    self.actors[target]
+                        .auras
+                        .retain(|a| !(a.kind == AuraKind::Opening && &*a.name == "Distracted"));
+                    match self.actors[caster].style {
+                        StrikerStyle::Planned => self.gain_edge(caster, 2),
+                        StrikerStyle::Reactive => {
+                            self.lab_open(target, "Off Balance", OFF_BALANCE_SECS)
+                        }
+                        StrikerStyle::Classic => {}
+                    }
                 }
             }
             Effect::Incapacitate { duration } => {
@@ -1977,6 +2070,81 @@ impl Sim {
                     Aura::new(what, AuraKind::Incapacitated, caster, duration, true),
                 );
             }
+            Effect::Builder {
+                amount,
+                edge,
+                behind_edge,
+            } => {
+                let behind = !stats::is_in_front(
+                    self.actors[target].pos,
+                    self.actors[target].facing,
+                    self.actors[caster].pos,
+                );
+                let spec = DamageSpec::new(amount, def.school, HitKind::Melee, what);
+                if self.deal(caster, target, spec) > 0.0 {
+                    self.gain_edge(caster, if behind { behind_edge } else { edge });
+                }
+            }
+            Effect::EdgeWhirl {
+                base,
+                per_edge,
+                radius,
+            } => {
+                let n = self.spend_edge(caster);
+                let center = self.actors[caster].loc();
+                let hits: Vec<ActorId> = self
+                    .engaged_enemies()
+                    .into_iter()
+                    .filter(|&e| {
+                        !self.actors[e].is_incapacitated() && self.in_effect(e, center, radius)
+                    })
+                    .collect();
+                for e in hits {
+                    let spec = DamageSpec::new(
+                        base + per_edge * n as f32,
+                        def.school,
+                        HitKind::Melee,
+                        what.clone(),
+                    );
+                    self.deal(caster, e, spec);
+                }
+            }
+            Effect::EdgeBleed { per_edge, duration } => {
+                let n = self.spend_edge(caster);
+                // Replaces your previous bleed: its remaining damage is lost.
+                self.actors[target]
+                    .auras
+                    .retain(|a| !(a.source == caster && a.name == what));
+                let ticks = duration.max(1.0);
+                let aura = Aura::new(
+                    what,
+                    AuraKind::Dot {
+                        per_tick: per_edge * n as f32 / ticks,
+                        school: def.school,
+                        ignores_armor: true,
+                    },
+                    caster,
+                    duration,
+                    true,
+                );
+                self.engage_enemy_of(caster, target);
+                self.apply_aura(target, aura);
+            }
+            Effect::ExploitOpening { amount, refund } => {
+                if let Some(i) = self.actors[target]
+                    .auras
+                    .iter()
+                    .position(|a| a.kind == AuraKind::Opening && a.source == caster)
+                {
+                    self.actors[target].auras.remove(i);
+                }
+                self.metrics.actors[caster].exploits += 1;
+                let spec = DamageSpec::new(amount, def.school, HitKind::Melee, what);
+                if self.deal(caster, target, spec) > 0.0 {
+                    let a = &mut self.actors[caster];
+                    a.resource = (a.resource + refund).min(a.max_resource);
+                }
+            }
             Effect::Dispel => {
                 if let Some(i) = self.actors[target]
                     .auras
@@ -1993,6 +2161,66 @@ impl Sim {
                 }
             }
         }
+    }
+
+    /// Lab A: the Edge `id` holds.
+    pub fn edge(&self, id: ActorId) -> u32 {
+        self.actors[id]
+            .auras
+            .iter()
+            .find(|a| a.kind == AuraKind::Edge && a.source == id)
+            .map_or(0, |a| a.stacks)
+    }
+
+    /// Lab A: gain `n` Edge (refreshing its duration); Edge past the cap is
+    /// counted as wasted.
+    fn gain_edge(&mut self, id: ActorId, n: u32) {
+        for _ in 0..n {
+            if self.edge(id) >= MAX_EDGE {
+                self.metrics.actors[id].edge_wasted += 1;
+            }
+            let mut aura = Aura::new(Label::from("Edge"), AuraKind::Edge, id, EDGE_SECS, false);
+            aura.max_stacks = MAX_EDGE;
+            self.apply_aura(id, aura);
+        }
+    }
+
+    /// Lab A: remove and return all of `id`'s Edge.
+    fn spend_edge(&mut self, id: ActorId) -> u32 {
+        let n = self.edge(id);
+        self.actors[id]
+            .auras
+            .retain(|a| !(a.kind == AuraKind::Edge && a.source == id));
+        n
+    }
+
+    /// Lab B: does `target` have an opening for `by`'s Exploit?
+    pub fn has_opening(&self, target: ActorId, by: ActorId) -> bool {
+        self.actors[target]
+            .auras
+            .iter()
+            .any(|a| a.kind == AuraKind::Opening && a.source == by)
+    }
+
+    /// Lab B: the player, when they play the reactive Striker.
+    fn reactive_player(&self) -> Option<ActorId> {
+        self.player
+            .filter(|&p| self.actors[p].style == StrikerStyle::Reactive && self.actors[p].alive)
+    }
+
+    /// Lab B: open `enemy` for the reactive player (nothing otherwise).
+    fn lab_open(&mut self, enemy: ActorId, why: &str, secs: f32) {
+        let Some(p) = self.reactive_player() else {
+            return;
+        };
+        if !self.actors[enemy].alive || !self.actors[enemy].is_enemy() || secs <= 0.0 {
+            return;
+        }
+        self.metrics.actors[p].openings += 1;
+        self.apply_aura(
+            enemy,
+            Aura::new(Label::from(why), AuraKind::Opening, p, secs, true),
+        );
     }
 
     /// Put `target`'s pack in combat with `src` (for effects that don't deal damage).
@@ -2278,6 +2506,7 @@ impl Sim {
         } else {
             outcome
         };
+        let frac_before = self.actors[dst].hp_frac();
         let applied = amount.min(self.actors[dst].hp);
         self.actors[dst].hp = (self.actors[dst].hp - amount).max(0.0);
         self.metrics.actors[src].damage_done += applied;
@@ -2322,6 +2551,13 @@ impl Sim {
             outcome,
             school: spec.school,
         });
+        // Lab B: an enemy that drops below 30% falters (once).
+        if frac_before >= FALTERING_AT
+            && self.actors[dst].hp > 0.0
+            && self.actors[dst].hp_frac() < FALTERING_AT
+        {
+            self.lab_open(dst, "Faltering", FALTERING_SECS);
+        }
         if enemy_enc.is_some() && src_is_party {
             let threat = applied * spec.threat_mult * self.actors[src].threat_mult;
             self.add_threat(dst, src, threat);
@@ -2983,6 +3219,7 @@ impl Sim {
                         what: label,
                         target,
                     });
+                    self.lab_open(e, "Distracted", cfg.cast_time);
                 } else {
                     self.enemy_ability_effect(e, idx, target);
                 }
@@ -3111,6 +3348,11 @@ impl Sim {
         if !self.actors[e].alive {
             return;
         }
+        // Lab B: an enemy that just used an ability is open for a moment.
+        self.actors[e]
+            .auras
+            .retain(|a| !(a.kind == AuraKind::Opening && &*a.name == "Distracted"));
+        self.lab_open(e, "Recovering", RECOVERING_SECS);
         let (cfg, label) = {
             let ab = &self.actors[e].enemy.as_ref().expect("enemy").abilities[idx];
             (ab.cfg.clone(), ab.label.clone())
@@ -3374,8 +3616,17 @@ impl Sim {
             }
             let rate = resource_regen_per_sec(a, in_combat, now);
             a.resource = (a.resource + rate * DT).clamp(0.0, a.max_resource);
+            let capped = in_combat
+                && a.resource_kind == ResourceKind::Energy
+                && a.resource >= a.max_resource;
             if !in_combat {
                 a.hp = (a.hp + a.max_hp * OOC_HP_REGEN * DT).min(a.max_hp);
+            }
+            if capped {
+                self.metrics.actors[p].energy_capped += DT;
+            }
+            if in_combat {
+                self.metrics.actors[p].combat_secs += DT;
             }
         }
     }

@@ -18,6 +18,17 @@ pub struct ActorMetrics {
     pub resource_spent: f32,
     pub interrupts_attempted: u32,
     pub interrupts: u32,
+    /// Uses of each ability slot (0.10).
+    pub ability_uses: [u32; 5],
+    /// Seconds in combat with energy at the cap (wasted regeneration; 0.10).
+    pub energy_capped: f32,
+    /// Seconds this party member spent in combat (0.10).
+    pub combat_secs: f32,
+    /// Lab A: Edge gained past the cap.
+    pub edge_wasted: u32,
+    /// Lab B: openings that appeared for this actor, and Exploits used.
+    pub openings: u32,
+    pub exploits: u32,
 }
 
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]

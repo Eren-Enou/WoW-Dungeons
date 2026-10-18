@@ -244,6 +244,19 @@ impl ClassId {
         }
     }
 
+    /// The five hotkeyed abilities for a Class Design Lab style (0.10): the
+    /// experimental styles only change the Striker.
+    pub fn abilities_for(self, style: StrikerStyle) -> [AbilityId; 5] {
+        use AbilityId::*;
+        match (self, style) {
+            (ClassId::Striker, StrikerStyle::Planned) => {
+                [HonedStrike, ReapingWhirl, Evade, Kick, DeepLacerate]
+            }
+            (ClassId::Striker, StrikerStyle::Reactive) => [RendStrike, Whirl, Evade, Kick, Exploit],
+            _ => self.abilities(),
+        }
+    }
+
     /// The five hotkeyed abilities (keys 1-5).
     pub fn abilities(self) -> [AbilityId; 5] {
         use AbilityId::*;
@@ -252,6 +265,57 @@ impl ClassId {
             ClassId::Mender => [Mend, Renew, Smite, Ward, Purify],
             ClassId::Striker => [RendStrike, Whirl, Evade, Kick, Lacerate],
             ClassId::Arcanist => [ArcBolt, Flare, Veil, Hex, SilencePulse],
+        }
+    }
+}
+
+/// Class Design Lab (0.10): which Striker the player plays. Experimental
+/// styles apply to the player's character only and are never saved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StrikerStyle {
+    /// The original Striker.
+    #[default]
+    Classic,
+    /// Experiment A: build Edge, spend it on a bleed or a whirl.
+    Planned,
+    /// Experiment B: exploit openings the enemies give you.
+    Reactive,
+}
+
+impl StrikerStyle {
+    pub const ALL: [StrikerStyle; 3] = [
+        StrikerStyle::Classic,
+        StrikerStyle::Planned,
+        StrikerStyle::Reactive,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            StrikerStyle::Classic => "Classic",
+            StrikerStyle::Planned => "A: Planned",
+            StrikerStyle::Reactive => "B: Reactive",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<StrikerStyle> {
+        match s.to_ascii_lowercase().as_str() {
+            "classic" => Some(StrikerStyle::Classic),
+            "a" | "planned" => Some(StrikerStyle::Planned),
+            "b" | "reactive" => Some(StrikerStyle::Reactive),
+            _ => None,
+        }
+    }
+
+    pub fn blurb(self) -> &'static str {
+        match self {
+            StrikerStyle::Classic => "The original Striker.",
+            StrikerStyle::Planned => {
+                "Build Edge (max 5) with Honed Strike (+2 from behind) and landed Kicks; spend it all on Deep Lacerate (a bleed: best on long fights) or Reaping Whirl (damage now, to every enemy near you)."
+            }
+            StrikerStyle::Reactive => {
+                "Watch for openings on enemies: casting (Distracted), just used an ability (Recovering), kicked (Off Balance), below 30% (Faltering). Exploit an opening for heavy damage and energy back; Rend Strike in between."
+            }
         }
     }
 }
@@ -278,6 +342,11 @@ pub enum AbilityId {
     Veil,
     Hex,
     SilencePulse,
+    // Class Design Lab (0.10), player Striker only.
+    HonedStrike,
+    ReapingWhirl,
+    DeepLacerate,
+    Exploit,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -360,6 +429,29 @@ pub enum Effect {
     },
     /// Remove one dispellable harmful effect from an ally.
     Dispel,
+    /// Lab A: melee damage that gives Edge (more from behind the target).
+    Builder {
+        amount: f32,
+        edge: u32,
+        behind_edge: u32,
+    },
+    /// Lab A: spend all Edge on damage to every engaged enemy in `radius`.
+    EdgeWhirl {
+        base: f32,
+        per_edge: f32,
+        radius: f32,
+    },
+    /// Lab A: spend all Edge on a bleed (`per_edge` total per Edge).
+    EdgeBleed {
+        per_edge: f32,
+        duration: f32,
+    },
+    /// Lab B: heavy hit on a target with an opening; consumes the opening and
+    /// refunds energy if it lands.
+    ExploitOpening {
+        amount: f32,
+        refund: f32,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -727,6 +819,72 @@ impl AbilityId {
                 Interrupt {
                     lockout: 4.0,
                     damage: 0.0,
+                },
+            ),
+            HonedStrike => d(
+                HonedStrike,
+                "Honed Strike",
+                "Melee strike: +1 Edge, +2 from behind. 40 energy.",
+                C::Damage,
+                S::Physical,
+                TargetRule::Enemy,
+                2.0,
+                0.0,
+                0.0,
+                40.0,
+                Builder {
+                    amount: 60.0,
+                    edge: 1,
+                    behind_edge: 2,
+                },
+            ),
+            ReapingWhirl => d(
+                ReapingWhirl,
+                "Reaping Whirl",
+                "Spend all Edge: 40 + 45 per Edge to every engaged enemy within 6m. 30 energy.",
+                C::Damage,
+                S::Physical,
+                TargetRule::SelfOnly,
+                0.0,
+                0.0,
+                6.0,
+                30.0,
+                EdgeWhirl {
+                    base: 40.0,
+                    per_edge: 45.0,
+                    radius: 6.0,
+                },
+            ),
+            DeepLacerate => d(
+                DeepLacerate,
+                "Deep Lacerate",
+                "Spend all Edge: bleed 80 per Edge over 12s (ignores armor), replacing your bleed. 25 energy.",
+                C::Damage,
+                S::Physical,
+                TargetRule::Enemy,
+                2.0,
+                0.0,
+                0.0,
+                25.0,
+                EdgeBleed {
+                    per_edge: 80.0,
+                    duration: 12.0,
+                },
+            ),
+            Exploit => d(
+                Exploit,
+                "Exploit",
+                "Needs an opening on the target: 120 damage, consumes it, 10 energy back if it lands. 30 energy.",
+                C::Damage,
+                S::Physical,
+                TargetRule::Enemy,
+                2.0,
+                0.0,
+                0.0,
+                30.0,
+                ExploitOpening {
+                    amount: 120.0,
+                    refund: 10.0,
                 },
             ),
         }

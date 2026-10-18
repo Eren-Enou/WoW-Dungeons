@@ -159,6 +159,34 @@ pub fn ability(def: &AbilityDef, power_mult: f32, resource: ResourceKind) -> Tip
             secs(duration)
         ),
         Effect::Dispel => "Removes one dispellable harmful effect from an ally.".into(),
+        Effect::Builder {
+            amount,
+            edge,
+            behind_edge,
+        } => format!(
+            "Deals about {:.0} {school} damage and gives {edge} Edge ({behind_edge} if you strike from behind). Edge holds up to 5 and lasts 20 s.{}",
+            p(amount),
+            hit(HitKind::Melee)
+        ),
+        Effect::EdgeWhirl {
+            base,
+            per_edge,
+            radius,
+        } => format!(
+            "Spends all your Edge: deals about {:.0} + {:.0} per Edge {school} damage to every engaged enemy within {radius:.0} m of you. Usable with no Edge.",
+            p(base),
+            p(per_edge)
+        ),
+        Effect::EdgeBleed { per_edge, duration } => format!(
+            "Needs Edge. Spends all of it: the target bleeds {:.0} per Edge over {} (ignores armor). Replaces your previous bleed on it; what was left of that is lost.",
+            p(per_edge),
+            secs(duration)
+        ),
+        Effect::ExploitOpening { amount, refund } => format!(
+            "Needs an opening on the target (casting, just used an ability, kicked by you, or under 30% health). Deals about {:.0} {school} damage, uses up the opening and gives back {refund:.0} energy if it lands.{}",
+            p(amount),
+            hit(HitKind::Melee)
+        ),
     });
     if !def.description.is_empty() {
         lines.push(def.description.to_string());
@@ -197,6 +225,11 @@ pub fn aura(a: &Aura, source: &str) -> Tip {
         AuraKind::Taunted { .. } => "Forced to attack the taunter.".into(),
         AuraKind::Incapacitated => "Cannot act or move. Any damage breaks it.".into(),
         AuraKind::Silenced => "Cannot cast spells or use special abilities.".into(),
+        AuraKind::Edge => format!(
+            "{:.0} Edge (of 5): spend it with Deep Lacerate or Reaping Whirl.",
+            stacks
+        ),
+        AuraKind::Opening => "An opening: the reactive Striker can Exploit it.".into(),
         AuraKind::DamageTaken { pct } => format!(
             "Takes {:.0}% more damage ({:.0}% per stack).",
             pct * stacks * 100.0,

@@ -22,7 +22,8 @@ const USAGE: &str = "usage: dungeon-headless [--seed N] [--runs N] [--dungeon ID
 [--difficulty ID] [--class warden|mender|striker|arcanist] [--level N] \
 [--profile conservative|balanced|aggressive|support|mechanic] [--party-size N] \
 [--compare-profiles] [--bench] [--breakdown] [--familiarity 0..1] [--max-seconds S] [--log FILE] [--json] [--quiet] \
-[--slot-follow (companions follow formation slots only, as before 0.9; for comparisons)]";
+[--slot-follow (companions follow formation slots only, as before 0.9; for comparisons)] \
+[--lab (Class Design Lab 0.10: compare Striker styles x player plans) [--levels 3,6]]";
 
 struct Args {
     seed: u64,
@@ -43,6 +44,8 @@ struct Args {
     breakdown: bool,
     familiarity: f32,
     slot_follow: bool,
+    lab: bool,
+    levels: Vec<u32>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -65,6 +68,8 @@ fn parse_args() -> Result<Args, String> {
         breakdown: false,
         familiarity: 0.0,
         slot_follow: false,
+        lab: false,
+        levels: Vec::new(),
     };
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
@@ -117,6 +122,17 @@ fn parse_args() -> Result<Args, String> {
             }
             "--compare-profiles" => args.compare_profiles = true,
             "--slot-follow" => args.slot_follow = true,
+            "--lab" => args.lab = true,
+            "--levels" => {
+                args.levels = val("--levels")?
+                    .split(',')
+                    .map(|v| {
+                        v.trim()
+                            .parse::<u32>()
+                            .map_err(|e| format!("--levels: {e}"))
+                    })
+                    .collect::<Result<_, _>>()?
+            }
             "--bench" => args.bench = true,
             "-h" | "--help" => return Err(USAGE.into()),
             other => return Err(format!("unknown argument '{other}'\n{USAGE}")),
@@ -262,6 +278,115 @@ fn run_batch(
     (summaries, start.elapsed().as_secs_f64(), ticks)
 }
 
+/// `--lab`: every Striker style x player plan on the same seeds (0.10).
+fn run_lab_matrix(args: &Args, content: &Content) {
+    use dungeon_sim::class::StrikerStyle;
+    use dungeon_sim::lab::{FightKind, run_lab, summarize};
+    use dungeon_sim::sim::LabPlan;
+    let levels = if args.levels.is_empty() {
+        vec![content.dungeon.recommended_level.max(1)]
+    } else {
+        args.levels.clone()
+    };
+    for level in levels {
+        println!(
+            "== {} | level {level} | {} | seeds {}..{} ==",
+            content.dungeon.id,
+            args.difficulty,
+            args.seed,
+            args.seed + args.runs as u64 - 1
+        );
+        println!(
+            "{:<12} {:<8} {:>5} {:>6} {:>6} {:>6} {:>6} | {:>13} {:>13} {:>13} | {:>5} {:>5} {:>4} {:>5} | {:<24} lab",
+            "style",
+            "plan",
+            "wins",
+            "secs",
+            "pDPS",
+            "share",
+            "ptyDPS",
+            "trash p/pty",
+            "elite p/pty",
+            "boss p/pty",
+            "dead",
+            "taken",
+            "int",
+            "cap%",
+            "uses 1-5",
+        );
+        for style in StrikerStyle::ALL {
+            for plan in [LabPlan::Passive, LabPlan::Simple, LabPlan::Expert] {
+                let runs: Vec<_> = (0..args.runs)
+                    .map(|i| {
+                        run_lab(
+                            content,
+                            level,
+                            args.seed + i as u64,
+                            style,
+                            plan,
+                            &args.difficulty,
+                            args.max_seconds,
+                        )
+                        .1
+                    })
+                    .collect();
+                let s = summarize(&runs);
+                let fight = |k: FightKind| {
+                    let f = s.fights[k as usize];
+                    if f.0 > 0.0 {
+                        format!("{:>5.0}/{:<5.0}", f.2, f.3)
+                    } else {
+                        "-".to_string()
+                    }
+                };
+                let uses = s
+                    .ability_uses
+                    .iter()
+                    .map(|u| format!("{u:.0}"))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let extra = match style {
+                    StrikerStyle::Planned => format!("edge wasted {:.1}", s.edge_wasted),
+                    StrikerStyle::Reactive => {
+                        format!("openings {:.0}, exploits {:.0}", s.openings, s.exploits)
+                    }
+                    StrikerStyle::Classic => String::new(),
+                };
+                let pay = FightKind::ALL
+                    .iter()
+                    .map(|&k| {
+                        let f = s.payoffs[k as usize];
+                        format!("{}:{:.1}/{:.0}%/{:.1}s", k.label(), f.0, 100.0 * f.1, f.2)
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                println!(
+                    "{:<12} {:<8} {:>2}/{:<2} {:>6.0} {:>6.1} {:>5.1}% {:>6.1} | {:>13} {:>13} {:>13} | {:>5.2} {:>5.0} {:>4.1} {:>5.1} | {:<24} {} | payoffs {}",
+                    style.label(),
+                    plan.label(),
+                    s.wins,
+                    s.runs,
+                    s.duration,
+                    s.player_dps,
+                    100.0 * s.player_share,
+                    s.party_dps,
+                    fight(FightKind::Trash),
+                    fight(FightKind::Elite),
+                    fight(FightKind::Boss),
+                    s.party_deaths,
+                    s.damage_taken,
+                    s.player_interrupts,
+                    s.energy_capped_pct,
+                    uses,
+                    extra,
+                    pay
+                );
+            }
+        }
+        println!();
+    }
+}
+
 fn main() -> ExitCode {
     let args = match parse_args() {
         Ok(a) => a,
@@ -303,6 +428,10 @@ fn main() -> ExitCode {
         return ExitCode::from(1);
     }
 
+    if args.lab {
+        run_lab_matrix(&args, &content);
+        return ExitCode::SUCCESS;
+    }
     let profiles: Vec<AiProfile> = if args.compare_profiles {
         AiProfile::ALL.to_vec()
     } else {

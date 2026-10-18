@@ -30,6 +30,19 @@ pub struct GameData {
     pub editor: Option<Content>,
     /// The layout chosen for a forge-made dungeon (0.9; classic when unset).
     pub layout: Option<crate::remix::LayoutChoice>,
+    /// Class Design Lab (0.10): the Striker style for this session's runs.
+    /// Never saved: restarting the game returns to the classic Striker.
+    pub lab_style: dungeon_sim::class::StrikerStyle,
+}
+
+/// `--striker-style classic|a|b` (Class Design Lab, 0.10).
+pub fn lab_style_from_args() -> dungeon_sim::class::StrikerStyle {
+    let args: Vec<String> = std::env::args().collect();
+    args.iter()
+        .position(|a| a == "--striker-style")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|v| dungeon_sim::class::StrikerStyle::parse(v))
+        .unwrap_or_default()
 }
 
 impl GameData {
@@ -45,6 +58,7 @@ impl GameData {
             message: err.map(|e| (format!("Save problem: {e}"), 10.0)),
             editor: None,
             layout: None,
+            lab_style: lab_style_from_args(),
         };
         data.reload_content();
         for e in &data.content_errors {
