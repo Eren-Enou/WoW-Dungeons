@@ -465,6 +465,17 @@ No balance was changed for any other class.
   - mechanics that add a resource (A) need the payoff to be a large share
     of output, or the decisions don't register.
 
+### The game loop with the experiments
+- **Full runs:** `--demo` played the Gloomroot Warrens (level 6) to Victory
+  with A (270.5 s) and with B (282.0 s), through results back to the hub.
+- **Screenshots looked at:**
+  - Edge pips and "[Edge n/5]" feed tags;
+  - "no Edge" / "no opening" on the action bar;
+  - "Opening: ... - Exploit!" lines and the gold marker over open enemies;
+  - the Sandbox switch and the "CLASS LAB" labels.
+- **Rewards:** a lab run gives ordinary rewards (XP, loot, Marks). Only
+  the style is never saved.
+
 ## What is not validated
 
 - **Fun, readability, flow and mastery** of any style: not covered by a

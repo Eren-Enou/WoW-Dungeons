@@ -64,6 +64,10 @@ or not.
   - `--input-test` (Classic, A and B), `--frame-test`, `--tooltip-test`,
     `--click-test`, `--remix-test`, and `--viewer <id> --viewer-test` on
     two dungeons: all exit 0.
+- **Full game loops:** `--demo` played the Gloomroot Warrens to the end
+  with Striker A (Victory, 270.5 s) and B (Victory, 282.0 s), then the
+  results and the hub, which shows "CLASS LAB ACTIVE". A lab run is an
+  ordinary run with ordinary rewards; only the style is never saved.
 - **Package (local, not published):**
   `dist/DungeonSandbox-0.10.0-windows-x64.zip`, 31.2 MB. Extracted, it
   passes `--input-test --striker-style b` and `--remix-test`, and its
