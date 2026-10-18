@@ -137,7 +137,9 @@ RULES.md documents every formula.
 
 Each has Normal, Heroic and Raid (10) difficulties; the Party tab switches
 between a 5-person party and a 10-person raid group. The Sandbox tab adjusts
-enemy health, damage, ability speed and telegraph time without editing files;
+enemy health, damage, ability speed and telegraph time without editing files,
+and holds the **Class Design Lab** (0.10): two experimental Striker styles,
+for this session only (CLASS_DESIGN_LAB_0_10.md, PLAYTEST_CLASS_LAB_0_10.md);
 the Editor tab tunes individual bosses and abilities and saves a custom dungeon
 file. The Vendor sells gear for Vault Marks and buys back what you don't need.
 Companions grow more familiar with dungeons they clear and react faster there. Bosses and elites drop loot; kills and
@@ -369,7 +371,17 @@ cargo run --release -p dungeon_sim --bin dungeon-headless -- --runs 20
 cargo run --release -p dungeon_sim --bin dungeon-headless -- --dungeon gloomroot_warrens --level 4 --runs 100 --compare-profiles
 cargo run --release -p dungeon_sim --bin dungeon-headless -- --dungeon gloomroot_warrens --level 4 --runs 50 --breakdown --quiet
 cargo run --release -p dungeon_sim --bin dungeon-headless -- --party-size 25 --level 6 --dungeon gloomroot_warrens --runs 5 --bench --quiet
+cargo run --release -p dungeon_sim --bin dungeon-headless -- --lab --dungeon cinderdeep_hollows --runs 20 --levels 3,6
 ```
+
+`--lab` (0.10) compares the three Striker styles (Classic, A: Planned,
+B: Reactive) × three scripted ways of playing the player's slot (passive,
+simple, expert) on the same seeds. It reports:
+- player and party DPS by fight type;
+- wins, deaths and interrupts;
+- energy at the cap and ability use;
+- for A, Edge wasted; for B, openings and Exploits;
+- when each style gets its payoff.
 
 Options: `--dungeon ID`, `--content PATH`, `--difficulty ID`, `--class`,
 `--level N` (default: the dungeon's recommended level), `--profile

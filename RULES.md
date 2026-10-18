@@ -375,3 +375,38 @@ through data; dungeons that don't use them behave exactly as before.
 * **Generated pillared rooms**: pillars are holes in the walkable floor,
   walled round, so they block movement and sight. Floor strips around them
   overlap by 3 m.
+
+## Class Design Lab (0.10, experimental) [orig]
+
+These rules apply only to the player's own Striker when an experimental
+style is chosen (hub Sandbox tab or `--striker-style`). Companions and the
+classic Striker are unaffected. Design and measurements:
+CLASS_DESIGN_LAB_0_10.md.
+
+### A: Planned
+- **Edge** (aura on yourself, stacks 0–5): lasts 20 s from the last gain.
+  Gains past 5 are wasted and counted.
+- **Honed Strike** (40 energy): 60 melee damage. If it lands: +1 Edge, or
+  +2 when you are not in front of the target (the same front test as
+  parries).
+- **Reaping Whirl** (30 energy, 6 s cooldown): spends all Edge `n`;
+  40 + 45 × n to every engaged, uncontrolled enemy within 6 m. Usable at
+  0 Edge.
+- **Deep Lacerate** (25 energy, needs Edge `n` ≥ 1): spends all Edge.
+  Removes your previous Deep Lacerate on the target, then applies a bleed
+  of 80 × n over 12 s, ignoring armour.
+- **Kick:** a successful interrupt gives +2 Edge.
+
+### B: Reactive
+- **Openings** (aura on an enemy, sourced from you):
+  - **Distracted:** for the cast time, when the enemy starts a cast.
+  - **Recovering:** 3 s, when an enemy ability takes effect (it also
+    clears Distracted).
+  - **Off Balance:** 4 s, when your Kick interrupts it.
+  - **Faltering:** 5 s, when a hit takes it from 30% health or more to
+    below 30%, and it survives.
+
+  An interrupt by anyone clears Distracted.
+- **Exploit** (30 energy, needs an opening from you on the target):
+  removes one of your openings on it, then deals 120 melee damage. If the
+  hit lands, it refunds 10 energy.

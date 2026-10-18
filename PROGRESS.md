@@ -1,8 +1,8 @@
 # Progress
 
-Status: **0.9.3 (ability impact) implemented and verified with automated
-checks; see the 0.9.3 section.** 0.9.2 (combat clarity), 0.9.1 (Dungeon
-Remix polish) and 0.9 (Dungeon Remix) below.
+Status: **0.10 (Class Design Lab) implemented and verified with automated
+checks; see the 0.10 section.** 0.9.3 (ability impact), 0.9.2 (combat
+clarity), 0.9.1 (Dungeon Remix polish) and 0.9 (Dungeon Remix) below.
 
 Previous: **0.8.1 (viewer polish, map navigation and exploration design)
 implemented and verified**. It adds a speed bar and presets, a 2D map,
@@ -30,6 +30,44 @@ covered by a recorded playtest".)
 
 Environment: Windows 11 Pro, Rust 1.99.0, Bevy 0.20.0 (pinned `=0.20.0`,
 Cargo.lock committed), NVIDIA RTX 2070 SUPER (Vulkan).
+
+## 0.10 - Class Design Lab
+
+Design, measurements and results: CLASS_DESIGN_LAB_0_10.md. Playtest:
+PLAYTEST_CLASS_LAB_0_10.md. The owner's feedback for 0.10 is recorded in
+CLASS_DESIGN_LAB_0_10.md and in PLAYTEST_COMBAT_0_9_2.md's notes.
+
+**Not covered by a recorded human playtest:** no style has been judged fun
+or not.
+
+**Built:**
+- two experimental Striker styles (A: Planned, Edge; B: Reactive,
+  openings) beside the unchanged Classic, for the player only and per
+  session;
+- the Sandbox tab switch and `--striker-style`;
+- HUD, feed and effects for both mechanics;
+- scripted player plans and `dungeon-headless --lab`;
+- progression concepts (design only).
+
+**Verified:**
+- **The classic game is unchanged:** 320 headless runs are hash-identical
+  to 0.9.2/0.9.3.
+- **Checks:** fmt, check and clippy clean; tests forge 28, game 40, sim
+  171 (lab: determinism, isolation, requirements, passive play, tooltips;
+  feed and fx for both styles).
+- **The lab matrix:** 5 dungeons × levels 3 and 6 × 20 seeds × 9
+  conditions; the results are in the design document.
+- **Graphical:**
+  - `--demo` with A and B (screenshots looked at: Edge pips and feed tags,
+    openings, the OPENING! slot, the opening marker);
+  - the Sandbox tab in `--hub-tour`;
+  - `--input-test` (Classic, A and B), `--frame-test`, `--tooltip-test`,
+    `--click-test`, `--remix-test`, and `--viewer <id> --viewer-test` on
+    two dungeons: all exit 0.
+- **Package (local, not published):**
+  `dist/DungeonSandbox-0.10.0-windows-x64.zip`, 31.2 MB. Extracted, it
+  passes `--input-test --striker-style b` and `--remix-test`, and its
+  `dungeon-headless --lab` runs.
 
 ## 0.9.3 - Ability impact
 

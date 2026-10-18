@@ -124,6 +124,13 @@ Your companions take cover from the wail on their own.
 Difficulty: Normal, Heroic (harder, better loot) and Raid (10). The Sandbox tab
 can make any dungeon easier or harder without editing files.
 
+CLASS DESIGN LAB (experiment, 0.10): the Sandbox tab can switch your Striker
+to one of two experimental styles for this session only (never saved):
+  A: Planned  - build Edge (+2 from behind), spend it on a bleed or a whirl.
+  B: Reactive - Exploit openings: enemies casting, just after their
+                abilities, after your Kick, or below 30% health.
+See PLAYTEST_CLASS_LAB_0_10.md in the repository for the playtest.
+
 DUNGEON VIEWER (new in 0.8)
 ---------------------------
 Look around any dungeon without fighting: double-click "Dungeon Viewer.bat",

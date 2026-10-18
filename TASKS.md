@@ -3,8 +3,13 @@
 Prioritized, actionable work. Completed milestones are summarized at the bottom;
 details and evidence live in PROGRESS.md.
 
-## Next up (after 0.9.3)
+## Next up (after 0.10)
 
+00. **Class Design Lab playtest** (PLAYTEST_CLASS_LAB_0_10.md, 30–45
+    minutes). Then decide:
+    - which style (or neither) becomes the Striker's direction;
+    - what the other classes take from it;
+    - only then, talents and gear (concepts in CLASS_DESIGN_LAB_0_10.md).
 0. **Recorded before/after playtest of 0.9.2/0.9.3 combat clarity and impact**:
    PLAYTEST_COMBAT_0_9_2.md. Open questions:
    - whether the recent-action lines get read during a fight;
@@ -79,6 +84,13 @@ details and evidence live in PROGRESS.md.
 
 ## Done
 
+- 0.10: Class Design Lab (CLASS_DESIGN_LAB_0_10.md):
+  - two experimental Striker styles, player-only and per session;
+  - the switch, HUD, feed and effects for them;
+  - `dungeon-headless --lab` measurements;
+  - talent and gear concepts.
+
+  The classic game is hash-identical.
 - 0.9.3: ability impact (ABILITY_IMPACT_0_9_3.md):
   - effects of your own, and hit reactions;
   - area rings at the real radius;

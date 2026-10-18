@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.10.0 - Class Design Lab
+
+Design, measurements and progression concepts: CLASS_DESIGN_LAB_0_10.md.
+Playtest: PLAYTEST_CLASS_LAB_0_10.md. The classic game is unchanged: 320
+runs have event-log hashes identical to 0.9.2/0.9.3.
+
+**Two experimental Striker styles**, for your own character, chosen per
+session in the Sandbox tab or with `--striker-style`, and never saved:
+- **A: Planned:**
+  - build **Edge** (0–5) with Honed Strike (+2 from behind) and landed
+    Kicks;
+  - spend it on **Deep Lacerate** (a bleed: best on long fights) or
+    **Reaping Whirl** (now, to every enemy near you).
+- **B: Reactive:**
+  - enemies give **openings** when they cast, just after they use an
+    ability, when you kick them, and when they drop below 30%;
+  - **Exploit** takes an opening for heavy damage and energy back.
+
+Companion Strikers stay Classic.
+
+**Interface:**
+- Edge pips by the energy bar;
+- a gold "OPENING!" Exploit slot;
+- "no Edge" / "no opening" on the action bar;
+- feed lines ("[Edge 3/5]", "Opening: ... - Exploit!");
+- a gold marker over open enemies;
+- "CLASS LAB" labels in the hub and the dungeon.
+
+**`dungeon-headless --lab`:** compares styles × scripted play (passive,
+simple, expert) on equal seeds.
+
+**Findings** (simulation only; fun is for the playtest):
+- **Classic:** simple play is within 0–5% of expert in four of five
+  dungeons.
+- **Expert over simple:** A +2–7%; B +3–11%.
+- **The player's slot matters:** a passive player makes runs 12–17%
+  longer, and under-levelled parties lose (Cinderdeep at level 3: 0/20
+  passive, 16–17/20 with expert A or B).
+
 ## 0.9.3 - Ability impact
 
 Plan and results: ABILITY_IMPACT_0_9_3.md. Presentation only: 320 runs have

@@ -113,14 +113,18 @@ fight) and carries over when you switch targets.
 
 | Slot | Ability | Cost | Effect |
 |---|---|---|---|
-| 1 | **Honed Strike** | 40 | 80 damage; +1 Edge, **+2 from behind** |
-| 2 | **Reaping Whirl** | 30, 6 s cooldown | spends all Edge: 40 + 30 per Edge to every engaged enemy within 6 m; usable at 0 Edge |
+| 1 | **Honed Strike** | 40 | 60 damage; +1 Edge, **+2 from behind** |
+| 2 | **Reaping Whirl** | 30, 6 s cooldown | spends all Edge: 40 + 45 per Edge to every engaged enemy within 6 m; usable at 0 Edge |
 | 3 | Evade | - | unchanged |
 | 4 | Kick | 25 | unchanged; **a successful interrupt gives +2 Edge** |
-| 5 | **Deep Lacerate** | 25, needs Edge | spends all Edge: a bleed of 60 per Edge over 12 s; it replaces your previous bleed on that target (its remaining damage is lost) |
+| 5 | **Deep Lacerate** | 25, needs Edge | spends all Edge: a bleed of 80 per Edge over 12 s; it replaces your previous bleed on that target (its remaining damage is lost) |
 
-**Value per Edge:** 60 as a bleed on one target that lives 12 s; 30 per
+**Value per Edge:** 80 as a bleed on one target that lives 12 s; 45 per
 target as Reaping Whirl, immediately.
+
+The first guesses were Honed Strike 80, Reaping Whirl 30 per Edge and a
+bleed of 60 per Edge. With them, Edge was too small a share of the damage
+for any decision about it to matter (see "Results").
 
 **Decisions:**
 1. **Spend now or build to 5?**
@@ -167,9 +171,12 @@ do; none are random:
 | 2 | Whirl | 30, 10 s cooldown | unchanged |
 | 3 | Evade | - | unchanged |
 | 4 | Kick | 25 | unchanged; a landed Kick opens the target (Off Balance) |
-| 5 | **Exploit** | 30, needs an opening on the target | 200 damage, consumes the opening, refunds 20 energy if it lands |
+| 5 | **Exploit** | 30, needs an opening on the target | 120 damage, consumes the opening, refunds 10 energy if it lands |
 
 There is no bleed: B has no state to maintain, only windows to take.
+
+The first guess was 200 damage with a 20-energy refund. That made B 30–60%
+stronger than Classic (see "Results").
 
 **Decisions:**
 1. **Exploit a cast or Kick it?**
@@ -273,6 +280,199 @@ becomes a choice.
 **Higher-level upgrade:** a second Exploit charge, so two openings close
 together can both be taken.
 
-## Results
+## What was built
 
-To be filled in from measurements (section below, after implementation).
+| Piece | Where |
+|---|---|
+| Styles, abilities, effects | `class.rs`: `StrikerStyle`, `abilities_for`; `HonedStrike`, `ReapingWhirl`, `DeepLacerate`, `Exploit`; `Effect::{Builder, EdgeWhirl, EdgeBleed, ExploitOpening}` |
+| Edge and openings | `sim.rs`: as auras (`AuraKind::Edge`, `AuraKind::Opening`); `gain_edge`, `spend_edge`, `lab_open`; hooks on Kick, enemy casts and abilities, and the 30% health line |
+| Requirements | `CastError::NoEdge`, `CastError::NoOpening` |
+| Scripted play | `ai.rs`: `LabPlan` (passive, simple, expert) for the player's slot; `lab_cast` |
+| Measurements | `lab.rs`, `dungeon-headless --lab [--levels 3,6]` |
+| Switch | hub Sandbox tab "Class Design Lab", or `--striker-style classic\|a\|b`; session only |
+| Feedback | HUD: Edge pips, "CLASS LAB" labels, gold "OPENING!" Exploit slot, "no Edge" / "no opening". Feed: "[Edge n/5]", bleeds, "Opening: ... - Exploit!". `fx.rs`: opening marker, heavy Exploit hits, Reaping Whirl ring |
+
+**What it doesn't touch:**
+- **Saves:** the style is not in the profile.
+- **Companions:** always classic.
+- **Classic hooks:** every hook is inert for the classic style.
+
+## Results (verified 2026-10-17, automated only)
+
+**The simulation measures effectiveness. Whether any style is fun is not
+measured;** that is PLAYTEST_CLASS_LAB_0_10.md.
+
+### The classic game is unchanged
+- **Hashes:** 320 headless runs (8 dungeons × 4 classes × 10 seeds) have
+  `log_hash` values identical to the 0.9.2 package's.
+- **Classic through the lab:** a classic Striker run through the lab has
+  the classic abilities.
+- **Companion Strikers** keep the classic abilities in every style (a
+  test).
+
+### How the measurements were made
+```
+dungeon-headless --lab --dungeon <id> --runs 20 --levels 3,6
+```
+- **Coverage:** 5 dungeons (Sunken Vault, Gloomroot Warrens, Hollow
+  Reliquary, Emberforge Vaults, Cinderdeep Hollows); levels 3 and 6;
+  seeds 1–20; 3 styles × 3 plans; Normal difficulty.
+- **Companions:** the same AI and party in every condition.
+- **What level 6 is for:** at or above every one of these dungeons'
+  recommended level, so it is used for damage comparisons.
+- **What level 3 is for:** below the recommended level for Gloomroot (4)
+  and Cinderdeep (5), so it shows whether the player's play decides
+  survival.
+- **Player DPS** is the player's damage divided by the time spent in fights
+  (pull to clear).
+
+### Does playing well matter? Player DPS at level 6
+
+| Dungeon | passive | Classic simple → expert | A simple → expert | B simple → expert |
+|---|---|---|---|---|
+| Cinderdeep Hollows | 33 | 73 → 74 (+2%) | 74 → 79 (+7%) | 76 → 85 (+11%) |
+| Emberforge Vaults | 31 | 68 → 70 (+2%) | 71 → 75 (+7%) | 75 → 82 (+10%) |
+| Hollow Reliquary | 29 | 65 → 68 (+5%) | 66 → 70 (+6%) | 67 → 73 (+9%) |
+| Gloomroot Warrens | 30 | 71 → 71 (0%) | 73 → 74 (+2%) | 73 → 75 (+3%) |
+| Sunken Vault | 33 | 68 → 76 (+12%) | 69 → 71 (+4%) | 72 → 76 (+5%) |
+
+**Classic: playing well barely matters.**
+- A simple priority (keep Lacerate up, else Rend) is within 0–5% of the
+  companion rotation in four dungeons out of five.
+- This is the owner's "filler" observation, measured.
+
+**A: a small but real skill gap** (+2% to +7%).
+- **Expert vs simple:** the expert cashes in Edge on packs and dying
+  targets and doesn't overwrite a fresh bleed. The simple plan wastes
+  about 20 Edge per run against 0.5 for the expert, and still loses only
+  2–7%.
+- **Expert vs Classic expert:** −7% (Sunken Vault) to +8%.
+- **The simple A plan already stands behind the target:** the AI's
+  movement does that, so the +2 Edge from behind is free for both plans.
+  For a human, positioning should matter more than these numbers show.
+- **Not measured:** how much a player who doesn't position loses.
+
+**B: the clearest skill gap** (+3% to +11%; +5% on the short Sunken
+Vault).
+- **Expert vs Classic expert:** 0% to +14%.
+- **What the expert does:**
+  - takes about 40% more openings than the simple plan (Cinderdeep: 95
+    Exploits against 66);
+  - switches to an open neighbour;
+  - keeps 30 energy back;
+  - kicks more: 9.6 interrupts against 6.2 at Cinderdeep, because pooled
+    energy leaves Kick affordable.
+- **The cost of pooling:** 9–17% of combat at full energy, 2–4 points
+  more than Classic expert in the same dungeon (6–13%).
+
+**The player matters to the party in every style:**
+- **Damage:** a passive player (auto-attacks only) deals 12–14% of the
+  party's damage; an active one 24–29%.
+- **Run length:** the run takes 12–17% longer with a passive player
+  (Cinderdeep L6: 494 s passive, 415–426 s active).
+
+### When the party is under-levelled, play decides survival (level 3, wins out of 20)
+
+| Dungeon (recommended level) | passive | Classic simple / expert | A simple / expert | B simple / expert |
+|---|---|---|---|---|
+| Cinderdeep Hollows (5) | 0 | 13 / 10 | 10 / 16 | 10 / 17 |
+| Hollow Reliquary (4) | 13 | 13 / 18 | 16 / 19 | 14 / 14 |
+| Gloomroot Warrens (4) | 0 | 1 / 1 | 3 / 0 | 0 / 3 |
+
+**Cinderdeep at level 3:**
+- with a passive player, the party never wins;
+- with expert A or B, it wins 16–17 of 20.
+
+The Gloomroot Warrens at level 3 is too hard for every plan. DPS figures
+from level-3 runs are left out: they mix wins and wipes.
+
+### Short fights: can each style complete its cycle?
+
+"Payoff" means a Lacerate, Deep Lacerate, Reaping Whirl or Exploit. The
+figures are payoffs per trash fight, the share of trash fights with one,
+and the seconds from the pull to the first one (level 6):
+
+| | Cinderdeep | Sunken Vault |
+|---|---|---|
+| Classic expert | 0 (the companion rotation skips Lacerate on small enemies) | 0 |
+| Classic simple | 2.4, 100%, 2.0 s | 3.2, 100%, 2.0 s |
+| A expert | 0.9, 88%, 5.0 s | 0.7, 68%, 5.6 s |
+| B expert | 2.3, 100%, 3.9 s | 2.4, 95%, 3.5 s |
+
+**A on trash:**
+- A completes about one build-and-spend cycle per trash fight, the first
+  after about 5 s.
+- On the Sunken Vault's short fights a third of them end before any
+  payoff.
+- This is the "ramp-up too slow for trash" failure mode, partly present.
+
+**B on trash:** B gets its first opening within about 4 s. On bosses
+the expert takes 23–27 Exploits per fight in the four longer dungeons,
+and 6.5 on the Sunken Vault's.
+
+### Openings by dungeon (B, level 6, per run)
+
+| Dungeon | Openings | Exploits (expert) |
+|---|---|---|
+| Hollow Reliquary | 129 | 66 |
+| Cinderdeep Hollows | 138 | 95 |
+| Gloomroot Warrens | 88 | 64 |
+| Sunken Vault | 17 | 14 |
+
+B depends on the encounter design. A dungeon whose enemies rarely cast or
+use abilities gives it little to react to.
+
+### Tuning done (and why)
+
+**The first numbers:**
+- B: 30–60% above Classic. An Exploit cost a net 10 energy for 200
+  damage.
+- A: flat. Expert and simple were within 1%, and below Classic.
+
+**The changes:**
+- Exploit 200 → 120 damage, refund 20 → 10.
+- A: Honed Strike 80 → 60, bleed 60 → 80 per Edge, Reaping Whirl 30 → 45
+  per Edge. This makes Edge a bigger share of damage, so the spending
+  decisions carry weight.
+
+**The A expert script was revised once.**
+- **Before:** it cashed in with Reaping Whirl whenever the bleed had more
+  than 2 s left.
+- **The finding:** the simple plan refreshes the bleed every 5 Edge, about
+  every 12 s, close to the bleed's own length. So the refresh penalty
+  rarely bites.
+- **After:** the expert compares the bleed's value (minus the lost
+  remainder) with the whirl's value on the enemies in reach.
+
+No balance was changed for any other class.
+
+### What the numbers suggest (not conclusions about fun)
+
+- **A:** the decisions exist but pay little against a competent simple
+  priority, and the cycle is slow for short trash.
+
+  If the playtest likes A's feel, candidates are:
+  - faster Edge on pulls (an opener);
+  - a stronger cash-out on dying targets.
+- **B:** the most measurable difference between playing well and simply.
+  It also has the biggest risk: it depends on enemies doing things, so
+  each dungeon's fights would need tagging with that in mind.
+- **Classic:** confirms the owner's feedback. Its only skill expression is
+  keeping Lacerate up.
+- **For other classes:**
+  - mechanics that react to enemy actions (B) give the clearest skill
+    gap;
+  - mechanics that add a resource (A) need the payoff to be a large share
+    of output, or the decisions don't register.
+
+## What is not validated
+
+- **Fun, readability, flow and mastery** of any style: not covered by a
+  recorded human playtest. PLAYTEST_CLASS_LAB_0_10.md is the guide.
+- **How human positioning affects A:** the AI always stands behind, so
+  the +2 Edge from behind was never lost in measurement.
+- **Human reaction time for B's 3 s windows:** the scripted expert reacts
+  within a tick.
+- **Raids** (10 players) and **Heroic** difficulty were not measured.
+- **Talents and equipment:** concepts only.
+- **The tuning:** two passes, on 5 dungeons; the numbers are not final.
