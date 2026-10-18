@@ -3,9 +3,9 @@
 Prioritized, actionable work. Completed milestones are summarized at the bottom;
 details and evidence live in PROGRESS.md.
 
-## Next up (after 0.9.2)
+## Next up (after 0.9.3)
 
-0. **Recorded before/after playtest of 0.9.2 combat clarity**:
+0. **Recorded before/after playtest of 0.9.2/0.9.3 combat clarity and impact**:
    PLAYTEST_COMBAT_0_9_2.md. Open questions:
    - whether the recent-action lines get read during a fight;
    - whether their right-of-centre spot covers companions too often;
@@ -79,6 +79,12 @@ details and evidence live in PROGRESS.md.
 
 ## Done
 
+- 0.9.3: ability impact (ABILITY_IMPACT_0_9_3.md):
+  - effects of your own, and hit reactions;
+  - area rings at the real radius;
+  - interrupt bursts;
+  - shield, defensive and crowd-control looks;
+  - presentation only.
 - 0.9.2: combat clarity (COMBAT_CLARITY_0_9_2.md):
   - recent-action lines from your own events;
   - ranked floating text;

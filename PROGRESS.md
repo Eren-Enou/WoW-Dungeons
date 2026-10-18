@@ -1,8 +1,8 @@
 # Progress
 
-Status: **0.9.2 (combat clarity) implemented and verified with automated
-checks; see the 0.9.2 section.** 0.9.1 (Dungeon Remix polish) and 0.9
-(Dungeon Remix) below.
+Status: **0.9.3 (ability impact) implemented and verified with automated
+checks; see the 0.9.3 section.** 0.9.2 (combat clarity), 0.9.1 (Dungeon
+Remix polish) and 0.9 (Dungeon Remix) below.
 
 Previous: **0.8.1 (viewer polish, map navigation and exploration design)
 implemented and verified**. It adds a speed bar and presets, a 2D map,
@@ -30,6 +30,27 @@ covered by a recorded playtest".)
 
 Environment: Windows 11 Pro, Rust 1.99.0, Bevy 0.20.0 (pinned `=0.20.0`,
 Cargo.lock committed), NVIDIA RTX 2070 SUPER (Vulkan).
+
+## 0.9.3 - Ability impact
+
+Plan and results: ABILITY_IMPACT_0_9_3.md. Second half of the owner's
+"combat lacks visual clarity / not yet satisfying" feedback. Not covered by
+a recorded human playtest; PLAYTEST_COMBAT_0_9_2.md has 0.9.3 questions.
+
+**Changes** (presentation only, `fx.rs`):
+- your abilities have their own effects;
+- your targets react to hits;
+- area rings at the ability's real radius;
+- interrupt bursts;
+- shield, defensive and crowd-control looks while the aura lasts;
+- fewer companion effects in raids.
+
+**Verified:**
+- 320 headless runs are hash-identical to 0.9.2;
+- fmt, check, clippy clean; tests forge 28, game 38, sim 164;
+- screenshots of Warden (including a half-speed burst), Arcanist, Mender
+  and a raid, looked at;
+- all graphical self-tests pass.
 
 ## 0.9.2 - Combat clarity
 

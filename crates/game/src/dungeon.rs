@@ -856,7 +856,7 @@ pub fn process_events(mut run: ResMut<ActiveRun>) {
     run.events_seen = end;
 }
 
-fn sync_actors(
+pub fn sync_actors(
     run: Res<ActiveRun>,
     orbit: Res<OrbitCamera>,
     mut q: Query<(&ActorVisual, &mut Transform, &mut Visibility)>,

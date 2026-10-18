@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.9.3 - Ability impact
+
+Plan and results: ABILITY_IMPACT_0_9_3.md. Presentation only: 320 runs have
+event-log hashes identical to 0.9.2.
+
+- **Your abilities look like yours:**
+  - melee hits: a gold burst and a ground flash;
+  - spells: a larger projectile and an impact burst;
+  - heals: a taller column and a ring;
+  - crits: bigger.
+
+  Companions' effects are smaller.
+- **Hit reaction:** a target you hit swells and flashes briefly; crits more
+  so. A heavy hit on you flashes your model red.
+- **Area rings** are drawn at the ability's real radius (Quake Stomp 8 m,
+  Whirl 6 m) and once per cast.
+- **Interrupts** burst cyan with shards at the stopped caster.
+- **Lasting looks**, from the auras:
+  - a blue bubble while a shield holds (with a pop when it ends);
+  - a faint shell during a defensive;
+  - a turning ring over a crowd-controlled enemy.
+- **Raids:** companions' ordinary melee flashes aren't drawn.
+
 ## 0.9.2 - Combat clarity
 
 Plan and results: COMBAT_CLARITY_0_9_2.md. Playtest script:

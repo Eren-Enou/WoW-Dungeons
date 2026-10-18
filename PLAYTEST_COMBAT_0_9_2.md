@@ -85,6 +85,22 @@ Play the 0.9.1 runs first, so the comparison is "before, then after".
 9. **Anything wrong.** Was a number wrong, missing, or attributed to the
    wrong ability or person? Give the ability, the target and roughly when.
 
+## 0.9.3 additions: ability impact
+
+If you play 0.9.3, please also answer:
+
+10. **Your hits.** Did your strikes, spells and heals look different from
+    your companions'? Did the gold burst, the target's flash and your
+    larger spells make hits feel heavier?
+11. **Interrupts.** Did you notice the cyan burst on the caster you
+    stopped?
+12. **Lasting states.** Could you see:
+    - who had a Ward (blue bubble);
+    - your Bulwark (faint gold shell);
+    - which enemy was hexed (turning purple ring)?
+13. **Too much?** Was anything distracting, or did it hide telegraphs or
+    enemies?
+
 ## Known limits
 
 - **What the feed leaves out:** your auto-attacks, and the ticks of your
