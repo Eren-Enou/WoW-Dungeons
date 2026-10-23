@@ -273,6 +273,8 @@ pub const FALTERING_AT: f32 = 0.3;
 /// 0.11: a weak-point hit (finisher or opening strike) counts this many
 /// times toward breaking a channel.
 pub const WEAK_POINT_MULT: f32 = 3.0;
+/// 0.11 Riposte: a Seize this soon after its opening appeared is quick.
+pub const RIPOSTE_SECS: f32 = 1.5;
 
 /// One step of a scripted leader route (0.9).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -360,8 +362,7 @@ pub enum AuraKind {
     Edge,
     /// Lab B: an opening on an enemy for the source's Exploit.
     Opening,
-    /// 0.11 Riposte: the next Seize hits twice as hard.
-    Riposte,
+
     /// +pct damage taken per stack.
     DamageTaken {
         pct: f32,
@@ -1927,9 +1928,6 @@ impl Sim {
         let what = self.label(caster, slot);
         self.spend(caster, def.cost);
         self.actors[caster].cooldowns[slot] = def.cooldown;
-        if def.id == AbilityId::Kick && self.technique(caster) == Some(Technique::Riposte) {
-            self.actors[caster].cooldowns[slot] = 6.0;
-        }
         self.metrics.actors[caster].casts += 1;
         if let Some(u) = self.metrics.actors[caster].ability_uses.get_mut(slot) {
             *u += 1;
@@ -2100,18 +2098,6 @@ impl Sim {
                         StrikerStyle::Flow => {
                             self.lab_open(target, "Off Balance", OFF_BALANCE_SECS);
                             self.gain_edge(caster, 1);
-                            if self.technique(caster) == Some(Technique::Riposte) {
-                                self.apply_aura(
-                                    caster,
-                                    Aura::new(
-                                        Label::from("Riposte"),
-                                        AuraKind::Riposte,
-                                        caster,
-                                        5.0,
-                                        false,
-                                    ),
-                                );
-                            }
                         }
                         StrikerStyle::Classic => {}
                     }
@@ -2205,23 +2191,29 @@ impl Sim {
                 refund,
                 edge,
             } => {
+                // The newest opening is taken (Riposte rewards speed).
+                let mut age = f32::INFINITY;
                 if let Some(i) = self.actors[target]
                     .auras
                     .iter()
-                    .position(|a| a.kind == AuraKind::Opening && a.source == caster)
+                    .enumerate()
+                    .filter(|(_, a)| a.kind == AuraKind::Opening && a.source == caster)
+                    .min_by(|x, y| {
+                        (x.1.duration - x.1.remaining).total_cmp(&(y.1.duration - y.1.remaining))
+                    })
+                    .map(|(i, _)| i)
                 {
-                    self.actors[target].auras.remove(i);
+                    let a = self.actors[target].auras.remove(i);
+                    age = a.duration - a.remaining;
                 }
                 self.metrics.actors[caster].exploits += 1;
-                // Riposte: a landed Kick doubles the next Seize.
+                // Riposte: a quick Seize hits harder and costs nothing.
                 let mut amount = amount;
-                if let Some(i) = self.actors[caster]
-                    .auras
-                    .iter()
-                    .position(|a| a.kind == AuraKind::Riposte && a.source == caster)
-                {
-                    self.actors[caster].auras.remove(i);
-                    amount *= 2.0;
+                let mut refund = refund;
+                if self.technique(caster) == Some(Technique::Riposte) && age <= RIPOSTE_SECS {
+                    amount *= 1.25;
+                    refund += def.cost;
+                    self.metrics.actors[caster].quick_seizes += 1;
                 }
                 let edge = if self.technique(caster) == Some(Technique::Patience) {
                     edge.min(1)

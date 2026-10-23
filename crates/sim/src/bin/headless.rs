@@ -556,10 +556,14 @@ fn run_lab_feel(args: &Args, content: &Content) {
             StrikerStyle::Classic => String::new(),
         };
         println!(
-            "{:<12} {:<7} {:>5.1} {:>2}/{:<2} {:>7.1} {:>5.1}% {:>5.1}% {:>6.1}% {:>6.1}s {:>4.0}/{:<3.0}% | {detail0} | {detail}",
+            "{:<12} {:<7} {:>5} {:>2}/{:<2} {:>7.1} {:>5.1}% {:>5.1}% {:>6.1}% {:>6.1}s {:>4.0}/{:<3.0}% | {detail0} | {detail}",
             style.label(),
             plan.label(),
-            react,
+            if no_behind {
+                format!("{react:.1}nb")
+            } else {
+                format!("{react:.1}")
+            },
             feels.iter().filter(|f| f.won).count(),
             feels.len(),
             dmg / combat.max(1.0),

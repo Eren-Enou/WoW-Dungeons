@@ -32,6 +32,8 @@ pub struct ActorMetrics {
     /// Lab A: builders that landed, and how many from behind.
     pub builders: u32,
     pub builders_behind: u32,
+    /// 0.11 Riposte: Seizes within 1.5 s of their opening.
+    pub quick_seizes: u32,
 }
 
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]

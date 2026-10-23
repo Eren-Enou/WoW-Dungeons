@@ -42,7 +42,13 @@ pub struct CombatFeed {
     /// The enemy your crowd control is on, to report when it breaks (the
     /// event doesn't say whose crowd control it was).
     cc_on: Option<ActorId>,
+    /// When each enemy last had an opening line (at most one per enemy
+    /// every `OPENING_LINE_SECS`, 0.11).
+    opening_lines: Vec<(ActorId, f32)>,
 }
+
+/// Seconds between two opening lines about the same enemy.
+const OPENING_LINE_SECS: f32 = 2.0;
 
 enum Pending {
     Damage {
@@ -123,6 +129,8 @@ impl CombatFeed {
         // Lab A (0.10): Edge after the last gain in this batch, and the line
         // that earned it.
         let mut edge: Option<(usize, u32)> = None;
+        // The last line that came from your own hit or interrupt.
+        let mut last_own: Option<usize> = None;
         for e in events {
             match &e.kind {
                 EventKind::Damage {
@@ -166,6 +174,10 @@ impl CombatFeed {
                             hits: vec![hit],
                         }),
                     }
+                    last_own = out.iter().rposition(|x| {
+                        matches!(x, Pending::Damage { what: w, time, .. }
+                            if w == what && *time == e.time)
+                    });
                 }
                 EventKind::Heal {
                     src,
@@ -201,7 +213,8 @@ impl CombatFeed {
                     what,
                     stacks,
                 } if *src == p && *dst == p && &**what == "Edge" => {
-                    edge = Some((out.len().saturating_sub(1), *stacks));
+                    // On the line that earned it: your last hit or interrupt.
+                    edge = Some((last_own.unwrap_or(out.len().saturating_sub(1)), *stacks));
                 }
                 EventKind::AuraApplied { src, dst, what, .. }
                     if *src == p
@@ -210,11 +223,21 @@ impl CombatFeed {
                             a.kind == AuraKind::Opening && a.source == p && a.name == *what
                         }) =>
                 {
-                    // Openings: only on your target, to keep the feed calm.
-                    if sim.actors[p].target == Some(*dst) {
+                    // Openings: only on your target, and at most one line per
+                    // enemy every 2 s, to keep the feed calm.
+                    let recent = self
+                        .opening_lines
+                        .iter()
+                        .any(|&(id, t)| id == *dst && e.time - t < OPENING_LINE_SECS);
+                    if sim.actors[p].target == Some(*dst) && !recent {
+                        self.opening_lines.retain(|&(id, _)| id != *dst);
+                        self.opening_lines.push((*dst, e.time));
+                        let take =
+                            own_label(sim, p, |x| matches!(x, Effect::ExploitOpening { .. }))
+                                .unwrap_or_else(|| Label::from("Exploit"));
                         out.push(Pending::Line(FeedLine {
                             text: format!(
-                                "Opening: {} {} - Exploit!",
+                                "Opening: {} {} - {take}!",
                                 sim.actors[*dst].name,
                                 opening_word(what)
                             ),
@@ -344,6 +367,7 @@ impl CombatFeed {
                             text: format!("{ability} > interrupted {enemy}'s {what}"),
                             tone: Tone::Interrupt,
                         }));
+                        last_own = Some(out.len() - 1);
                     } else if sim.party.contains(src) {
                         out.push(Pending::Line(FeedLine {
                             text: format!("{} interrupted {enemy}'s {what}", sim.actors[*src].name),
@@ -804,6 +828,28 @@ mod tests {
         assert!(
             !c.iter()
                 .any(|l| l.text.contains("[Edge") || l.tone == Tone::Opening)
+        );
+    }
+
+    #[test]
+    fn flow_lines_name_seize_and_put_edge_on_the_hit_that_earned_it() {
+        use dungeon_sim::class::StrikerStyle;
+        let l = lab_lines(StrikerStyle::Flow);
+        assert!(
+            l.iter()
+                .any(|x| x.tone == Tone::Opening && x.text.ends_with("- Seize!")),
+            "{l:#?}"
+        );
+        // Edge tags sit on your own hits, never on an opening line.
+        assert!(
+            !l.iter()
+                .any(|x| x.tone == Tone::Opening && x.text.contains("[Edge")),
+            "{l:#?}"
+        );
+        assert!(
+            l.iter()
+                .any(|x| x.text.starts_with("Quick Cut > ") && x.text.contains("[Edge")),
+            "{l:#?}"
         );
     }
 

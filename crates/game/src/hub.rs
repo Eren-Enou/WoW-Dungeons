@@ -1827,9 +1827,10 @@ fn experiment_section(p: &mut ChildSpawnerCommands, data: &GameData) {
     }
     let best = match x.best_clear {
         Some(b) => format!(
-            "Gloomroot clears {} | best {} | most Brood Frenzy breaks {}",
+            "Gloomroot clears {} | best {} at level {} | most Brood Frenzy breaks {}",
             x.clears,
             dungeon_sim::experiment::clock(b),
+            x.best_level,
             x.best_breaks
         ),
         None => "No Gloomroot clear with the experiment yet".to_string(),

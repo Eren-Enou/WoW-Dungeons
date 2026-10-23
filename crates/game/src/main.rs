@@ -73,6 +73,27 @@ fn main() {
         data.save();
         eprintln!("--start-level: party raised to level {level}");
     }
+    // `--experiment [--technique riposte|patience]`: turn the 0.11 experiment
+    // on in the loaded save (playtests and demos); a Technique also unlocks.
+    if std::env::args().any(|a| a == "--experiment") {
+        let x = &mut data.profile.experiment;
+        x.enabled = true;
+        if let Some(t) = std::env::args()
+            .skip_while(|a| a != "--technique")
+            .nth(1)
+            .and_then(|s| dungeon_sim::class::Technique::parse(&s))
+        {
+            x.unlocked = true;
+            x.technique = Some(t);
+        }
+        if data.profile.player_class == dungeon_sim::ClassId::Striker
+            && !std::env::args().any(|a| a == "--striker-style")
+        {
+            data.lab_style = dungeon_sim::class::StrikerStyle::Flow;
+        }
+        data.save();
+        eprintln!("--experiment: One More Run experiment on");
+    }
 
     let viewer_request = viewer::ViewerRequest::from_args();
     // `--no-vsync`: present as fast as possible (frame-time measurements).

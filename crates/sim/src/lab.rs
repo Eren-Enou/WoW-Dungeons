@@ -901,14 +901,30 @@ mod tests {
             press(&mut sim, p, 4, e).unwrap();
         }
         assert!(sim.edge(p) <= 1, "Patience: Seize gives 1 Edge");
-        // Riposte: Kick's cooldown is 6 s.
+        // Riposte: a quick Seize costs nothing (25 energy back, plus the
+        // usual 10) and counts as quick.
         let riposte = LabExtras {
             technique: Some(Technique::Riposte),
             ..Default::default()
         };
         let (mut sim, p, e) = duel(&c, StrikerStyle::Flow, &riposte);
-        press(&mut sim, p, 3, e).unwrap();
-        assert!((sim.actors[p].cooldowns[3] - 6.0).abs() < 1e-3);
+        let mut quick = false;
+        for _ in 0..10 {
+            sim.lab_open_for_test(e, "Recovering", 4.5);
+            sim.actors[p].gcd = 0.0;
+            sim.actors[p].resource = 50.0;
+            sim.try_cast(p, 4, Some(e)).unwrap();
+            if sim.metrics.actors[p].quick_seizes > 0 {
+                assert!(
+                    (sim.actors[p].resource - 60.0).abs() < 1e-3,
+                    "{}",
+                    sim.actors[p].resource
+                );
+                quick = true;
+                break;
+            }
+        }
+        assert!(quick, "a Seize at once is quick");
         // A Technique does nothing for other styles.
         let (sim, p, _) = duel(&c, StrikerStyle::Reactive, &riposte);
         assert_eq!(sim.technique(p), None);

@@ -28,8 +28,10 @@ pub struct Experiment {
     pub technique: Option<Technique>,
     /// Gloomroot clears with the experiment on.
     pub clears: u32,
-    /// Fastest Gloomroot clear with the experiment on (seconds).
+    /// Fastest Gloomroot clear with the experiment on (seconds), and the
+    /// party's level then (levels make runs faster, so the best says it).
     pub best_clear: Option<f32>,
+    pub best_level: u32,
     /// Most Brood Frenzy channels broken in one run.
     pub best_breaks: u32,
 }
@@ -71,23 +73,33 @@ impl Experiment {
             return news;
         }
         self.clears += 1;
-        match self.best_clear {
+        let was = self.best_clear;
+        let at = |level: u32| format!(" at level {level}");
+        match was {
             Some(best) if run.duration < best => news.push(format!(
-                "New best clear: {} (was {})",
+                "New best clear: {}{} (was {}{})",
                 clock(run.duration),
-                clock(best)
+                at(run.level),
+                clock(best),
+                at(self.best_level)
             )),
             Some(best) => news.push(format!(
-                "Clear time {} (best {})",
+                "Clear time {}{} (best {}{})",
                 clock(run.duration),
-                clock(best)
+                at(run.level),
+                clock(best),
+                at(self.best_level)
             )),
-            None => news.push(format!("First clear: {}", clock(run.duration))),
+            None => news.push(format!(
+                "First clear: {}{}",
+                clock(run.duration),
+                at(run.level)
+            )),
         }
-        self.best_clear = Some(
-            self.best_clear
-                .map_or(run.duration, |b| b.min(run.duration)),
-        );
+        if was.is_none_or(|b| run.duration < b) {
+            self.best_clear = Some(run.duration);
+            self.best_level = run.level;
+        }
         if !self.unlocked {
             self.unlocked = true;
             news.push(
@@ -104,6 +116,8 @@ pub struct ExperimentRun {
     pub dungeon: String,
     pub won: bool,
     pub duration: f32,
+    /// The party's average level.
+    pub level: u32,
     pub style: StrikerStyle,
     pub technique: Option<Technique>,
     /// Brood Frenzy channels started, and broken.
@@ -116,6 +130,8 @@ pub struct ExperimentRun {
     pub kicks: u32,
     /// Ravages (Flow slot 2).
     pub ravages: u32,
+    /// Riposte: Seizes within 1.5 s of their opening.
+    pub quick_seizes: u32,
 }
 
 impl ExperimentRun {
@@ -129,6 +145,15 @@ impl ExperimentRun {
             dungeon: sim.content.dungeon.id.clone(),
             won: sim.outcome == RunOutcome::Victory,
             duration: sim.ended_at.unwrap_or(sim.time),
+            level: {
+                let n = sim.party.len().max(1) as f32;
+                (sim.party
+                    .iter()
+                    .map(|&m| sim.actors[m].stats.level as f32)
+                    .sum::<f32>()
+                    / n)
+                    .round() as u32
+            },
             style,
             technique: sim.technique(p),
             channels: sim.metrics.stagger_casts,
@@ -142,6 +167,7 @@ impl ExperimentRun {
             } else {
                 0
             },
+            quick_seizes: m.quick_seizes,
         }
     }
 
@@ -189,14 +215,14 @@ impl ExperimentRun {
         }
         match (self.style, self.technique) {
             (StrikerStyle::Flow, Some(Technique::Riposte)) => out.push(format!(
-                "Riposte: {} Kick(s) landed. Each one doubles your next Seize within 5 s - casters are your friends.",
-                self.kicks
+                "Riposte: {} of your {} Seizes were quick (within 1.5 s): those hit 25% harder and cost nothing. Watch the gold marker and strike as it appears.",
+                self.quick_seizes, self.seized
             )),
             (StrikerStyle::Flow, Some(Technique::Patience)) => out.push(
                 "Patience: build to 6+ Edge on packs - Ravage then hits every enemy within 8 m and refunds 25 energy.".into(),
             ),
             (StrikerStyle::Flow, None) if unlocked => out.push(
-                "Try a Technique next run (Sandbox tab): Riposte rewards Kicks, Patience big Ravages.".into(),
+                "Try a Technique next run (Sandbox tab): Riposte rewards quick Seizes, Patience big Ravages.".into(),
             ),
             (StrikerStyle::Flow, None) => {}
             _ => out.push(
@@ -222,6 +248,7 @@ mod tests {
             dungeon: EXPERIMENT_DUNGEON.into(),
             won,
             duration,
+            level: 4,
             style: StrikerStyle::Flow,
             channels: 3,
             breaks,
@@ -248,14 +275,19 @@ mod tests {
             "{news:?}"
         );
         assert!(
-            news.iter().any(|n| n.starts_with("First clear: 5:00")),
+            news.iter()
+                .any(|n| n.starts_with("First clear: 5:00 at level 4")),
             "{news:?}"
         );
-        let news = x.record(&run(true, 280.0, 2));
+        let mut faster = run(true, 280.0, 2);
+        faster.level = 6;
+        let news = x.record(&faster);
         assert!(
             news.iter()
-                .any(|n| n.contains("New best clear: 4:40 (was 5:00)"))
+                .any(|n| n.contains("New best clear: 4:40 at level 6 (was 5:00 at level 4)")),
+            "{news:?}"
         );
+        assert_eq!(x.best_level, 6);
         assert!(news.iter().any(|n| n.contains("2 Brood Frenzy")));
         assert!(!news.iter().any(|n| n.starts_with("TECHNIQUES")));
         // Other dungeons and a disabled experiment record nothing.
@@ -274,6 +306,7 @@ mod tests {
             technique: Some(Technique::Patience),
             clears: 3,
             best_clear: Some(250.0),
+            best_level: 5,
             best_breaks: 2,
         };
         assert_eq!(x.active_technique(), Some(Technique::Patience));
@@ -301,10 +334,14 @@ mod tests {
         assert!(lines.iter().any(|l| l.starts_with("Try a Technique")));
         let mut all = run(true, 300.0, 3);
         all.technique = Some(Technique::Riposte);
-        all.kicks = 4;
+        all.quick_seizes = 4;
         let lines = all.coach(true);
         assert!(lines[0].contains("never got her brood"));
-        assert!(lines.iter().any(|l| l.starts_with("Riposte: 4 Kick(s)")));
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.starts_with("Riposte: 4 of your 10 Seizes were quick"))
+        );
         let mut classic = run(true, 300.0, 0);
         classic.style = StrikerStyle::Classic;
         assert!(

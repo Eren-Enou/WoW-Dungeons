@@ -256,7 +256,6 @@ pub fn aura(a: &Aura, source: &str) -> Tip {
             "An opening: the reactive Striker can Exploit it (the Flow Striker can Seize it)."
                 .into()
         }
-        AuraKind::Riposte => "Your next Seize hits twice as hard.".into(),
         AuraKind::DamageTaken { pct } => format!(
             "Takes {:.0}% more damage ({:.0}% per stack).",
             pct * stacks * 100.0,

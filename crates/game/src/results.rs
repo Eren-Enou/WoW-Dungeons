@@ -202,7 +202,7 @@ mod tests {
             difficulty_name: "Normal".into(),
             highlights: Vec::new(),
             log_path: None,
-            experiment: vec!["First clear: 5:00".into()],
+            experiment: vec!["First clear: 5:00 at level 4".into()],
             treasure: sim
                 .caches
                 .iter()
@@ -214,7 +214,7 @@ mod tests {
         assert!(text.contains("Treasure: Near Coffer opened"), "{text}");
         assert!(text.contains("Treasure: Far Coffer not opened"), "{text}");
         assert!(
-            text.contains("ONE MORE RUN (experiment)\n  First clear: 5:00"),
+            text.contains("ONE MORE RUN (experiment)\n  First clear: 5:00 at level 4"),
             "{text}"
         );
     }

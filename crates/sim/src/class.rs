@@ -293,8 +293,8 @@ pub enum StrikerStyle {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Technique {
-    /// React: Kick every 6 s; a landed Kick doubles your next Seize; openings
-    /// after enemy abilities last 4.5 s.
+    /// React: a Seize within 1.5 s of its opening appearing hits 25%
+    /// harder and costs no energy; openings after enemy abilities last 4.5 s.
     Riposte,
     /// Plan: Edge holds 7; Ravage with 6+ Edge hits every enemy within 8 m
     /// in full and refunds 25 energy; Seize gives 1 Edge instead of 2.
@@ -322,7 +322,7 @@ impl Technique {
     pub fn blurb(self) -> &'static str {
         match self {
             Technique::Riposte => {
-                "React. Kick's cooldown drops to 6 s, and a landed Kick makes your next Seize within 5 s hit twice as hard. Openings after enemy abilities last 4.5 s instead of 3."
+                "React. Seize an opening within 1.5 s of it appearing and it hits 25% harder and costs no energy. Openings after enemy abilities last 4.5 s instead of 3, so slower reactions still get there."
             }
             Technique::Patience => {
                 "Plan. Edge holds 7 instead of 5. Ravage with 6 or more Edge hits every enemy within 8 m in full and refunds 25 energy. Seize gives 1 Edge instead of 2."
