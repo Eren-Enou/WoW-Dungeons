@@ -175,7 +175,10 @@ pub fn impacts(sim: &Sim, events: &[Event]) -> Vec<Impact> {
                 if matches!(effect, Some(Effect::Dot { .. })) {
                     continue;
                 }
-                let heavy = matches!(effect, Some(Effect::ExploitOpening { .. }));
+                let heavy = matches!(
+                    effect,
+                    Some(Effect::ExploitOpening { .. } | Effect::Finisher { .. })
+                );
                 let area = match effect {
                     Some(Effect::AoeDamage { radius, .. })
                     | Some(Effect::EdgeWhirl { radius, .. }) => Some(radius),
@@ -254,6 +257,11 @@ pub fn impacts(sim: &Sim, events: &[Event]) -> Vec<Impact> {
             EventKind::Interrupt { src, dst, .. } => out.push(Impact::Interrupt {
                 dst: *dst,
                 mine: mine(*src),
+            }),
+            // 0.11: a broken channel bursts like your own interrupt.
+            EventKind::Staggered { enemy, .. } => out.push(Impact::Interrupt {
+                dst: *enemy,
+                mine: true,
             }),
             EventKind::Taunt { dst, .. } => out.push(Impact::Taunt { dst: *dst }),
             EventKind::AuraApplied { src, dst, .. } if src == dst => {

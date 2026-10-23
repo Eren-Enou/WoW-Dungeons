@@ -157,6 +157,10 @@ pub enum HubAction {
     Sandbox(Knob, f32),
     /// Class Design Lab (0.10): the Striker style for this session.
     LabStyle(dungeon_sim::class::StrikerStyle),
+    /// 0.11 experiment: on/off, a Technique, or reset its progress.
+    ExperimentToggle,
+    Technique(Option<dungeon_sim::class::Technique>),
+    ExperimentReset,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -589,6 +593,27 @@ pub fn hub_tooltip(action: &HubAction, data: &GameData, ui: &HubUi) -> Option<Ti
                 }
             ),
         ),
+        HubAction::ExperimentToggle => Tip::new(
+            "One More Run experiment (0.11)",
+            "Turns on the experiment: Mother Brakkis (Gloomroot Warrens) gains Brood Frenzy, a channel you can break; a Striker plays the C: Flow style; clearing the Gloomroot Warrens unlocks Techniques; the results screen sums up your run. Off: the game plays exactly as before. Saved with your profile.",
+        ),
+        HubAction::Technique(t) => Tip::new(
+            match t {
+                Some(t) => format!("Technique: {}", t.label()),
+                None => "No Technique".into(),
+            },
+            match t {
+                Some(t) => format!(
+                    "{}\n\nFlow Striker only. Swap any time between runs.",
+                    t.blurb()
+                ),
+                None => "Play the Flow Striker without a Technique.".into(),
+            },
+        ),
+        HubAction::ExperimentReset => Tip::new(
+            "Reset experiment progress",
+            "Locks the Techniques again and clears your best clear time and break record. Your character, gear and levels are not touched.",
+        ),
         HubAction::LabStyle(style) => Tip::new(
             format!("Striker style: {}", style.label()),
             format!(
@@ -814,6 +839,30 @@ pub fn apply_action(action: HubAction, data: &mut GameData, ui: &mut HubUi) {
         HubAction::OpenViewer => {
             ui.open_viewer = true;
             save = false;
+        }
+        HubAction::ExperimentToggle => {
+            let x = &mut data.profile.experiment;
+            x.enabled = !x.enabled;
+            let on = x.enabled;
+            if on && data.profile.player_class == dungeon_sim::ClassId::Striker {
+                data.lab_style = dungeon_sim::class::StrikerStyle::Flow;
+            }
+            data.flash(if on {
+                "One More Run experiment ON: Brood Frenzy, the Flow Striker, Techniques"
+            } else {
+                "One More Run experiment OFF: the game plays as before"
+            });
+        }
+        HubAction::Technique(t) => {
+            data.profile.experiment.technique = t;
+            data.flash(match t {
+                Some(t) => format!("Technique: {} for your next runs", t.label()),
+                None => "No Technique".to_string(),
+            });
+        }
+        HubAction::ExperimentReset => {
+            data.profile.experiment.reset();
+            data.flash("Experiment progress reset: Techniques locked again, bests cleared");
         }
         HubAction::LabStyle(style) => {
             data.lab_style = style;
@@ -1700,6 +1749,7 @@ fn sandbox_tab(p: &mut ChildSpawnerCommands, data: &GameData) {
         Knob::Telegraph,
         "longer = easier to dodge",
     );
+    experiment_section(p, data);
     lab_section(p, data);
     row(p, |r| {
         button(r, "Reset all", HubAction::Sandbox(Knob::Reset, 1.0), false);
@@ -1713,6 +1763,78 @@ fn sandbox_tab(p: &mut ChildSpawnerCommands, data: &GameData) {
             Color::srgb(0.8, 0.8, 0.6),
         );
     });
+}
+
+/// 0.11 "One More Run" experiment: on/off, Techniques, reset.
+fn experiment_section(p: &mut ChildSpawnerCommands, data: &GameData) {
+    use dungeon_sim::class::Technique;
+    let x = &data.profile.experiment;
+    label(
+        p,
+        format!(
+            "One More Run (experiment): {}",
+            if x.enabled { "ON" } else { "off" }
+        ),
+        15.0,
+        Color::srgb(1.0, 0.9, 0.6),
+    );
+    row(p, |r| {
+        button(
+            r,
+            if x.enabled { "Turn off" } else { "Turn on" },
+            HubAction::ExperimentToggle,
+            x.enabled,
+        );
+        button(r, "Reset progress", HubAction::ExperimentReset, false);
+    });
+    if !x.enabled {
+        label(
+            p,
+            "Off: the game plays as before. On: Brood Frenzy in the Gloomroot Warrens, the Flow Striker, Techniques.".to_string(),
+            12.0,
+            Color::srgb(0.65, 0.65, 0.7),
+        );
+        return;
+    }
+    if x.unlocked {
+        row(p, |r| {
+            button(
+                r,
+                "No Technique",
+                HubAction::Technique(None),
+                x.technique.is_none(),
+            );
+            for t in Technique::ALL {
+                button(
+                    r,
+                    t.label(),
+                    HubAction::Technique(Some(t)),
+                    x.technique == Some(t),
+                );
+            }
+        });
+        if let Some(t) = x.technique {
+            label(p, t.blurb().to_string(), 12.0, Color::srgb(0.85, 0.85, 0.8));
+        }
+    } else {
+        label(
+            p,
+            "Techniques: locked - clear the Gloomroot Warrens to choose Riposte or Patience."
+                .to_string(),
+            12.0,
+            Color::srgb(0.85, 0.75, 0.5),
+        );
+    }
+    let best = match x.best_clear {
+        Some(b) => format!(
+            "Gloomroot clears {} | best {} | most Brood Frenzy breaks {}",
+            x.clears,
+            dungeon_sim::experiment::clock(b),
+            x.best_breaks
+        ),
+        None => "No Gloomroot clear with the experiment yet".to_string(),
+    };
+    label(p, best, 12.0, Color::srgb(0.65, 0.65, 0.7));
 }
 
 /// Class Design Lab (0.10): pick the Striker style for this session.
@@ -2028,6 +2150,16 @@ fn update_hub_text(
                         o.ability_speed,
                         o.telegraph,
                         o.reward_factor()
+                    ));
+                }
+                if p.experiment.enabled {
+                    s.push_str(&format!(
+                        "\n\nONE MORE RUN EXPERIMENT ON - Technique: {} - Sandbox tab",
+                        match p.experiment.active_technique() {
+                            Some(t) => t.label(),
+                            None if p.experiment.unlocked => "none chosen",
+                            None => "locked (clear the Gloomroot Warrens)",
+                        }
                     ));
                 }
                 if data.lab_style != dungeon_sim::class::StrikerStyle::Classic {

@@ -24,7 +24,8 @@ const USAGE: &str = "usage: dungeon-headless [--seed N] [--runs N] [--dungeon ID
 [--compare-profiles] [--bench] [--breakdown] [--familiarity 0..1] [--max-seconds S] [--log FILE] [--json] [--quiet] \
 [--slot-follow (companions follow formation slots only, as before 0.9; for comparisons)] \
 [--lab (Class Design Lab 0.10: compare Striker styles x player plans) [--levels 3,6]] \
-[--lab-feel (moment-to-moment proxies: waiting, choices, repetition, reaction windows)]";
+[--lab-feel (moment-to-moment proxies: waiting, choices, repetition, reaction windows)] \
+[--experiment (0.11 experiment content on)] [--technique riposte|patience (Flow Striker)]";
 
 struct Args {
     seed: u64,
@@ -48,6 +49,8 @@ struct Args {
     lab: bool,
     lab_feel: bool,
     levels: Vec<u32>,
+    experiment: bool,
+    technique: Option<dungeon_sim::class::Technique>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -73,6 +76,8 @@ fn parse_args() -> Result<Args, String> {
         lab: false,
         lab_feel: false,
         levels: Vec::new(),
+        experiment: false,
+        technique: None,
     };
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
@@ -127,6 +132,14 @@ fn parse_args() -> Result<Args, String> {
             "--slot-follow" => args.slot_follow = true,
             "--lab" => args.lab = true,
             "--lab-feel" => args.lab_feel = true,
+            "--experiment" => args.experiment = true,
+            "--technique" => {
+                let v = val("--technique")?;
+                args.technique = Some(
+                    dungeon_sim::class::Technique::parse(&v)
+                        .ok_or(format!("unknown technique '{v}'\n{USAGE}"))?,
+                )
+            }
             "--levels" => {
                 args.levels = val("--levels")?
                     .split(',')
@@ -320,7 +333,7 @@ fn run_lab_matrix(args: &Args, content: &Content) {
         );
         for style in StrikerStyle::ALL {
             for plan in [LabPlan::Passive, LabPlan::Simple, LabPlan::Expert] {
-                let runs: Vec<_> = (0..args.runs)
+                let runs: Vec<dungeon_sim::lab::LabRun> = (0..args.runs)
                     .map(|i| {
                         run_lab(
                             content,
@@ -329,6 +342,7 @@ fn run_lab_matrix(args: &Args, content: &Content) {
                             style,
                             plan,
                             &args.difficulty,
+                            &lab_extras(args, 0.0, false),
                             args.max_seconds,
                         )
                         .1
@@ -354,7 +368,40 @@ fn run_lab_matrix(args: &Args, content: &Content) {
                     StrikerStyle::Reactive => {
                         format!("openings {:.0}, exploits {:.0}", s.openings, s.exploits)
                     }
+                    StrikerStyle::Flow => format!(
+                        "openings {:.0}, seizes {:.0}, edge wasted {:.1}",
+                        s.openings, s.exploits, s.edge_wasted
+                    ),
                     StrikerStyle::Classic => String::new(),
+                };
+                let extra = if args.experiment {
+                    let pct = |mut v: Vec<f32>, q: f32| {
+                        v.sort_by(f32::total_cmp);
+                        v.get(((v.len() as f32 - 1.0) * q).round() as usize)
+                            .copied()
+                            .unwrap_or(0.0)
+                    };
+                    let comp: Vec<f32> = runs
+                        .iter()
+                        .flat_map(|r| r.channels.iter().map(|c| c.0))
+                        .collect();
+                    let mine: Vec<f32> = runs
+                        .iter()
+                        .flat_map(|r| r.channels.iter().map(|c| c.1))
+                        .collect();
+                    format!(
+                        "{extra} broke {:.2}/{:.2} channels; per channel companions p25/50/75 {:.0}/{:.0}/{:.0}, you {:.0}/{:.0}/{:.0}",
+                        s.staggers,
+                        s.stagger_casts,
+                        pct(comp.clone(), 0.25),
+                        pct(comp.clone(), 0.5),
+                        pct(comp, 0.75),
+                        pct(mine.clone(), 0.25),
+                        pct(mine.clone(), 0.5),
+                        pct(mine, 0.75)
+                    )
+                } else {
+                    extra
                 };
                 let pay = FightKind::ALL
                     .iter()
@@ -408,16 +455,22 @@ fn run_lab_feel(args: &Args, content: &Content) {
         "{:<12} {:<7} {:>5} {:>5} {:>7} {:>6} {:>6} {:>7} {:>7} {:>8} | style detail",
         "style", "plan", "react", "wins", "pDPS", "idle%", "wait%", "choice%", "nf gap", "patterns",
     );
-    let mut conds: Vec<(StrikerStyle, LabPlan, f32)> = Vec::new();
+    // (style, plan, reaction, never from behind)
+    let mut conds: Vec<(StrikerStyle, LabPlan, f32, bool)> = Vec::new();
     for style in StrikerStyle::ALL {
-        for plan in [LabPlan::Simple, LabPlan::Expert] {
-            conds.push((style, plan, 0.0));
+        for plan in [LabPlan::Passive, LabPlan::Simple, LabPlan::Expert] {
+            conds.push((style, plan, 0.0, false));
         }
     }
-    for r in [0.5, 1.0, 1.5] {
-        conds.push((StrikerStyle::Reactive, LabPlan::Expert, r));
+    for style in [StrikerStyle::Reactive, StrikerStyle::Flow] {
+        for r in [0.5, 1.0, 1.5] {
+            conds.push((style, LabPlan::Expert, r, false));
+        }
+        // A sloppy player: slow to react and never repositions.
+        conds.push((style, LabPlan::Expert, 1.0, true));
+        conds.push((style, LabPlan::Simple, 1.0, true));
     }
-    for (style, plan, react) in conds {
+    for (style, plan, react, no_behind) in conds {
         let feels: Vec<_> = (0..args.runs)
             .map(|i| {
                 run_feel(
@@ -426,7 +479,7 @@ fn run_lab_feel(args: &Args, content: &Content) {
                     args.seed + i as u64,
                     style,
                     plan,
-                    react,
+                    &lab_extras(args, react, no_behind),
                     args.max_seconds,
                 )
             })
@@ -453,8 +506,8 @@ fn run_lab_feel(args: &Args, content: &Content) {
         let per_min = 60.0 * casts as f32 / combat.max(1.0);
         let detail0 = format!("{per_min:.1} presses/min (GCD allows 60)");
         let detail = match style {
-            StrikerStyle::Planned => {
-                let mut at = [0u32; 6];
+            StrikerStyle::Planned | StrikerStyle::Flow => {
+                let mut at = [0u32; 8];
                 for f in &feels {
                     for (sum, n) in at.iter_mut().zip(f.edge_at_spend) {
                         *sum += n;
@@ -463,9 +516,23 @@ fn run_lab_feel(args: &Args, content: &Content) {
                 let spends: u32 = at.iter().sum();
                 let b: u32 = feels.iter().map(|f| f.builders).sum();
                 let bb: u32 = feels.iter().map(|f| f.builders_behind).sum();
+                let mut ages: Vec<f32> =
+                    feels.iter().flat_map(|f| f.exploit_ages.clone()).collect();
+                ages.sort_by(f32::total_cmp);
+                let seizes = if style == StrikerStyle::Flow {
+                    format!(
+                        " | seizes/run {:.0}, openings unused {:.0}%",
+                        ages.len() as f32 / n,
+                        100.0 * feels.iter().map(|f| f.openings_missed).sum::<u32>() as f32
+                            / feels.iter().map(|f| f.openings).sum::<u32>().max(1) as f32
+                    )
+                } else {
+                    String::new()
+                };
                 format!(
-                    "Edge at spend 0-5: {} | builders from behind {:.0}%",
-                    at.iter()
+                    "Edge at spend 2-7: {} | builders from behind {:.0}%{seizes}",
+                    at[2..]
+                        .iter()
                         .map(|c| format!("{:.0}%", 100.0 * *c as f32 / spends.max(1) as f32))
                         .collect::<Vec<_>>()
                         .join(" "),
@@ -505,6 +572,17 @@ fn run_lab_feel(args: &Args, content: &Content) {
         );
     }
     println!();
+}
+
+/// Lab conditions from the command line plus a reaction delay and the
+/// never-from-behind flag.
+fn lab_extras(args: &Args, reaction: f32, no_behind: bool) -> dungeon_sim::lab::LabExtras {
+    dungeon_sim::lab::LabExtras {
+        reaction,
+        no_behind,
+        experiment: args.experiment,
+        technique: args.technique,
+    }
 }
 
 fn main() -> ExitCode {

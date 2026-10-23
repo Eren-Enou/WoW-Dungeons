@@ -177,6 +177,12 @@ pub enum EventKind {
     Outcome {
         outcome: RunOutcome,
     },
+    /// 0.11: the party broke `enemy`'s cast of `what` with damage; it is
+    /// exposed.
+    Staggered {
+        enemy: ActorId,
+        what: Label,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -335,6 +341,9 @@ pub fn describe(sim: &Sim, e: &Event) -> String {
             format!("{} opens {}", n(*by), sim.caches[*cache].name)
         }
         EventKind::Outcome { outcome } => format!("RUN OVER: {outcome:?}"),
+        EventKind::Staggered { enemy, what } => {
+            format!("{}'s {what} is broken: exposed!", n(*enemy))
+        }
     };
     format!("[{:7.2}] {body}", e.time)
 }

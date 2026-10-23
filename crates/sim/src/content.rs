@@ -832,6 +832,26 @@ pub struct EnemyAbility {
     /// pillars or around corners while it is cast).
     #[serde(default, skip_serializing_if = "is_false")]
     pub los_blockable: bool,
+    /// 0.11 experiment: used only in runs with the experiment on.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub experimental: bool,
+    /// 0.11: the party can break this cast by dealing enough damage to the
+    /// caster while it casts; breaking it exposes the caster.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stagger: Option<StaggerConfig>,
+}
+
+/// 0.11: how a cast is broken by damage (see `EnemyAbility::stagger`).
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct StaggerConfig {
+    /// Damage to the caster during the cast that breaks it (scaled like
+    /// enemy health by the dungeon and difficulty).
+    pub damage: f32,
+    /// Seconds the caster is exposed afterwards.
+    pub exposed: f32,
+    /// Extra damage the exposed caster takes (0.3 = +30%).
+    pub exposed_pct: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
@@ -1785,6 +1805,16 @@ impl Content {
                         a.cast_time, a.interval
                     ),
                 );
+                if let Some(st) = a.stagger {
+                    check(
+                        a.cast_time > 0.0,
+                        format!("{ap}: stagger needs a cast_time (a cast to break)"),
+                    );
+                    check(
+                        st.damage > 0.0 && st.exposed >= 0.0 && st.exposed_pct >= 0.0,
+                        format!("{ap}: stagger damage must be > 0, exposed and exposed_pct >= 0"),
+                    );
+                }
                 for ph in &a.phases {
                     check(
                         *ph >= 1 && *ph <= phase_count,

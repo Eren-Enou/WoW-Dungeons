@@ -841,9 +841,12 @@ fn resource_line(sim: &Sim, p: ActorId) -> String {
         .unwrap_or_default();
     let mut head = format!("{label} {:.0}/{:.0}", a.resource, a.max_resource);
     // Lab A (0.10): Edge as pips.
-    if a.style == dungeon_sim::class::StrikerStyle::Planned {
+    if matches!(
+        a.style,
+        dungeon_sim::class::StrikerStyle::Planned | dungeon_sim::class::StrikerStyle::Flow
+    ) {
         let e = sim.edge(p) as usize;
-        let max = dungeon_sim::sim::MAX_EDGE as usize;
+        let max = sim.edge_cap(p) as usize;
         head = format!(
             "Edge [{}{}] {e}/{max}   {head}",
             "#".repeat(e),
@@ -1065,6 +1068,12 @@ fn update_texts(run: Res<ActiveRun>, mut q: Query<(&mut Text, &mut TextColor, &H
                 );
                 if let Some(c) = &b.cast {
                     s.push_str(&format!("  | casting {} ", c.name));
+                    // 0.11: how much damage is still needed to break it.
+                    if let Some(left) = sim.stagger_left(sim.boss, c) {
+                        s.push_str(&format!("- BREAK IT: {left:.0} to go "));
+                    }
+                } else if let Some(due) = sim.stagger_due(sim.boss).filter(|d| *d <= 10.0) {
+                    s.push_str(&format!("  | Brood Frenzy in {due:.0}s"));
                 }
                 if let Some(t) = b.target {
                     s.push_str(&format!("  | on {}", sim.actors[t].name));
@@ -1128,6 +1137,12 @@ fn update_texts(run: Res<ActiveRun>, mut q: Query<(&mut Text, &mut TextColor, &H
                         "CLASS LAB: Striker {} (session only)\n",
                         sim.actors[pl].style.label()
                     ));
+                    if let Some(t) = sim.technique(pl) {
+                        s.push_str(&format!("Technique: {}\n", t.label()));
+                    }
+                }
+                if sim.options.experiment {
+                    s.push_str("ONE MORE RUN experiment on\n");
                 }
                 for e in &sim.encounters {
                     let mark = if e.cleared {
@@ -1358,6 +1373,7 @@ fn update_action_bar(
         need[slot] = match caster.abilities[slot].def().effect {
             Effect::ExploitOpening { .. } => Some(target.is_some_and(|t| sim.has_opening(t, p))),
             Effect::EdgeBleed { .. } => Some(sim.edge(p) > 0),
+            Effect::Finisher { min_edge, .. } => Some(sim.edge(p) >= min_edge),
             _ => None,
         };
     }
@@ -1440,7 +1456,7 @@ fn update_action_bar(
                 let (s, c) = match (&states[slot], need[slot]) {
                     (Some(st), Some(false)) if st.cooldown_left <= 0.0 => {
                         let what = match caster.abilities[slot].def().effect {
-                            Effect::EdgeBleed { .. } => "no Edge",
+                            Effect::EdgeBleed { .. } | Effect::Finisher { .. } => "no Edge",
                             _ => "no opening",
                         };
                         (what.to_string(), Color::srgb(1.0, 0.75, 0.4))
@@ -1459,7 +1475,9 @@ fn update_action_bar(
                         // Edge spenders say what they would spend.
                         if matches!(
                             caster.abilities[slot].def().effect,
-                            Effect::EdgeBleed { .. } | Effect::EdgeWhirl { .. }
+                            Effect::EdgeBleed { .. }
+                                | Effect::EdgeWhirl { .. }
+                                | Effect::Finisher { .. }
                         ) && sim.edge(p) > 0
                             && st.cooldown_left <= 0.0
                         {

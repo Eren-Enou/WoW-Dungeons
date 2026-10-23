@@ -182,9 +182,32 @@ pub fn ability(def: &AbilityDef, power_mult: f32, resource: ResourceKind) -> Tip
             p(per_edge),
             secs(duration)
         ),
-        Effect::ExploitOpening { amount, refund } => format!(
-            "Needs an opening on the target (casting, just used an ability, kicked by you, or under 30% health). Deals about {:.0} {school} damage, uses up the opening and gives back {refund:.0} energy if it lands.{}",
+        Effect::ExploitOpening {
+            amount,
+            refund,
+            edge,
+        } => format!(
+            "Needs an opening on the target (casting, just used an ability, kicked by you, or under 30% health). Deals about {:.0} {school} damage, uses up the opening and gives back {refund:.0} energy{} if it lands.{}",
             p(amount),
+            if edge > 0 {
+                format!(" and {edge} Edge")
+            } else {
+                String::new()
+            },
+            hit(HitKind::Melee)
+        ),
+        Effect::Finisher {
+            base,
+            per_edge,
+            min_edge,
+            splash_at,
+            splash_radius,
+            splash_frac,
+        } => format!(
+            "Needs {min_edge} or more Edge and spends all of it: about {:.0} + {:.0} per Edge {school} damage. With {splash_at}+ Edge, enemies within {splash_radius:.0} m of the target take {:.0}% of it.{}",
+            p(base),
+            p(per_edge),
+            splash_frac * 100.0,
             hit(HitKind::Melee)
         ),
     });
@@ -229,7 +252,11 @@ pub fn aura(a: &Aura, source: &str) -> Tip {
             "{:.0} Edge (of 5): spend it with Deep Lacerate or Reaping Whirl.",
             stacks
         ),
-        AuraKind::Opening => "An opening: the reactive Striker can Exploit it.".into(),
+        AuraKind::Opening => {
+            "An opening: the reactive Striker can Exploit it (the Flow Striker can Seize it)."
+                .into()
+        }
+        AuraKind::Riposte => "Your next Seize hits twice as hard.".into(),
         AuraKind::DamageTaken { pct } => format!(
             "Takes {:.0}% more damage ({:.0}% per stack).",
             pct * stacks * 100.0,

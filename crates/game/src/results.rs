@@ -81,6 +81,13 @@ fn format_results(r: &LastResult) -> String {
             s.ring_casts, s.ring_hits
         ));
     }
+    if !r.experiment.is_empty() {
+        lines.push(String::new());
+        lines.push("ONE MORE RUN (experiment)".into());
+        for l in &r.experiment {
+            lines.push(format!("  {l}"));
+        }
+    }
     lines.push(String::new());
     lines.push("REWARDS".into());
     lines.push(format!(
@@ -195,6 +202,7 @@ mod tests {
             difficulty_name: "Normal".into(),
             highlights: Vec::new(),
             log_path: None,
+            experiment: vec!["First clear: 5:00".into()],
             treasure: sim
                 .caches
                 .iter()
@@ -205,5 +213,9 @@ mod tests {
         assert!(text.contains("- from Near Coffer"), "{text}");
         assert!(text.contains("Treasure: Near Coffer opened"), "{text}");
         assert!(text.contains("Treasure: Far Coffer not opened"), "{text}");
+        assert!(
+            text.contains("ONE MORE RUN (experiment)\n  First clear: 5:00"),
+            "{text}"
+        );
     }
 }

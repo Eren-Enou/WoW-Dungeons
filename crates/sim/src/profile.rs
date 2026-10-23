@@ -216,6 +216,9 @@ pub struct Profile {
     /// Player interface preferences.
     #[serde(default)]
     pub settings: Settings,
+    /// 0.11 "One More Run" experiment: on/off, unlocked Techniques, bests.
+    #[serde(default)]
+    pub experiment: crate::experiment::Experiment,
 }
 
 /// Interface preferences stored with the profile.
@@ -400,6 +403,7 @@ impl Profile {
             sandbox: crate::sim::Overrides::default(),
             group_size: 5,
             settings: Settings::default(),
+            experiment: Default::default(),
         };
         p.auto_fill_party();
         p

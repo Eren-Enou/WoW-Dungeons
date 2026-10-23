@@ -218,6 +218,9 @@ fn start_run(
         player_style: data.lab_style,
         lab_plan: dungeon_sim::sim::LabPlan::Normal,
         lab_reaction: 0.0,
+        lab_no_behind: false,
+        experiment: data.profile.experiment.enabled,
+        technique: data.profile.experiment.active_technique(),
     };
     let mut sim = Sim::with_options(&content, &party, seed, options);
     if autoplay && let Some(p) = sim.player {
@@ -776,7 +779,27 @@ pub fn process_events(mut run: ResMut<ActiveRun>) {
                     Color::srgb(1.0, 0.1, 0.1),
                 );
             }
+            EventKind::Staggered { enemy, what } => {
+                let name = run.sim.actors[*enemy].name.clone();
+                run.set_banner(
+                    format!("{what} BROKEN - {name} is exposed!"),
+                    3.0,
+                    Color::srgb(1.0, 0.85, 0.2),
+                );
+            }
             EventKind::CastStart { src, what, .. } => {
+                // 0.11: a channel the party can break.
+                let a = &run.sim.actors[*src];
+                if let Some(c) = &a.cast
+                    && run.sim.stagger_left(*src, c).is_some()
+                {
+                    let name = a.name.clone();
+                    run.set_banner(
+                        format!("{name} channels {what} - hit her hard to break it!"),
+                        3.0,
+                        Color::srgb(1.0, 0.6, 0.2),
+                    );
+                }
                 // Warn about party-wide pulses.
                 let a = &run.sim.actors[*src];
                 if let (Some(es), Some(c)) = (&a.enemy, &a.cast)
@@ -1093,6 +1116,17 @@ fn finish_run(
     let content = sim.content.clone();
     let report = RunReport::from_sim(sim);
     let rewards = data.profile.grant_rewards(&content, &report);
+    // 0.11 experiment: records, unlocks and what to try next time.
+    let experiment = if data.profile.experiment.enabled {
+        let x = dungeon_sim::experiment::ExperimentRun::from_sim(sim);
+        let mut lines = data.profile.experiment.record(&x);
+        if x.dungeon == dungeon_sim::experiment::EXPERIMENT_DUNGEON {
+            lines.extend(x.coach(data.profile.experiment.unlocked));
+        }
+        lines
+    } else {
+        Vec::new()
+    };
     data.save();
     let log_path = std::path::Path::new("logs").join("last_run.log");
     let header = format!(
@@ -1146,6 +1180,7 @@ fn finish_run(
         highlights,
         log_path,
         item_sources: rewards_sources,
+        experiment,
         treasure: sim
             .caches
             .iter()

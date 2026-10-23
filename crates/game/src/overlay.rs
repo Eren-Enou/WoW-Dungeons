@@ -357,6 +357,13 @@ fn spawn_floating_text(mut commands: Commands, run: Res<ActiveRun>) {
                     (*dst, s, Color::srgb(0.6, 0.75, 0.9), 14.0, 1.3)
                 }
             }
+            EventKind::Staggered { enemy, .. } => (
+                *enemy,
+                "BROKEN!".to_string(),
+                Color::srgb(1.0, 0.85, 0.2),
+                24.0,
+                1.8,
+            ),
             EventKind::Dispel { dst, what, .. } => (
                 *dst,
                 format!("-{what}"),

@@ -6,7 +6,8 @@
 
 use crate::ai::{self, AiProfile, Blackboard};
 use crate::class::{
-    AbilityId, ClassId, Effect, GCD, ResourceKind, Role, StrikerStyle, TargetRule, level_power,
+    AbilityId, ClassId, Effect, GCD, ResourceKind, Role, StrikerStyle, TargetRule, Technique,
+    level_power,
 };
 use crate::content::{
     AbilityKind, Content, DebuffEffect, Difficulty, EnemyAbility, EnemyRank, HazardConfig,
@@ -215,6 +216,13 @@ pub struct RunOptions {
     /// Class Design Lab: seconds before the scripted player notices a new
     /// opening (a stand-in for human reaction time; 0 = instant).
     pub lab_reaction: f32,
+    /// Class Design Lab: the scripted player never gets the from-behind
+    /// bonus (a stand-in for a player who doesn't reposition).
+    pub lab_no_behind: bool,
+    /// 0.11 experiment: content marked `experimental` is used (Brood Frenzy).
+    pub experiment: bool,
+    /// 0.11 experiment: the Flow Striker's Technique.
+    pub technique: Option<Technique>,
 }
 
 /// Class Design Lab (0.10): scripted play for the player's slot when the AI
@@ -262,6 +270,9 @@ pub const RECOVERING_SECS: f32 = 3.0;
 pub const OFF_BALANCE_SECS: f32 = 4.0;
 pub const FALTERING_SECS: f32 = 5.0;
 pub const FALTERING_AT: f32 = 0.3;
+/// 0.11: a weak-point hit (finisher or opening strike) counts this many
+/// times toward breaking a channel.
+pub const WEAK_POINT_MULT: f32 = 3.0;
 
 /// One step of a scripted leader route (0.9).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -284,6 +295,9 @@ impl Default for RunOptions {
             player_style: StrikerStyle::Classic,
             lab_plan: LabPlan::Normal,
             lab_reaction: 0.0,
+            lab_no_behind: false,
+            experiment: false,
+            technique: None,
         }
     }
 }
@@ -346,6 +360,8 @@ pub enum AuraKind {
     Edge,
     /// Lab B: an opening on an enemy for the source's Exploit.
     Opening,
+    /// 0.11 Riposte: the next Seize hits twice as hard.
+    Riposte,
     /// +pct damage taken per stack.
     DamageTaken {
         pct: f32,
@@ -406,6 +422,10 @@ pub struct EnemyAbilityState {
     pub cfg: EnemyAbility,
     pub label: Label,
     pub timer: f32,
+    /// 0.11 stagger: damage needed to break the cast (scaled), and damage
+    /// taken during the current cast.
+    pub stagger_need: f32,
+    pub stagger_taken: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -1171,12 +1191,31 @@ impl Sim {
         let max_hp = (t.hp * hp_mult).round().max(1.0);
         let entrance = self.content.dungeon.entrance;
         let home_facing = (entrance - pos).heading();
+        let experiment = self.options.experiment;
+        // 0.11: a break takes about the same share of the party's damage at
+        // any level, so it scales with the party's level against the
+        // dungeon's recommended level.
+        let levels: Vec<u32> = self
+            .party
+            .iter()
+            .map(|&p| self.actors[p].stats.level)
+            .collect();
+        let party_level = if levels.is_empty() {
+            self.content.dungeon.recommended_level
+        } else {
+            (levels.iter().sum::<u32>() as f32 / levels.len() as f32).round() as u32
+        };
+        let level_scale =
+            level_power(party_level) / level_power(self.content.dungeon.recommended_level);
         let abilities = t
             .abilities
             .iter()
+            .filter(|a| !a.experimental || experiment)
             .map(|a| EnemyAbilityState {
                 label: Label::from(a.name.as_str()),
                 timer: a.initial.unwrap_or(a.interval),
+                stagger_need: a.stagger.map_or(0.0, |s| s.damage * hp_mult * level_scale),
+                stagger_taken: 0.0,
                 cfg: a.clone(),
             })
             .collect();
@@ -1815,6 +1854,9 @@ impl Sim {
             Effect::EdgeBleed { .. } if self.edge(caster) == 0 => {
                 return Err(CastError::NoEdge);
             }
+            Effect::Finisher { min_edge, .. } if self.edge(caster) < min_edge => {
+                return Err(CastError::NoEdge);
+            }
             Effect::ExploitOpening { .. } if !self.has_opening(target, caster) => {
                 return Err(CastError::NoOpening);
             }
@@ -1885,6 +1927,9 @@ impl Sim {
         let what = self.label(caster, slot);
         self.spend(caster, def.cost);
         self.actors[caster].cooldowns[slot] = def.cooldown;
+        if def.id == AbilityId::Kick && self.technique(caster) == Some(Technique::Riposte) {
+            self.actors[caster].cooldowns[slot] = 6.0;
+        }
         self.metrics.actors[caster].casts += 1;
         if let Some(u) = self.metrics.actors[caster].ability_uses.get_mut(slot) {
             *u += 1;
@@ -2052,6 +2097,22 @@ impl Sim {
                         StrikerStyle::Reactive => {
                             self.lab_open(target, "Off Balance", OFF_BALANCE_SECS)
                         }
+                        StrikerStyle::Flow => {
+                            self.lab_open(target, "Off Balance", OFF_BALANCE_SECS);
+                            self.gain_edge(caster, 1);
+                            if self.technique(caster) == Some(Technique::Riposte) {
+                                self.apply_aura(
+                                    caster,
+                                    Aura::new(
+                                        Label::from("Riposte"),
+                                        AuraKind::Riposte,
+                                        caster,
+                                        5.0,
+                                        false,
+                                    ),
+                                );
+                            }
+                        }
                         StrikerStyle::Classic => {}
                     }
                 }
@@ -2083,7 +2144,7 @@ impl Sim {
                     self.actors[target].pos,
                     self.actors[target].facing,
                     self.actors[caster].pos,
-                );
+                ) && !(self.options.lab_no_behind && Some(caster) == self.player);
                 let spec = DamageSpec::new(amount, def.school, HitKind::Melee, what);
                 if self.deal(caster, target, spec) > 0.0 {
                     let m = &mut self.metrics.actors[caster];
@@ -2139,7 +2200,11 @@ impl Sim {
                 self.engage_enemy_of(caster, target);
                 self.apply_aura(target, aura);
             }
-            Effect::ExploitOpening { amount, refund } => {
+            Effect::ExploitOpening {
+                amount,
+                refund,
+                edge,
+            } => {
                 if let Some(i) = self.actors[target]
                     .auras
                     .iter()
@@ -2148,10 +2213,71 @@ impl Sim {
                     self.actors[target].auras.remove(i);
                 }
                 self.metrics.actors[caster].exploits += 1;
+                // Riposte: a landed Kick doubles the next Seize.
+                let mut amount = amount;
+                if let Some(i) = self.actors[caster]
+                    .auras
+                    .iter()
+                    .position(|a| a.kind == AuraKind::Riposte && a.source == caster)
+                {
+                    self.actors[caster].auras.remove(i);
+                    amount *= 2.0;
+                }
+                let edge = if self.technique(caster) == Some(Technique::Patience) {
+                    edge.min(1)
+                } else {
+                    edge
+                };
                 let spec = DamageSpec::new(amount, def.school, HitKind::Melee, what);
                 if self.deal(caster, target, spec) > 0.0 {
                     let a = &mut self.actors[caster];
                     a.resource = (a.resource + refund).min(a.max_resource);
+                    self.gain_edge(caster, edge);
+                }
+            }
+            Effect::Finisher {
+                base,
+                per_edge,
+                min_edge: _,
+                splash_at,
+                splash_radius,
+                splash_frac,
+            } => {
+                let n = self.spend_edge(caster);
+                let amount = base + per_edge * n as f32;
+                let patience = self.technique(caster) == Some(Technique::Patience) && n >= 6;
+                let center = self.actors[target].loc();
+                // Patience: a big Ravage hits everyone around you in full.
+                let (radius, frac, around) = if patience {
+                    (8.0, 1.0, self.actors[caster].loc())
+                } else {
+                    (splash_radius, splash_frac, center)
+                };
+                let spec = DamageSpec::new(amount, def.school, HitKind::Melee, what.clone());
+                self.deal(caster, target, spec);
+                if n >= splash_at || patience {
+                    let hits: Vec<ActorId> = self
+                        .engaged_enemies()
+                        .into_iter()
+                        .filter(|&e| {
+                            e != target
+                                && !self.actors[e].is_incapacitated()
+                                && self.in_effect(e, around, radius)
+                        })
+                        .collect();
+                    for e in hits {
+                        let spec = DamageSpec::new(
+                            amount * frac,
+                            def.school,
+                            HitKind::Melee,
+                            what.clone(),
+                        );
+                        self.deal(caster, e, spec);
+                    }
+                }
+                if patience {
+                    let a = &mut self.actors[caster];
+                    a.resource = (a.resource + 25.0).min(a.max_resource);
                 }
             }
             Effect::Dispel => {
@@ -2172,6 +2298,114 @@ impl Sim {
         }
     }
 
+    /// 0.11: is this hit one of `src`'s finishers or opening strikes (a
+    /// weak-point hit, counted `WEAK_POINT_MULT` times toward a break)?
+    fn is_weak_point_hit(&self, src: ActorId, what: &str) -> bool {
+        let a = &self.actors[src];
+        a.ability_labels
+            .iter()
+            .position(|l| &**l == what)
+            .and_then(|i| a.abilities.get(i))
+            .is_some_and(|id| {
+                matches!(
+                    id.def().effect,
+                    Effect::ExploitOpening { .. }
+                        | Effect::Finisher { .. }
+                        | Effect::EdgeWhirl { .. }
+                        | Effect::EdgeBleed { .. }
+                )
+            })
+    }
+
+    /// 0.11: damage still needed to break `e`'s current cast `c`, if it can
+    /// be broken.
+    pub fn stagger_left(&self, e: ActorId, c: &Cast) -> Option<f32> {
+        let CastKind::Enemy(idx) = c.kind else {
+            return None;
+        };
+        let ab = self.actors[e].enemy.as_ref()?.abilities.get(idx)?;
+        ab.cfg
+            .stagger
+            .map(|_| (ab.stagger_need - ab.stagger_taken).max(0.0))
+    }
+
+    /// 0.11: seconds until `e`'s next breakable cast, if it has one.
+    pub fn stagger_due(&self, e: ActorId) -> Option<f32> {
+        let es = self.actors[e].enemy.as_ref()?;
+        if es.mode != EnemyMode::Engaged {
+            return None;
+        }
+        es.abilities
+            .iter()
+            .filter(|a| a.cfg.stagger.is_some())
+            .map(|a| a.timer)
+            .min_by(f32::total_cmp)
+    }
+
+    /// 0.11: count damage against a breakable cast; break it at the
+    /// threshold (no effect, an exposure window and an opening instead).
+    fn stagger_hit(&mut self, e: ActorId, amount: f32) {
+        let Some(idx) = self.actors[e].cast.as_ref().and_then(|c| match c.kind {
+            CastKind::Enemy(i) => Some(i),
+            _ => None,
+        }) else {
+            return;
+        };
+        let Some(es) = self.actors[e].enemy.as_mut() else {
+            return;
+        };
+        let Some(ab) = es.abilities.get_mut(idx) else {
+            return;
+        };
+        let Some(st) = ab.cfg.stagger else {
+            return;
+        };
+        ab.stagger_taken += amount;
+        if ab.stagger_taken < ab.stagger_need || !self.actors[e].alive {
+            return;
+        }
+        let cast = self.actors[e].cast.take().expect("casting");
+        self.metrics.staggers += 1;
+        self.emit(EventKind::Staggered {
+            enemy: e,
+            what: cast.name,
+        });
+        self.actors[e]
+            .auras
+            .retain(|a| !(a.kind == AuraKind::Opening && &*a.name == "Distracted"));
+        self.apply_aura(
+            e,
+            Aura::new(
+                Label::from("Exposed"),
+                AuraKind::DamageTaken {
+                    pct: st.exposed_pct,
+                },
+                e,
+                st.exposed,
+                true,
+            ),
+        );
+        self.lab_open(e, "Staggered", st.exposed);
+    }
+
+    /// Test hook: open `enemy` for the opening-using player.
+    #[cfg(test)]
+    pub fn lab_open_for_test(&mut self, enemy: ActorId, why: &str, secs: f32) {
+        self.lab_open(enemy, why, secs);
+    }
+
+    /// Test hook: count a hit by `src` with ability `what` against a
+    /// breakable cast.
+    #[cfg(test)]
+    pub fn stagger_hit_for_test(&mut self, e: ActorId, src: ActorId, what: &str, amount: f32) {
+        let mult = if self.is_weak_point_hit(src, what) {
+            WEAK_POINT_MULT
+        } else {
+            1.0
+        };
+        self.stagger_hit(e, amount * mult);
+    }
+
     /// Lab A: the Edge `id` holds.
     pub fn edge(&self, id: ActorId) -> u32 {
         self.actors[id]
@@ -2181,15 +2415,32 @@ impl Sim {
             .map_or(0, |a| a.stacks)
     }
 
+    /// The Technique in play for `id` (0.11: the player's Flow Striker only).
+    pub fn technique(&self, id: ActorId) -> Option<Technique> {
+        (Some(id) == self.player && self.actors[id].style == StrikerStyle::Flow)
+            .then_some(self.options.technique)
+            .flatten()
+    }
+
+    /// Most Edge `id` can hold (Patience: 7).
+    pub fn edge_cap(&self, id: ActorId) -> u32 {
+        if self.technique(id) == Some(Technique::Patience) {
+            7
+        } else {
+            MAX_EDGE
+        }
+    }
+
     /// Lab A: gain `n` Edge (refreshing its duration); Edge past the cap is
     /// counted as wasted.
     fn gain_edge(&mut self, id: ActorId, n: u32) {
+        let cap = self.edge_cap(id);
         for _ in 0..n {
-            if self.edge(id) >= MAX_EDGE {
+            if self.edge(id) >= cap {
                 self.metrics.actors[id].edge_wasted += 1;
             }
             let mut aura = Aura::new(Label::from("Edge"), AuraKind::Edge, id, EDGE_SECS, false);
-            aura.max_stacks = MAX_EDGE;
+            aura.max_stacks = cap;
             self.apply_aura(id, aura);
         }
     }
@@ -2211,10 +2462,14 @@ impl Sim {
             .any(|a| a.kind == AuraKind::Opening && a.source == by)
     }
 
-    /// Lab B: the player, when they play the reactive Striker.
+    /// Lab B/C: the player, when they play a Striker that uses openings.
     fn reactive_player(&self) -> Option<ActorId> {
-        self.player
-            .filter(|&p| self.actors[p].style == StrikerStyle::Reactive && self.actors[p].alive)
+        self.player.filter(|&p| {
+            matches!(
+                self.actors[p].style,
+                StrikerStyle::Reactive | StrikerStyle::Flow
+            ) && self.actors[p].alive
+        })
     }
 
     /// Lab B: open `enemy` for the reactive player (nothing otherwise).
@@ -2516,6 +2771,8 @@ impl Sim {
             outcome
         };
         let frac_before = self.actors[dst].hp_frac();
+        // 0.11: finishers and opening strikes are weak-point hits.
+        let weak_point = self.is_weak_point_hit(src, &spec.what);
         let applied = amount.min(self.actors[dst].hp);
         self.actors[dst].hp = (self.actors[dst].hp - amount).max(0.0);
         self.metrics.actors[src].damage_done += applied;
@@ -2560,6 +2817,11 @@ impl Sim {
             outcome,
             school: spec.school,
         });
+        // 0.11 stagger: damage during a breakable cast.
+        if src_is_party && (applied > 0.0 || absorbed > 0.0) {
+            let mult = if weak_point { WEAK_POINT_MULT } else { 1.0 };
+            self.stagger_hit(dst, (applied + absorbed) * mult);
+        }
         // Lab B: an enemy that drops below 30% falters (once).
         if frac_before >= FALTERING_AT
             && self.actors[dst].hp > 0.0
@@ -3223,6 +3485,11 @@ impl Sim {
                     if cfg.interruptible {
                         self.metrics.interruptible_casts += 1;
                     }
+                    if cfg.stagger.is_some() {
+                        self.actors[e].enemy.as_mut().expect("enemy").abilities[idx]
+                            .stagger_taken = 0.0;
+                        self.metrics.stagger_casts += 1;
+                    }
                     self.emit(EventKind::CastStart {
                         src: e,
                         what: label,
@@ -3361,7 +3628,11 @@ impl Sim {
         self.actors[e]
             .auras
             .retain(|a| !(a.kind == AuraKind::Opening && &*a.name == "Distracted"));
-        self.lab_open(e, "Recovering", RECOVERING_SECS);
+        let recovering = match self.reactive_player().and_then(|p| self.technique(p)) {
+            Some(Technique::Riposte) => 4.5,
+            _ => RECOVERING_SECS,
+        };
+        self.lab_open(e, "Recovering", recovering);
         let (cfg, label) = {
             let ab = &self.actors[e].enemy.as_ref().expect("enemy").abilities[idx];
             (ab.cfg.clone(), ab.label.clone())

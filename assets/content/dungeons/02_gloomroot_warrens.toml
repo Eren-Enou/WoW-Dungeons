@@ -201,6 +201,22 @@ damage = 224.0
 radius = 6.0
 frontal = true
 
+# 0.11 experiment only (Sandbox tab, "One More Run"): a 4 s channel that
+# calls three more spiderlings. It can't be interrupted, but the party can
+# break it by dealing enough damage to her while she channels; she is then
+# exposed (+30% damage taken for 6 s). Hold your burst for it, or keep
+# killing the brood already out.
+[[templates.brakkis.abilities]]
+name = "Brood Frenzy"
+kind = "summon"
+experimental = true
+interval = 24.0
+initial = 14.0
+cast_time = 4.0
+template = "spiderling"
+count = 3
+stagger = { damage = 1200.0, exposed = 6.0, exposed_pct = 0.3 }
+
 [templates.hound]
 name = "Cinderlurk Hound"
 rank = "trash"

@@ -49,6 +49,9 @@ pub struct Metrics {
     pub dispels: u32,
     /// Packs pulled while another was still fighting (0.9).
     pub overpulls: u32,
+    /// 0.11: breakable casts the party broke, of those started.
+    pub staggers: u32,
+    pub stagger_casts: u32,
 }
 
 impl Metrics {

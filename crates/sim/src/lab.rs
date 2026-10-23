@@ -4,7 +4,7 @@
 //! measures effectiveness, not enjoyment (CLASS_DESIGN_LAB_0_10.md).
 
 use crate::ai::AiProfile;
-use crate::class::{ClassId, StrikerStyle};
+use crate::class::{ClassId, StrikerStyle, Technique};
 use crate::content::{Content, EnemyRank};
 use crate::events::EventKind;
 use crate::runner::party_at_level;
@@ -27,6 +27,50 @@ pub fn lab_sim(
     plan: LabPlan,
     difficulty: &str,
 ) -> Sim {
+    lab_sim_with(
+        content,
+        party,
+        seed,
+        style,
+        plan,
+        difficulty,
+        &LabExtras::default(),
+    )
+}
+
+/// Conditions for a lab run beyond style and plan.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct LabExtras {
+    /// Seconds before the scripted player notices an opening.
+    pub reaction: f32,
+    /// The scripted player never gets the from-behind bonus.
+    pub no_behind: bool,
+    /// 0.11 experiment content (Brood Frenzy) on.
+    pub experiment: bool,
+    /// 0.11 Technique for the Flow Striker.
+    pub technique: Option<Technique>,
+}
+
+impl LabExtras {
+    pub fn reacting(reaction: f32) -> Self {
+        LabExtras {
+            reaction,
+            ..Default::default()
+        }
+    }
+}
+
+/// `lab_sim` with extra conditions. The experiment flag must be set before
+/// the run is built: it decides which enemy abilities exist.
+pub fn lab_sim_with(
+    content: &Content,
+    party: &[PartyMemberSpec],
+    seed: u64,
+    style: StrikerStyle,
+    plan: LabPlan,
+    difficulty: &str,
+    x: &LabExtras,
+) -> Sim {
     let mut sim = Sim::with_options(
         content,
         party,
@@ -36,6 +80,10 @@ pub fn lab_sim(
             autopilot: true,
             player_style: style,
             lab_plan: plan,
+            lab_reaction: x.reaction,
+            lab_no_behind: x.no_behind,
+            experiment: x.experiment,
+            technique: x.technique,
             ..Default::default()
         },
     );
@@ -45,20 +93,6 @@ pub fn lab_sim(
             sim.leader = t;
         }
     }
-    sim
-}
-
-/// `lab_sim` with a reaction delay for noticing openings (B).
-pub fn lab_sim_reacting(
-    content: &Content,
-    party: &[PartyMemberSpec],
-    seed: u64,
-    style: StrikerStyle,
-    plan: LabPlan,
-    reaction: f32,
-) -> Sim {
-    let mut sim = lab_sim(content, party, seed, style, plan, "normal");
-    sim.options.lab_reaction = reaction;
     sim
 }
 
@@ -84,8 +118,8 @@ pub struct Feel {
     pub choice_casts: u32,
     /// The slots pressed, in order (0-based).
     pub sequence: Vec<u8>,
-    /// Lab A: Edge held at each spend (index = Edge, 0..=5).
-    pub edge_at_spend: [u32; 6],
+    /// Lab A/C: Edge held at each spend (index = Edge, 0..=7).
+    pub edge_at_spend: [u32; 8],
     pub builders: u32,
     pub builders_behind: u32,
     /// Lab B: age of each opening when it was Exploited; openings that ran
@@ -125,12 +159,12 @@ pub fn run_feel(
     seed: u64,
     style: StrikerStyle,
     plan: LabPlan,
-    reaction: f32,
+    x: &LabExtras,
     max_seconds: f32,
 ) -> Feel {
     use crate::sim::{AuraKind, DT};
     let party = lab_party(level);
-    let mut sim = lab_sim_reacting(content, &party, seed, style, plan, reaction);
+    let mut sim = lab_sim_with(content, &party, seed, style, plan, "normal", x);
     let p = sim.player.expect("player");
     let mut f = Feel::default();
     let mut uses = sim.metrics.actors[p].ability_uses;
@@ -185,9 +219,11 @@ pub fn run_feel(
                 let effect = sim.actors[p].abilities[s].def().effect;
                 if matches!(
                     effect,
-                    crate::class::Effect::EdgeBleed { .. } | crate::class::Effect::EdgeWhirl { .. }
+                    crate::class::Effect::EdgeBleed { .. }
+                        | crate::class::Effect::EdgeWhirl { .. }
+                        | crate::class::Effect::Finisher { .. }
                 ) {
-                    f.edge_at_spend[edge_before.min(5) as usize] += 1;
+                    f.edge_at_spend[edge_before.min(7) as usize] += 1;
                 }
             }
         }
@@ -289,6 +325,12 @@ pub struct LabRun {
     pub edge_wasted: u32,
     pub openings: u32,
     pub exploits: u32,
+    /// 0.11: breakable casts broken, of those started.
+    pub staggers: u32,
+    pub stagger_casts: u32,
+    /// 0.11: damage to the caster during each breakable cast, by the
+    /// companions and by the player (until it broke or completed).
+    pub channels: Vec<(f32, f32)>,
     /// By fight kind: (fights, seconds, player damage, party damage).
     pub fights: [(u32, f32, f32, f32); 3],
     /// By fight kind: (payoffs, fights with one, seconds from pull to the
@@ -297,8 +339,19 @@ pub struct LabRun {
     pub payoffs: [(u32, u32, f32); 3],
 }
 
+/// The cast time of breakable channels measured by `measure` (Brood
+/// Frenzy).
+const CHANNEL_SECS: f32 = 4.0;
+
 /// The payoff abilities of the three styles (see `LabRun::payoffs`).
-pub const PAYOFFS: [&str; 4] = ["Lacerate", "Deep Lacerate", "Reaping Whirl", "Exploit"];
+pub const PAYOFFS: [&str; 6] = [
+    "Lacerate",
+    "Deep Lacerate",
+    "Reaping Whirl",
+    "Exploit",
+    "Ravage",
+    "Seize",
+];
 
 fn kind_index(k: FightKind) -> usize {
     match k {
@@ -324,6 +377,8 @@ pub fn measure(sim: &Sim) -> LabRun {
         edge_wasted: pm.edge_wasted,
         openings: pm.openings,
         exploits: pm.exploits,
+        staggers: sim.metrics.staggers,
+        stagger_casts: sim.metrics.stagger_casts,
         ..Default::default()
     };
     for &m in &sim.party {
@@ -357,7 +412,45 @@ pub fn measure(sim: &Sim) -> LabRun {
     let mut pay: Vec<(u32, Option<f32>)> = vec![(0, None); sim.encounters.len()];
     let mut last_pay: Option<(f32, &str)> = None;
     let enc_of = |id: usize| sim.actors[id].enemy.as_ref().map(|e| e.encounter);
+    // Breakable casts: (caster, start, companion damage, player damage).
+    let mut open_channels: Vec<(usize, f32, f32, f32)> = Vec::new();
     for e in &sim.events {
+        match &e.kind {
+            EventKind::CastStart { src, what, .. }
+                if sim.actors[*src].enemy.as_ref().is_some_and(|es| {
+                    es.abilities
+                        .iter()
+                        .any(|a| a.cfg.stagger.is_some() && *a.label == **what)
+                }) =>
+            {
+                open_channels.push((*src, e.time, 0.0, 0.0));
+            }
+            EventKind::Damage {
+                src,
+                dst,
+                amount,
+                absorbed,
+                ..
+            } if open_channels.iter().any(|c| c.0 == *dst) && sim.party.contains(src) => {
+                for c in open_channels.iter_mut().filter(|c| c.0 == *dst) {
+                    if *src == p {
+                        c.3 += amount + absorbed;
+                    } else {
+                        c.2 += amount + absorbed;
+                    }
+                }
+            }
+            _ => {}
+        }
+        // A channel ends when it breaks or its cast time is up.
+        open_channels.retain(|c| {
+            let ended = e.time >= c.1 + CHANNEL_SECS
+                || matches!(&e.kind, EventKind::Staggered { enemy, .. } if *enemy == c.0);
+            if ended {
+                r.channels.push((c.2, c.3));
+            }
+            !ended
+        });
         match &e.kind {
             EventKind::Aggro { encounter, .. } if start[*encounter].is_none() => {
                 start[*encounter] = Some(e.time);
@@ -368,7 +461,7 @@ pub fn measure(sim: &Sim) -> LabRun {
                     && PAYOFFS.contains(&&**what)
                     && last_pay != Some((e.time, &**what))
                     && (matches!(e.kind, EventKind::AuraApplied { .. })
-                        != matches!(&**what, "Reaping Whirl" | "Exploit")) =>
+                        != matches!(&**what, "Reaping Whirl" | "Exploit" | "Ravage" | "Seize")) =>
             {
                 // Bleeds count when applied, hits when they land.
                 last_pay = Some((e.time, what));
@@ -420,6 +513,7 @@ pub fn measure(sim: &Sim) -> LabRun {
 }
 
 /// Run one lab condition to the end.
+#[allow(clippy::too_many_arguments)]
 pub fn run_lab(
     content: &Content,
     level: u32,
@@ -427,10 +521,11 @@ pub fn run_lab(
     style: StrikerStyle,
     plan: LabPlan,
     difficulty: &str,
+    x: &LabExtras,
     max_seconds: f32,
 ) -> (Sim, LabRun) {
     let party = lab_party(level);
-    let mut sim = lab_sim(content, &party, seed, style, plan, difficulty);
+    let mut sim = lab_sim_with(content, &party, seed, style, plan, difficulty, x);
     sim.run_to_end(max_seconds);
     let r = measure(&sim);
     (sim, r)
@@ -457,6 +552,8 @@ pub struct LabSummary {
     pub edge_wasted: f32,
     pub openings: f32,
     pub exploits: f32,
+    pub staggers: f32,
+    pub stagger_casts: f32,
     /// By fight kind: (fights per run, mean fight seconds, player DPS, party DPS).
     pub fights: [(f32, f32, f32, f32); 3],
     /// By fight kind: (payoffs per fight, share of fights with one, mean
@@ -486,6 +583,8 @@ pub fn summarize(runs: &[LabRun]) -> LabSummary {
         edge_wasted: sum(&|r| r.edge_wasted as f32) / n,
         openings: sum(&|r| r.openings as f32) / n,
         exploits: sum(&|r| r.exploits as f32) / n,
+        staggers: sum(&|r| r.staggers as f32) / n,
+        stagger_casts: sum(&|r| r.stagger_casts as f32) / n,
         ..Default::default()
     };
     for i in 0..5 {
@@ -572,7 +671,7 @@ mod tests {
             1,
             StrikerStyle::Reactive,
             LabPlan::Expert,
-            0.0,
+            &LabExtras::reacting(0.0),
             900.0,
         );
         assert!(quick.combat > 0.0 && quick.idle <= quick.combat + 1e-3);
@@ -586,7 +685,7 @@ mod tests {
             1,
             StrikerStyle::Reactive,
             LabPlan::Expert,
-            1.0,
+            &LabExtras::reacting(1.0),
             900.0,
         );
         assert!(
@@ -594,9 +693,226 @@ mod tests {
             "{:?}",
             slow.exploit_ages
         );
-        let a = run_feel(&c, 3, 1, StrikerStyle::Planned, LabPlan::Expert, 0.0, 900.0);
+        let a = run_feel(
+            &c,
+            3,
+            1,
+            StrikerStyle::Planned,
+            LabPlan::Expert,
+            &LabExtras::reacting(0.0),
+            900.0,
+        );
         assert!(a.builders > 0 && a.builders_behind <= a.builders);
         assert!(a.edge_at_spend.iter().sum::<u32>() > 0);
+    }
+
+    fn gloomroot() -> Content {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets/content/dungeons");
+        crate::content::ContentLibrary::load(dir)
+            .get(crate::experiment::EXPERIMENT_DUNGEON)
+            .expect("gloomroot")
+            .clone()
+    }
+
+    /// A Flow (or other) player standing behind the first enemy, under the
+    /// player's control, with plenty of energy.
+    fn duel(c: &Content, style: StrikerStyle, x: &LabExtras) -> (Sim, usize, usize) {
+        let mut sim = lab_sim_with(c, &lab_party(6), 1, style, LabPlan::Normal, "normal", x);
+        let p = sim.player.unwrap();
+        sim.actors[p].controller = Controller::Player;
+        let e = sim.enemies[0];
+        sim.actors[e].hp = 1.0e6;
+        sim.actors[e].max_hp = 1.0e6;
+        sim.actors[e].facing = 0.0;
+        // Behind = on the side the enemy faces away from.
+        let pos = sim.actors[e].pos;
+        sim.actors[p].pos = pos + crate::math::V2::new(0.0, -1.5);
+        sim.actors[p].y = sim.actors[e].y;
+        sim.actors[p].surface = sim.actors[e].surface;
+        sim.actors[p].resource = 100.0;
+        (sim, p, e)
+    }
+
+    fn press(
+        sim: &mut Sim,
+        p: usize,
+        slot: usize,
+        t: usize,
+    ) -> Result<(), crate::events::CastError> {
+        sim.actors[p].gcd = 0.0;
+        sim.actors[p].resource = 100.0;
+        sim.try_cast(p, slot, Some(t))
+    }
+
+    #[test]
+    fn brood_frenzy_exists_only_with_the_experiment_on() {
+        let c = gloomroot();
+        let has = |experiment: bool| {
+            let x = LabExtras {
+                experiment,
+                ..Default::default()
+            };
+            let sim = lab_sim_with(
+                &c,
+                &lab_party(4),
+                1,
+                StrikerStyle::Flow,
+                LabPlan::Normal,
+                "normal",
+                &x,
+            );
+            sim.enemies.iter().any(|&e| {
+                sim.actors[e]
+                    .enemy
+                    .as_ref()
+                    .unwrap()
+                    .abilities
+                    .iter()
+                    .any(|a| &*a.label == "Brood Frenzy")
+            })
+        };
+        assert!(!has(false));
+        assert!(has(true));
+    }
+
+    #[test]
+    fn flow_builds_edge_from_cuts_and_seizes_and_ravage_needs_two() {
+        use crate::events::CastError;
+        let c = gloomroot();
+        let (mut sim, p, e) = duel(&c, StrikerStyle::Flow, &LabExtras::default());
+        assert_eq!(
+            sim.actors[p].abilities,
+            ClassId::Striker.abilities_for(StrikerStyle::Flow).to_vec()
+        );
+        assert_eq!(press(&mut sim, p, 1, e), Err(CastError::NoEdge));
+        assert_eq!(press(&mut sim, p, 4, e), Err(CastError::NoOpening));
+        // Quick Cut from behind: +2 Edge when it lands (it can be dodged).
+        let mut tries = 0;
+        while sim.edge(p) < 2 && tries < 20 {
+            press(&mut sim, p, 0, e).unwrap();
+            tries += 1;
+        }
+        assert!(sim.edge(p) >= 2);
+        let before = sim.metrics.actors[p].builders_behind;
+        assert!(before > 0, "the cuts landed from behind");
+        // Ravage spends it all.
+        press(&mut sim, p, 1, e).unwrap();
+        assert_eq!(sim.edge(p), 0);
+        // An opening: Seize takes it and gives 2 Edge.
+        sim.lab_open_for_test(e, "Recovering", 3.0);
+        assert!(sim.has_opening(e, p));
+        let mut seized = false;
+        for _ in 0..10 {
+            if !sim.has_opening(e, p) {
+                break;
+            }
+            press(&mut sim, p, 4, e).unwrap();
+            seized = sim.edge(p) == 2;
+        }
+        assert!(seized || sim.metrics.actors[p].exploits > 0);
+    }
+
+    #[test]
+    fn weak_point_hits_break_brood_frenzy_and_expose_her() {
+        let c = gloomroot();
+        let x = LabExtras {
+            experiment: true,
+            ..Default::default()
+        };
+        let mut sim = lab_sim_with(
+            &c,
+            &lab_party(4),
+            1,
+            StrikerStyle::Flow,
+            LabPlan::Normal,
+            "normal",
+            &x,
+        );
+        let p = sim.player.unwrap();
+        sim.actors[p].controller = Controller::Player;
+        // Mother Brakkis: the enemy with Brood Frenzy.
+        let (boss, idx) = sim
+            .enemies
+            .iter()
+            .find_map(|&e| {
+                sim.actors[e]
+                    .enemy
+                    .as_ref()?
+                    .abilities
+                    .iter()
+                    .position(|a| &*a.label == "Brood Frenzy")
+                    .map(|i| (e, i))
+            })
+            .unwrap();
+        // Start the channel by hand.
+        sim.actors[boss].cast = Some(crate::sim::Cast {
+            kind: crate::sim::CastKind::Enemy(idx),
+            name: crate::events::Label::from("Brood Frenzy"),
+            target: p,
+            remaining: 4.0,
+            total: 4.0,
+            interruptible: false,
+        });
+        let need = sim
+            .stagger_left(boss, sim.actors[boss].cast.as_ref().unwrap())
+            .unwrap();
+        assert!(
+            (need - 1200.0).abs() < 1e-3,
+            "level 4 = recommended: {need}"
+        );
+        // An ordinary hit counts once.
+        sim.stagger_hit_for_test(boss, p, "Quick Cut", 300.0);
+        let left = sim
+            .stagger_left(boss, sim.actors[boss].cast.as_ref().unwrap())
+            .unwrap();
+        assert!((left - 900.0).abs() < 1e-3, "{left}");
+        // A Ravage counts triple and breaks it.
+        sim.stagger_hit_for_test(boss, p, "Ravage", 300.0);
+        assert!(sim.actors[boss].cast.is_none(), "broken");
+        assert_eq!(sim.metrics.staggers, 1);
+        assert!(
+            sim.events
+                .iter()
+                .any(|ev| matches!(ev.kind, EventKind::Staggered { .. }))
+        );
+        assert!(sim.actors[boss].auras.iter().any(|a| &*a.name == "Exposed"));
+        assert!(
+            sim.has_opening(boss, p),
+            "the break opens her for the Flow Striker"
+        );
+    }
+
+    #[test]
+    fn techniques_change_how_flow_plays_and_only_flow() {
+        use crate::class::Technique;
+        let c = gloomroot();
+        let patience = LabExtras {
+            technique: Some(Technique::Patience),
+            ..Default::default()
+        };
+        let (mut sim, p, e) = duel(&c, StrikerStyle::Flow, &patience);
+        assert_eq!(sim.technique(p), Some(Technique::Patience));
+        assert_eq!(sim.edge_cap(p), 7);
+        sim.lab_open_for_test(e, "Recovering", 3.0);
+        for _ in 0..10 {
+            if !sim.has_opening(e, p) {
+                break;
+            }
+            press(&mut sim, p, 4, e).unwrap();
+        }
+        assert!(sim.edge(p) <= 1, "Patience: Seize gives 1 Edge");
+        // Riposte: Kick's cooldown is 6 s.
+        let riposte = LabExtras {
+            technique: Some(Technique::Riposte),
+            ..Default::default()
+        };
+        let (mut sim, p, e) = duel(&c, StrikerStyle::Flow, &riposte);
+        press(&mut sim, p, 3, e).unwrap();
+        assert!((sim.actors[p].cooldowns[3] - 6.0).abs() < 1e-3);
+        // A Technique does nothing for other styles.
+        let (sim, p, _) = duel(&c, StrikerStyle::Reactive, &riposte);
+        assert_eq!(sim.technique(p), None);
+        assert_eq!(sim.edge_cap(p), crate::sim::MAX_EDGE);
     }
 
     #[test]
@@ -614,8 +930,26 @@ mod tests {
     fn lab_runs_are_deterministic() {
         let c = Content::builtin();
         for style in StrikerStyle::ALL {
-            let (a, ra) = run_lab(&c, 3, 7, style, LabPlan::Expert, "normal", 900.0);
-            let (b, rb) = run_lab(&c, 3, 7, style, LabPlan::Expert, "normal", 900.0);
+            let (a, ra) = run_lab(
+                &c,
+                3,
+                7,
+                style,
+                LabPlan::Expert,
+                "normal",
+                &LabExtras::default(),
+                900.0,
+            );
+            let (b, rb) = run_lab(
+                &c,
+                3,
+                7,
+                style,
+                LabPlan::Expert,
+                "normal",
+                &LabExtras::default(),
+                900.0,
+            );
             assert_eq!(a.events.len(), b.events.len());
             assert_eq!(a.events, b.events, "{style:?}");
             assert_eq!(ra.player_damage, rb.player_damage);
@@ -632,6 +966,7 @@ mod tests {
             StrikerStyle::Planned,
             LabPlan::Expert,
             "normal",
+            &LabExtras::default(),
             900.0,
         );
         let p = sim.player.unwrap();
@@ -663,6 +998,7 @@ mod tests {
             StrikerStyle::Reactive,
             LabPlan::Expert,
             "normal",
+            &LabExtras::default(),
             900.0,
         );
         assert!(r.openings > 0, "no openings");
@@ -670,7 +1006,16 @@ mod tests {
         assert!(r.exploits <= r.openings);
         // Classic and A never create openings.
         for style in [StrikerStyle::Classic, StrikerStyle::Planned] {
-            let (_, r) = run_lab(&c, 3, 1, style, LabPlan::Expert, "normal", 900.0);
+            let (_, r) = run_lab(
+                &c,
+                3,
+                1,
+                style,
+                LabPlan::Expert,
+                "normal",
+                &LabExtras::default(),
+                900.0,
+            );
             assert_eq!(r.openings, 0);
             assert_eq!(r.exploits, 0);
         }
@@ -680,7 +1025,16 @@ mod tests {
     fn passive_player_uses_no_abilities() {
         let c = Content::builtin();
         for style in StrikerStyle::ALL {
-            let (_, r) = run_lab(&c, 3, 1, style, LabPlan::Passive, "normal", 900.0);
+            let (_, r) = run_lab(
+                &c,
+                3,
+                1,
+                style,
+                LabPlan::Passive,
+                "normal",
+                &LabExtras::default(),
+                900.0,
+            );
             assert_eq!(r.ability_uses, [0; 5], "{style:?}");
             assert_eq!(r.player_interrupts, 0);
             assert!(r.player_damage > 0.0, "auto-attacks still land");

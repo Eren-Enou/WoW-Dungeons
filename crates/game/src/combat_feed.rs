@@ -328,6 +328,12 @@ impl CombatFeed {
                         tone: Tone::Utility,
                     }));
                 }
+                EventKind::Staggered { enemy, what } => {
+                    out.push(Pending::Line(FeedLine {
+                        text: format!("{what} broken: {} exposed!", sim.actors[*enemy].name),
+                        tone: Tone::Interrupt,
+                    }));
+                }
                 EventKind::Interrupt { src, dst, what } => {
                     let enemy = &sim.actors[*dst].name;
                     if *src == p {
@@ -370,8 +376,7 @@ impl CombatFeed {
         if let Some((i, n)) = edge
             && let Some(l) = lines.get_mut(i)
         {
-            l.text
-                .push_str(&format!(" [Edge {n}/{}]", dungeon_sim::sim::MAX_EDGE));
+            l.text.push_str(&format!(" [Edge {n}/{}]", sim.edge_cap(p)));
         }
         // Interrupts that dealt no damage and stopped nothing left no event.
         if let Some(what) = interrupt_label {

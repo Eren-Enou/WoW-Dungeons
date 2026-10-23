@@ -477,6 +477,7 @@ fn usable(sim: &Sim, id: ActorId, ability: AbilityId, target: ActorId) -> Option
         Effect::Incapacitate { .. } => !t.enemy.as_ref().is_some_and(|e| e.cc_immune),
         Effect::EdgeBleed { .. } => sim.edge(id) > 0,
         Effect::ExploitOpening { .. } => sim.has_opening(target, id),
+        Effect::Finisher { min_edge, .. } => sim.edge(id) >= min_edge,
         _ => true,
     };
     valid.then_some((s, target))
@@ -1854,6 +1855,81 @@ fn lab_cast(
             }
             if energy - 40.0 >= kick_reserve || energy >= 95.0 {
                 return pick(AbilityId::HonedStrike, target);
+            }
+            None
+        }
+        (StrikerStyle::Flow, LabPlan::Simple) => {
+            // Press what lights up: Seize, then Ravage (2+ Edge), else
+            // Quick Cut.
+            if seen(target)
+                && let Some(c) = pick(AbilityId::Seize, target)
+            {
+                return Some(c);
+            }
+            if let Some(c) = pick(AbilityId::Ravage, target) {
+                return Some(c);
+            }
+            pick(AbilityId::QuickCut, target)
+        }
+        (StrikerStyle::Flow, _) => {
+            let edge = sim.edge(id);
+            let cap = sim.edge_cap(id);
+            // A channel to break (0.11 Brood Frenzy): everything into it.
+            let breaking = t
+                .cast
+                .as_ref()
+                .is_some_and(|c| sim.stagger_left(target, c).is_some());
+            // A breakable channel in reach: switch to it (0.11 Brood Frenzy).
+            if !breaking
+                && let Some(e) = sim.board.engaged.iter().copied().find(|&e| {
+                    sim.actor(e)
+                        .cast
+                        .as_ref()
+                        .is_some_and(|c| sim.stagger_left(e, c).is_some())
+                        && can_hit(sim, id, e, 1.6)
+                })
+            {
+                return pick(AbilityId::Seize, e)
+                    .or_else(|| pick(AbilityId::Ravage, e))
+                    .or_else(|| pick(AbilityId::QuickCut, e));
+            }
+            if seen(target)
+                && let Some(c) = pick(AbilityId::Seize, target)
+            {
+                return Some(c);
+            }
+            if breaking {
+                if let Some(c) = pick(AbilityId::Ravage, target) {
+                    return Some(c);
+                }
+                return pick(AbilityId::QuickCut, target);
+            }
+            let open = sim.board.engaged.iter().copied().find(|&e| {
+                e != target
+                    && !sim.actor(e).is_incapacitated()
+                    && seen(e)
+                    && can_hit(sim, id, e, 1.6)
+            });
+            if let Some(e) = open
+                && let Some(c) = pick(AbilityId::Seize, e)
+            {
+                return Some(c);
+            }
+            // A stagger channel is due on this target soon: hold the Edge.
+            let hold = sim.stagger_due(target).is_some_and(|s| s < 6.0);
+            let splash_now = near >= 2 && aoe_safe && edge >= 4;
+            let patience_ready = cap > MAX_EDGE && edge >= 6 && near >= 2 && aoe_safe;
+            let dying = t.hp_frac() < 0.2 && edge >= 2;
+            let full = edge >= cap;
+            if !hold
+                && ((cap == MAX_EDGE && splash_now) || patience_ready || dying || full)
+                && let Some(c) = pick(AbilityId::Ravage, target)
+            {
+                return Some(c);
+            }
+            // Keep 25 energy ready for a Seize unless about to cap.
+            if energy - 20.0 >= 25.0 + kick_reserve.min(25.0) || energy >= 80.0 {
+                return pick(AbilityId::QuickCut, target);
             }
             None
         }

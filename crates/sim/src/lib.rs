@@ -7,6 +7,7 @@ pub mod class;
 pub mod content;
 pub mod describe;
 pub mod events;
+pub mod experiment;
 pub mod items;
 pub mod lab;
 pub mod math;

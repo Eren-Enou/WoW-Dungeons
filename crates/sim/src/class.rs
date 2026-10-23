@@ -253,6 +253,7 @@ impl ClassId {
                 [HonedStrike, ReapingWhirl, Evade, Kick, DeepLacerate]
             }
             (ClassId::Striker, StrikerStyle::Reactive) => [RendStrike, Whirl, Evade, Kick, Exploit],
+            (ClassId::Striker, StrikerStyle::Flow) => [QuickCut, Ravage, Evade, Kick, Seize],
             _ => self.abilities(),
         }
     }
@@ -281,13 +282,61 @@ pub enum StrikerStyle {
     Planned,
     /// Experiment B: exploit openings the enemies give you.
     Reactive,
+    /// Experiment C (0.11): openings feed a short Edge build; a cheap,
+    /// quick filler.
+    Flow,
+}
+
+/// 0.11 experiment: a Technique changes how the Flow Striker plays. One is
+/// active at a time; earned by clearing the Gloomroot Warrens with the
+/// experiment on, and swappable in the hub.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Technique {
+    /// React: Kick every 6 s; a landed Kick doubles your next Seize; openings
+    /// after enemy abilities last 4.5 s.
+    Riposte,
+    /// Plan: Edge holds 7; Ravage with 6+ Edge hits every enemy within 8 m
+    /// in full and refunds 25 energy; Seize gives 1 Edge instead of 2.
+    Patience,
+}
+
+impl Technique {
+    pub const ALL: [Technique; 2] = [Technique::Riposte, Technique::Patience];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Technique::Riposte => "Riposte",
+            Technique::Patience => "Patience",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Technique> {
+        match s.to_ascii_lowercase().as_str() {
+            "riposte" => Some(Technique::Riposte),
+            "patience" => Some(Technique::Patience),
+            _ => None,
+        }
+    }
+
+    pub fn blurb(self) -> &'static str {
+        match self {
+            Technique::Riposte => {
+                "React. Kick's cooldown drops to 6 s, and a landed Kick makes your next Seize within 5 s hit twice as hard. Openings after enemy abilities last 4.5 s instead of 3."
+            }
+            Technique::Patience => {
+                "Plan. Edge holds 7 instead of 5. Ravage with 6 or more Edge hits every enemy within 8 m in full and refunds 25 energy. Seize gives 1 Edge instead of 2."
+            }
+        }
+    }
 }
 
 impl StrikerStyle {
-    pub const ALL: [StrikerStyle; 3] = [
+    pub const ALL: [StrikerStyle; 4] = [
         StrikerStyle::Classic,
         StrikerStyle::Planned,
         StrikerStyle::Reactive,
+        StrikerStyle::Flow,
     ];
 
     pub fn label(self) -> &'static str {
@@ -295,6 +344,7 @@ impl StrikerStyle {
             StrikerStyle::Classic => "Classic",
             StrikerStyle::Planned => "A: Planned",
             StrikerStyle::Reactive => "B: Reactive",
+            StrikerStyle::Flow => "C: Flow",
         }
     }
 
@@ -303,6 +353,7 @@ impl StrikerStyle {
             "classic" => Some(StrikerStyle::Classic),
             "a" | "planned" => Some(StrikerStyle::Planned),
             "b" | "reactive" => Some(StrikerStyle::Reactive),
+            "c" | "flow" => Some(StrikerStyle::Flow),
             _ => None,
         }
     }
@@ -312,6 +363,9 @@ impl StrikerStyle {
             StrikerStyle::Classic => "The original Striker.",
             StrikerStyle::Planned => {
                 "Build Edge (max 5) with Honed Strike (+2 from behind) and landed Kicks; spend it all on Deep Lacerate (a bleed: best on long fights) or Reaping Whirl (damage now, to every enemy near you)."
+            }
+            StrikerStyle::Flow => {
+                "Quick Cut is a cheap, fast filler (+1 Edge, +2 from behind). Seize an opening (casting, just used an ability, kicked, below 30%) for damage and 2 Edge. Ravage spends 2+ Edge; at 4+ it also hits enemies around your target. A landed Kick opens the target and gives 1 Edge."
             }
             StrikerStyle::Reactive => {
                 "Watch for openings on enemies: casting (Distracted), just used an ability (Recovering), kicked (Off Balance), below 30% (Faltering). Exploit an opening for heavy damage and energy back; Rend Strike in between."
@@ -347,6 +401,10 @@ pub enum AbilityId {
     ReapingWhirl,
     DeepLacerate,
     Exploit,
+    // 0.11 experiment (Flow), player Striker only.
+    QuickCut,
+    Ravage,
+    Seize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -447,10 +505,22 @@ pub enum Effect {
         duration: f32,
     },
     /// Lab B: heavy hit on a target with an opening; consumes the opening and
-    /// refunds energy if it lands.
+    /// refunds energy if it lands. Flow also gains `edge` Edge.
     ExploitOpening {
         amount: f32,
         refund: f32,
+        edge: u32,
+    },
+    /// Flow (0.11): spend all Edge (at least `min_edge`) on the target; with
+    /// `splash_at` or more Edge, enemies within `splash_radius` of the target
+    /// take `splash_frac` of it.
+    Finisher {
+        base: f32,
+        per_edge: f32,
+        min_edge: u32,
+        splash_at: u32,
+        splash_radius: f32,
+        splash_frac: f32,
     },
 }
 
@@ -885,6 +955,61 @@ impl AbilityId {
                 ExploitOpening {
                     amount: 120.0,
                     refund: 10.0,
+                    edge: 0,
+                },
+            ),
+            QuickCut => d(
+                QuickCut,
+                "Quick Cut",
+                "Fast melee cut: +1 Edge, +2 from behind. 20 energy.",
+                C::Damage,
+                S::Physical,
+                TargetRule::Enemy,
+                2.0,
+                0.0,
+                0.0,
+                20.0,
+                Builder {
+                    amount: 35.0,
+                    edge: 1,
+                    behind_edge: 2,
+                },
+            ),
+            Ravage => d(
+                Ravage,
+                "Ravage",
+                "Needs 2+ Edge, spends all: 30 + 25 per Edge; at 4+ Edge, half of it to enemies within 5m of the target. 25 energy.",
+                C::Damage,
+                S::Physical,
+                TargetRule::Enemy,
+                2.0,
+                0.0,
+                0.0,
+                25.0,
+                Finisher {
+                    base: 30.0,
+                    per_edge: 25.0,
+                    min_edge: 2,
+                    splash_at: 4,
+                    splash_radius: 5.0,
+                    splash_frac: 0.5,
+                },
+            ),
+            Seize => d(
+                Seize,
+                "Seize",
+                "Needs an opening on the target: 80 damage, +2 Edge, consumes it, 10 energy back if it lands. 25 energy.",
+                C::Damage,
+                S::Physical,
+                TargetRule::Enemy,
+                2.0,
+                0.0,
+                0.0,
+                25.0,
+                ExploitOpening {
+                    amount: 80.0,
+                    refund: 10.0,
+                    edge: 2,
                 },
             ),
         }

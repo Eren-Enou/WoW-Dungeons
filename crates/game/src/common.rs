@@ -60,6 +60,14 @@ impl GameData {
             layout: None,
             lab_style: lab_style_from_args(),
         };
+        // 0.11: with the experiment on, a Striker starts as the Flow Striker
+        // (unless the command line chose a style).
+        if data.profile.experiment.enabled
+            && data.profile.player_class == dungeon_sim::ClassId::Striker
+            && !std::env::args().any(|a| a == "--striker-style")
+        {
+            data.lab_style = dungeon_sim::class::StrikerStyle::Flow;
+        }
         data.reload_content();
         for e in &data.content_errors {
             error!("{e}");
@@ -170,6 +178,8 @@ pub struct LastResult {
     pub item_sources: Vec<String>,
     /// Every treasure cache of the layout: (name, opened).
     pub treasure: Vec<(String, bool)>,
+    /// 0.11 experiment: news (unlocks, bests) and what to try next time.
+    pub experiment: Vec<String>,
 }
 
 #[derive(Resource)]
