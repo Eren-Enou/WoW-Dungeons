@@ -138,8 +138,15 @@ RULES.md documents every formula.
 Each has Normal, Heroic and Raid (10) difficulties; the Party tab switches
 between a 5-person party and a 10-person raid group. The Sandbox tab adjusts
 enemy health, damage, ability speed and telegraph time without editing files,
-and holds the **Class Design Lab** (0.10): two experimental Striker styles,
-for this session only (CLASS_DESIGN_LAB_0_10.md, PLAYTEST_CLASS_LAB_0_10.md);
+and holds the **Class Design Lab** (0.10): experimental Striker styles,
+for this session only (CLASS_DESIGN_LAB_0_10.md, PLAYTEST_CLASS_LAB_0_10.md),
+and the **One More Run experiment** (0.11, saved, resettable). With it on:
+- Mother Brakkis gains Brood Frenzy, a channel you can break;
+- a Striker plays the C: Flow style;
+- clearing the Gloomroot Warrens unlocks Techniques (Riposte or Patience);
+- the results screen coaches your next run.
+
+See DUNGEON_FUN_0_11.md and PLAYTEST_DUNGEON_FUN_0_11.md;
 the Editor tab tunes individual bosses and abilities and saves a custom dungeon
 file. The Vendor sells gear for Vault Marks and buys back what you don't need.
 Companions grow more familiar with dungeons they clear and react faster there. Bosses and elites drop loot; kills and
@@ -382,6 +389,10 @@ simple, expert) on the same seeds. It reports:
 - energy at the cap and ability use;
 - for A, Edge wasted; for B, openings and Exploits;
 - when each style gets its payoff.
+
+`--experiment` and `--technique riposte|patience` (0.11) run with the One
+More Run experiment. The game takes the same flags: they turn the
+experiment on in the save in use.
 
 `--lab-feel` plays each style step by step and reports moment-to-moment
 proxies:

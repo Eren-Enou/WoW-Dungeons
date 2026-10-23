@@ -616,6 +616,24 @@ the same harness. It would combine:
 Measure it with `--lab` and `--lab-feel` against these numbers, aiming for
 30+ presses a minute and less than 30% waiting.
 
+## 0.11 update: Experiment C (Flow)
+
+The "Experiment C" predicted above was built in 0.11 (DUNGEON_FUN_0_11.md)
+as the Flow Striker:
+- B's openings;
+- Edge from Seize and from cuts (more from behind);
+- one finisher with splash;
+- a cheaper, quicker filler.
+
+**Against the other styles over five dungeons at level 6:**
+- **Pace:** 25–30 presses a minute, against 15–23.
+- **Idle:** 52–60% of combat, against 64–76%.
+- **Waiting (expert):** 33–46%, against 59–67% for Classic.
+- **Simple to expert:** +11–20%.
+- **Thresholds:** the "30+ presses, under 30% waiting" target is reached
+  for presses; waiting falls only to about a third, not below 30%.
+- **The table:** in DUNGEON_FUN_0_11.md, "Measurements".
+
 ## What is not validated
 
 - **Fun, readability, flow and mastery** of any style: not covered by a

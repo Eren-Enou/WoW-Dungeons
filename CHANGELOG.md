@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.11.0 - One More Run (experiment)
+
+Design, measurements and limits: DUNGEON_FUN_0_11.md. Playtest:
+PLAYTEST_DUNGEON_FUN_0_11.md. Opt-in from the Sandbox tab (saved,
+resettable). Off, the game is unchanged: 320 runs are hash-identical.
+
+- **The Flow Striker (style C)** combines openings, a short Edge build and
+  a quick filler:
+  - Quick Cut (+1 Edge, +2 from behind);
+  - Seize (takes an opening, +2 Edge);
+  - Ravage (spends Edge, with splash at 4+).
+
+  25–30 presses a minute, against 15–23 for the other styles.
+- **Brood Frenzy:** Mother Brakkis channels a summon you can break by
+  hitting her hard. Finishers and opening strikes count triple, and a
+  break exposes her.
+  - Measured first as a plain damage race: that left the companions in
+    charge, so it was redesigned.
+  - Breaks now follow the player's play (Flow expert 2–2.4 a run, passive
+    play about 2% of channels), and runs end 7–9% sooner.
+- **Techniques:** clearing the Gloomroot Warrens unlocks Riposte (fast
+  Seizes are stronger and free) and Patience (Edge 7, a big Ravage hits
+  everyone and refunds energy). Swap or reset any time.
+- **Results** show the experiment's news (unlocks; bests with the party's
+  level) and coaching lines, each naming something to try next run.
+- **The hub and HUD** show:
+  - the experiment and the Technique;
+  - Brood Frenzy's countdown and break progress;
+  - break banners, the "BROKEN!" float and effects;
+  - Edge pips at the cap.
+- **Lab:** `--experiment`, `--technique`; `--lab-feel` adds sloppy-player
+  rows (1 s reaction, never from behind).
+
 ## 0.10.0 - Class Design Lab
 
 Design, measurements and progression concepts: CLASS_DESIGN_LAB_0_10.md.

@@ -1,7 +1,8 @@
 # Progress
 
-Status: **0.10 (Class Design Lab) implemented and verified with automated
-checks; see the 0.10 section.** 0.9.3 (ability impact), 0.9.2 (combat
+Status: **0.11 (One More Run experiment) implemented and verified with
+automated checks; see the 0.11 section.** 0.10 (Class Design Lab)
+follows. 0.9.3 (ability impact), 0.9.2 (combat
 clarity), 0.9.1 (Dungeon Remix polish) and 0.9 (Dungeon Remix) below.
 
 Previous: **0.8.1 (viewer polish, map navigation and exploration design)
@@ -30,6 +31,47 @@ covered by a recorded playtest".)
 
 Environment: Windows 11 Pro, Rust 1.99.0, Bevy 0.20.0 (pinned `=0.20.0`,
 Cargo.lock committed), NVIDIA RTX 2070 SUPER (Vulkan).
+
+## 0.11 - One More Run (experiment)
+
+Design, measurements and limitations: DUNGEON_FUN_0_11.md. Playtest:
+PLAYTEST_DUNGEON_FUN_0_11.md. Not covered by a recorded human playtest:
+nothing here is claimed to be fun.
+
+**Built (opt-in, saved, resettable):**
+- the Flow Striker;
+- Brood Frenzy (experimental content, breakable by weak-point hits);
+- Techniques (Riposte, Patience), unlocked by a Gloomroot clear;
+- results-screen news and coaching;
+- hub, HUD, feed and effects for all of it;
+- lab support (`--experiment`, `--technique`, sloppy-player rows).
+
+**Verified:**
+- **The classic game is unchanged:** with the experiment off, 320 headless
+  runs are hash-identical to 0.9.2/0.9.3.
+- **Checks:** fmt, check and clippy clean; tests forge 28, game 41, sim
+  181:
+  - experiment records, reset and old saves;
+  - Brood Frenzy gating and weak-point breaks;
+  - Flow's Edge rules;
+  - the Technique effects and their scope;
+  - the Flow feed lines.
+- **Measurements:**
+  - five-dungeon pace and DPS tables;
+  - Brood Frenzy break rates and run lengths by plan and level;
+  - Technique DPS by reaction time.
+- **Full loop on screen:**
+  - `--demo --experiment` won the Gloomroot Warrens; the results showed
+    the unlock, the first-clear time and the coaching, and the hub showed
+    the experiment;
+  - a second run with `--technique patience` showed Ravage at Edge 7 and a
+    new best.
+
+  Screenshots looked at; three feed problems found there and fixed.
+- **Self-tests:** `--input-test` (plain, Flow, experiment),
+  `--frame-test`, `--tooltip-test`, `--click-test`,
+  `--hub-tour --experiment`, `--remix-test`, and
+  `--viewer <id> --viewer-test` on two dungeons: all exit 0.
 
 ## 0.10 - Class Design Lab
 

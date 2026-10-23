@@ -131,6 +131,18 @@ to one of two experimental styles for this session only (never saved):
                 abilities, after your Kick, or below 30% health.
 See PLAYTEST_CLASS_LAB_0_10.md in the repository for the playtest.
 
+ONE MORE RUN (experiment, 0.11): Sandbox tab > One More Run > Turn on.
+  - Your Striker plays C: Flow:
+      Quick Cut builds Edge (more from behind);
+      Seize takes openings for damage and Edge;
+      Ravage spends Edge.
+  - In the Gloomroot Warrens, Mother Brakkis channels Brood Frenzy:
+    hit her hard to break it (Ravage and Seize count triple).
+  - Clear the Gloomroot Warrens to unlock Techniques (Riposte or Patience).
+  - The results screen tells you what to try next run.
+  - "Turn off" restores the normal game; "Reset progress" locks
+    Techniques again.
+
 DUNGEON VIEWER (new in 0.8)
 ---------------------------
 Look around any dungeon without fighting: double-click "Dungeon Viewer.bat",

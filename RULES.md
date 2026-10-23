@@ -410,3 +410,58 @@ CLASS_DESIGN_LAB_0_10.md.
 - **Exploit** (30 energy, needs an opening from you on the target):
   removes one of your openings on it, then deals 120 melee damage. If the
   hit lands, it refunds 10 energy.
+
+### C: Flow (0.11 experiment) [orig]
+
+Player Striker only. Design and measurements: DUNGEON_FUN_0_11.md.
+
+- **Quick Cut** (20 energy): 35 melee damage. If it lands: +1 Edge, or +2
+  when not in front of the target.
+- **Ravage** (25 energy, needs Edge ≥ 2): spends all Edge `n`; 30 + 25 × n
+  to the target. With n ≥ 4, every other engaged, uncontrolled enemy
+  within 5 m of the target takes half of that.
+- **Seize** (25 energy, needs an opening from you on the target): removes
+  your newest opening on it and deals 80 melee damage. If it lands:
+  +10 energy and +2 Edge.
+- **Kick:** a successful interrupt opens the target (Off Balance, 4 s) and
+  gives +1 Edge.
+- **Edge and openings:** as for A and B (Edge 0–5, 20 s; the same four
+  openings).
+
+## One More Run experiment (0.11) [orig]
+
+Active only when the profile's experiment is on (hub Sandbox tab, or
+`--experiment`).
+
+### Experimental content
+- Enemy abilities with `experimental = true` are dropped when a run is
+  built, unless the experiment is on.
+- **Breakable casts** (`stagger = { damage, exposed, exposed_pct }`):
+  - **Threshold:** `damage × dungeon/difficulty HP multiplier ×
+    level_power(party level) / level_power(recommended level)`. The party
+    level is the rounded average.
+  - **What counts:** damage by party members to the caster during the
+    cast, counting absorbed damage.
+  - **Weak-point hits count 3×:** hits from abilities whose effect is a
+    finisher or an opening strike (Seize, Exploit, Ravage, Deep Lacerate
+    including its ticks, Reaping Whirl).
+  - **At the threshold:** the cast ends with no effect (`Staggered`
+    event). The caster gets "Exposed" (+`exposed_pct` damage taken for
+    `exposed` s) and, for an opening-using Striker, a "Staggered" opening
+    for the same time.
+- **Brood Frenzy** (Mother Brakkis): `summon` of 3 spiderlings;
+  - interval 24 s, first at 14 s;
+  - cast 4 s, not interruptible;
+  - stagger 1,200 / 6 s / +30%.
+
+### Techniques (Flow Striker only; one at a time)
+- **Riposte:**
+  - **quick Seize:** a Seize whose opening (the newest on the target) is
+    1.5 s old or less deals 1.25× and also refunds its cost;
+  - **longer windows:** Recovering openings last 4.5 s instead of 3.
+- **Patience:**
+  - **cap:** Edge holds 7;
+  - **big Ravage:** a Ravage spending 6+ Edge hits every other engaged,
+    uncontrolled enemy within 8 m of you for the full amount, and refunds
+    25 energy;
+  - **Seize** gives 1 Edge.

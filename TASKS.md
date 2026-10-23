@@ -3,7 +3,19 @@
 Prioritized, actionable work. Completed milestones are summarized at the bottom;
 details and evidence live in PROGRESS.md.
 
-## Next up (after 0.10)
+## Next up (after 0.11)
+
+000. **One More Run playtest** (PLAYTEST_DUNGEON_FUN_0_11.md, 35–45
+     minutes: baseline, the experiment, the experiment with a Technique).
+     The answer decides:
+     - whether Flow and Brood Frenzy-style breakable channels become the
+       Striker's direction and an encounter pattern;
+     - whether Techniques are worth growing into a progression system.
+
+     Measured but open:
+     - waiting stays about 50% for simple play;
+     - Edge lost at the cap;
+     - Riposte depends on real reaction times.
 
 00. **Class Design Lab playtest** (PLAYTEST_CLASS_LAB_0_10.md, 30–45
     minutes). Then decide:
@@ -84,6 +96,14 @@ details and evidence live in PROGRESS.md.
 
 ## Done
 
+- 0.11: One More Run experiment (DUNGEON_FUN_0_11.md):
+  - the Flow Striker;
+  - Brood Frenzy;
+  - Techniques;
+  - results coaching and bests;
+  - opt-in, saved, resettable.
+
+  The classic game is hash-identical.
 - 0.10: Class Design Lab (CLASS_DESIGN_LAB_0_10.md):
   - two experimental Striker styles, player-only and per session;
   - the switch, HUD, feed and effects for them;
