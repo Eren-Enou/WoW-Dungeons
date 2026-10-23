@@ -73,6 +73,13 @@ nothing here is claimed to be fun.
   `--hub-tour --experiment`, `--remix-test`, and
   `--viewer <id> --viewer-test` on two dungeons: all exit 0.
 
+**Package (local, not published):** `dist/DungeonSandbox-0.11.0-windows-x64.zip`,
+31.3 MB. From the extracted folder:
+- `--start-level 4 --experiment --input-test` exits 0 and leaves a level-4
+  save with the experiment on and nothing unlocked;
+- `--remix-test` passes;
+- `dungeon-headless --lab --experiment` runs.
+
 ## 0.10 - Class Design Lab
 
 **Agent playtest (2026-10-18):** `--lab-feel` proxies over 5 dungeons; see
